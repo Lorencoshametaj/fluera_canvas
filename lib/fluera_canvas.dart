@@ -38,3 +38,7 @@ export 'src/rendering/gpu/vulkan_stroke_overlay_service.dart';
 export 'src/rendering/gpu/webgpu_stroke_overlay_service.dart';
 export 'src/rendering/gpu/webgpu_overlay_view.dart' show WebGpuOverlayView;
 export 'src/drawing/input/input_predictor.dart';
+
+// Public SDK façade for the native live-stroke pipeline.
+export 'src/rendering/native_stroke_overlay.dart'
+    show NativeStrokeOverlay, NativeStrokeOverlayController;
