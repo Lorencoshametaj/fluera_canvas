@@ -25,6 +25,12 @@ export 'src/canvas/infinite_canvas_gesture_detector.dart';
 export 'src/canvas/liquid_canvas_config.dart';
 export 'src/canvas/stylus_hover_tracker.dart';
 
+// High-level drop-in widget that wires gesture + native overlay + committed
+// stroke painting + background fill into a single ready-to-use canvas.
+// This is what most pub.dev consumers should reach for; the low-level
+// primitives above are the power-user surface.
+export 'src/canvas/fluera_canvas_widget.dart';
+
 // ─── DRAWING INPUT + FILTERS ───────────────────────────────────────────────
 
 export 'src/drawing/input/stylus_detector.dart' show StylusDetector;

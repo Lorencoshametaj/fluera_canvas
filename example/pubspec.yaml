@@ -1,0 +1,26 @@
+name: fluera_canvas_example
+description: >
+  Minimal example app for the fluera_canvas SDK. Shows an infinite canvas
+  with pan, zoom, rotation and pressure-aware stylus input.
+publish_to: none
+version: 1.0.0
+
+environment:
+  sdk: ^3.10.8
+  flutter: ">=3.27.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  fluera_canvas:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

@@ -23,7 +23,7 @@ import 'native_stroke_ffi_stub.dart'
 ///   service.clear(); // on pen-up
 ///   service.dispose();
 class VulkanStrokeOverlayService {
-  static const _channel = MethodChannel('fluera_engine/vulkan_stroke');
+  static const _channel = MethodChannel('fluera_canvas/native_stroke');
 
   int? _textureId;
   bool _initialized = false;

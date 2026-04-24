@@ -1,0 +1,3 @@
+/home/lorenzo/development/fluera/fluera_canvas/android/.cxx/Debug/2q58y5a1/armeabi-v7a/CMakeFiles/fluera_vk_stroke.dir
+/home/lorenzo/development/fluera/fluera_canvas/android/.cxx/Debug/2q58y5a1/armeabi-v7a/CMakeFiles/edit_cache.dir
+/home/lorenzo/development/fluera/fluera_canvas/android/.cxx/Debug/2q58y5a1/armeabi-v7a/CMakeFiles/rebuild_cache.dir

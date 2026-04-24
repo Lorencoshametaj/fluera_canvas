@@ -31,7 +31,9 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
 
-# Plugin platform declarations are added in Ondata 6 once native code
-# (Vulkan / Metal / GL / D3D11) is migrated over from fluera_engine. For now
-# fluera_canvas is a pure-Dart package — native plumbing continues to ship
-# via fluera_engine's plugin until the move.
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.fluera.canvas
+        pluginClass: FlueraCanvasPlugin
