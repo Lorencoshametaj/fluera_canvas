@@ -8,6 +8,24 @@
 // Version: 0.1.0 (pre-release). Until 1.0.0 the API is considered unstable.
 // ════════════════════════════════════════════════════════════════════════════
 
+// Core utilities + error model.
+export 'src/utils/uid.dart';
+export 'src/core/schema_version.dart';
+export 'src/core/engine_error.dart';
+export 'src/core/engine_telemetry.dart';
+
+// Scene graph leaf primitives.
+export 'src/core/scene_graph/content_origin.dart';
+export 'src/core/scene_graph/invalidation_graph.dart';
+export 'src/core/scene_graph/node_id.dart';
+
+// Paint / gradient primitives (stack order, fill definitions).
+export 'src/core/effects/gradient_fill.dart';
+export 'src/core/effects/paint_stack.dart';
+
+// Shape enum.
+export 'src/core/models/shape_type.dart';
+
 // Drawing data models — coordinates, pressure, brush presets.
 export 'src/drawing/models/pro_drawing_point.dart';
 export 'src/drawing/models/pressure_curve.dart';
