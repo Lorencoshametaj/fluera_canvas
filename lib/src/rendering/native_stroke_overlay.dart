@@ -375,24 +375,15 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
         children: [
           Positioned.fill(child: _layoutProbe()),
           Positioned.fill(
-            child: AnimatedBuilder(
-              animation: widget.controller,
-              builder: (context, _) {
-                final drawing = widget.controller.isDrawing;
-                if (!drawing) return const SizedBox.shrink();
-                // RepaintBoundary forces Flutter to allocate a fresh
-                // compositing layer for the Texture. Required on some
-                // Impeller / Adreno paths where platform-view layers
-                // nested deep in the tree get dropped.
-                // DiagnosticTint is a temporary faint green tint so we
-                // can see if the Texture widget is being laid out at all
-                // — remove after confirming pipeline visibility.
-                return IgnorePointer(
-                  child: RepaintBoundary(
-                    child: Texture(textureId: _textureId!),
-                  ),
-                );
-              },
+            // Mirror Fluera's exact widget structure: Texture always
+            // mounted (no AnimatedBuilder / SizedBox toggle), wrapped
+            // only in IgnorePointer. No RepaintBoundary — Fluera doesn't
+            // use one and any extra compositing layer on this widget
+            // tree seems to break the platform-view composition on
+            // Impeller + Adreno. Opacity toggling was our guess; it
+            // didn't help.
+            child: IgnorePointer(
+              child: Texture(textureId: _textureId!),
             ),
           ),
         ],
