@@ -6,6 +6,8 @@ analyzer:
     strict-raw-types: false
   errors:
     unused_import: ignore         # cleanup pending during wave consolidation
+    unused_field: ignore          # legacy fields scheduled for removal post-split
+    unnecessary_getters_setters: ignore
     dangling_library_doc_comments: ignore
 
 linter:

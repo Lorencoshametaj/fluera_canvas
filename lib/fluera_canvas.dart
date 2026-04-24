@@ -17,3 +17,7 @@ export 'src/drawing/models/pro_brush_settings.dart';
 
 // Rendering configuration primitives.
 export 'src/rendering/lod_config.dart';
+
+// Infinite canvas camera / physics controller.
+export 'src/canvas/liquid_canvas_config.dart';
+export 'src/canvas/infinite_canvas_controller.dart';
