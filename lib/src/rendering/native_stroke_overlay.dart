@@ -344,26 +344,34 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    // The Texture widget itself is kept *outside* the LayoutBuilder so that
-    // once [_textureId] becomes non-null, Flutter's compositor keeps a
-    // stable RenderObject for the texture — rebuilding Texture inside
-    // LayoutBuilder every frame causes some Impeller paths to skip the
-    // platform-view composition entirely (observed on Adreno / Xiaomi).
     if (_textureId != null) {
-      // Still schedule init follow-ups (resize on orientation change) via
-      // a lightweight LayoutBuilder sitting behind the texture.
+      // Mirror the Fluera app pattern: mount the Texture only while the
+      // user is actively drawing. On Impeller + Adreno (confirmed) the
+      // platform-view compositor drops a long-mounted texture layer,
+      // producing an invisible overlay. Toggling via AnimatedBuilder on
+      // the controller's isDrawing flag forces a fresh compositing
+      // pass at each pen-down, which makes the stroke visible. On pen-up
+      // the Texture is unmounted and the caller's Dart scene painter
+      // takes over (or the caller can commit the stroke to its own
+      // render tree).
       return Stack(
         children: [
           Positioned.fill(child: _layoutProbe()),
           Positioned.fill(
-            child: IgnorePointer(
-              child: Texture(textureId: _textureId!),
+            child: AnimatedBuilder(
+              animation: widget.controller,
+              builder: (context, _) {
+                final drawing = widget.controller.isDrawing;
+                if (!drawing) return const SizedBox.shrink();
+                return IgnorePointer(
+                  child: Texture(textureId: _textureId!),
+                );
+              },
             ),
           ),
         ],
       );
     }
-    // Not yet initialized: probe for size, show Dart fallback in the meantime.
     return _layoutProbe(showFallback: widget.fallbackToDart);
   }
 

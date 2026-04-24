@@ -323,18 +323,16 @@ class FlueraCanvasState extends State<FlueraCanvas>
 
   @override
   Widget build(BuildContext context) {
-    // Always render the Dart-side live stroke. When the native overlay
-    // composites correctly on top, the two visuals overlap — which is
-    // visually harmless because they're drawn at the same coordinates
-    // with the same color / width. When the native Texture fails to
-    // composite (observed on some Impeller + Adreno paths), the Dart
-    // stroke is still there so the user sees SOMETHING. Better a minor
-    // double-paint than an invisible canvas.
+    // When the native overlay is active, hide the Dart-side live stroke
+    // so the two don't double-paint. The native Texture is toggled on
+    // pen-down / off on pen-up inside NativeStrokeOverlay (Fluera
+    // pattern). On pen-up the committed stroke is already in _strokes,
+    // rendered by the Dart painter — the transition is seamless.
     final useNative = _useNative;
     final scenePainter = _InfiniteCanvasPainter(
       strokes: _strokes,
-      livePoints: _livePoints,
-      livePressures: _livePressures,
+      livePoints: useNative ? null : _livePoints,
+      livePressures: useNative ? null : _livePressures,
       baseWidth: widget.strokeWidth,
       liveColor: widget.strokeColor,
       cameraOffset: _controller.offset,
@@ -356,10 +354,6 @@ class FlueraCanvasState extends State<FlueraCanvas>
                   child: NativeStrokeOverlay(
                     canvasController: _controller,
                     controller: _nativeOverlay,
-                    // Dart fallback inside the overlay is disabled —
-                    // the parent CustomPaint above already renders the
-                    // live stroke in Dart. Keep only the native Texture
-                    // layer inside the overlay to avoid triple paint.
                     fallbackToDart: false,
                   ),
                 ),
