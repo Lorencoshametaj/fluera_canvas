@@ -1,0 +1,20 @@
+# Paths intentionally excluded from the pub.dev archive — keep the
+# published package to just the Dart source + native plugin scaffolding.
+
+# Empty platform scaffolds (filled in Ondata 6 when native code actually
+# moves from fluera_engine into this package).
+android/
+ios/
+macos/
+linux/
+windows/
+shared/
+
+# Example / test directories — shipped separately once stable.
+example/
+test/
+
+# Local build artifacts.
+.dart_tool/
+build/
+pubspec.lock
