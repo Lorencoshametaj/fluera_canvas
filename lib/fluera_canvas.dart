@@ -5,15 +5,15 @@
 // contract. Anything inside `src/` without a corresponding export line is
 // internal and may change at any time.
 //
-// Core surface (grows as ondate 1..5 move primitives over from fluera_engine):
-//   • Infinite, pressure-sensitive canvas with pan / zoom / rotation
-//   • GPU-accelerated native live-stroke overlay (Vulkan / Metal / GL / D3D11)
-//   • Scene graph with node-based composition
-//   • Base brush engines (ballpoint, pencil, highlighter)
-//   • Drawing input pipeline (120 Hz raw input, pressure filters, stabilizer)
-//   • Cross-platform export (PNG / WebP / JPEG / binary `.fluera`)
-//
 // Version: 0.1.0 (pre-release). Until 1.0.0 the API is considered unstable.
 // ════════════════════════════════════════════════════════════════════════════
 
-// Exports will be added by each migration wave (see plan file).
+// Drawing data models — coordinates, pressure, brush presets.
+export 'src/drawing/models/pro_drawing_point.dart';
+export 'src/drawing/models/pressure_curve.dart';
+export 'src/drawing/models/velocity_curve.dart';
+export 'src/drawing/models/brush_preset.dart';
+export 'src/drawing/models/pro_brush_settings.dart';
+
+// Rendering configuration primitives.
+export 'src/rendering/lod_config.dart';
