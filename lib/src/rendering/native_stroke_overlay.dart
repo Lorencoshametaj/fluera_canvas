@@ -207,6 +207,7 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
   bool _available = false;
   Size? _lastPhysicalSize;
   double _lastDpr = 1.0;
+  bool _wasDrawing = false;
 
   @override
   void initState() {
@@ -314,7 +315,23 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
   void _onControllerTick() {
     final c = widget.controller;
     if (_textureId == null) return;
-    if (!c.isDrawing && c.bufferedPoints.isEmpty) {
+
+    // Detect isDrawing transitions — mirror Fluera app behaviour.
+    final drawing = c.isDrawing;
+    if (drawing && !_wasDrawing) {
+      // Pen-down: clear previous stroke + re-push the current camera
+      // transform. Fluera does this on every _onPointerDown; without
+      // it the first stroke may render with stale transform, or Vulkan
+      // surface may still hold the last stroke's pixels.
+      _service.clear();
+      _pushTransform();
+      debugPrint('[NativeStrokeOverlay] pen-down: clear + setTransform');
+    } else if (!drawing && _wasDrawing) {
+      debugPrint('[NativeStrokeOverlay] pen-up');
+    }
+    _wasDrawing = drawing;
+
+    if (!drawing && c.bufferedPoints.isEmpty) {
       _service.clear();
       return;
     }
