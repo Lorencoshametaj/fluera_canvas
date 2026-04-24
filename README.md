@@ -88,6 +88,23 @@ painter inside `NativeStrokeOverlay` takes over automatically.
 **Android**: Vulkan renderer ships in this package — no extra dependency.
 APK footprint on `arm64-v8a + armv7 + x86_64`: ~5 MB multi-arch.
 
+> **Required** on Android: your host app must run Flutter itself on the
+> Vulkan backend so it can composite the plugin's Vulkan SurfaceProducer.
+> Add the following inside `<application>` in
+> `android/app/src/main/AndroidManifest.xml`:
+>
+> ```xml
+> <meta-data
+>     android:name="io.flutter.embedding.android.EnableImpeller"
+>     android:value="true" />
+> <meta-data
+>     android:name="io.flutter.embedding.android.ImpellerBackend"
+>     android:value="vulkan" />
+> ```
+>
+> Without this, the Texture widget renders an empty surface — the
+> strokes are drawn on a Vulkan image Flutter's compositor never reads.
+
 **iOS / macOS**: Metal renderer will move in here in the next release.
 For now the native path still registers via the companion `fluera_engine`
 package if you have it in your workspace.
