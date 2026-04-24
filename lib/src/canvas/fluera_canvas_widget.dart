@@ -161,18 +161,14 @@ class FlueraCanvasState extends State<FlueraCanvas>
   }
 
   // ── Drawing callbacks ─────────────────────────────────────────────────────
+  //
+  // IMPORTANT: [InfiniteCanvasGestureDetector] already applies
+  // `controller.screenToCanvas(...)` before invoking these callbacks, so the
+  // [Offset] parameter is CANVAS / WORLD space. Do NOT transform it again —
+  // doing so was a bug that placed both the Vulkan live stroke and the
+  // committed strokes at the wrong position after any zoom / pan.
 
-  /// Screen-space position → world-space (undoes camera transform).
-  Offset _screenToWorld(Offset screen) {
-    final inv = 1.0 / _controller.scale;
-    return Offset(
-      (screen.dx - _controller.offset.dx) * inv,
-      (screen.dy - _controller.offset.dy) * inv,
-    );
-  }
-
-  void _onDrawStart(Offset screen, double pressure, double tiltX, double tiltY) {
-    final world = _screenToWorld(screen);
+  void _onDrawStart(Offset world, double pressure, double tiltX, double tiltY) {
     setState(() {
       _livePoints = <Offset>[world];
       _livePressures = <double>[pressure];
@@ -191,9 +187,8 @@ class FlueraCanvasState extends State<FlueraCanvas>
     }
   }
 
-  void _onDrawUpdate(Offset screen, double pressure, double tiltX, double tiltY) {
+  void _onDrawUpdate(Offset world, double pressure, double tiltX, double tiltY) {
     if (_livePoints == null) return;
-    final world = _screenToWorld(screen);
     setState(() {
       _livePoints!.add(world);
       _livePressures!.add(pressure);
