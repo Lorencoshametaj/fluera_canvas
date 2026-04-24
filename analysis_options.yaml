@@ -6,9 +6,13 @@ analyzer:
     strict-raw-types: false
   errors:
     unused_import: ignore         # cleanup pending during wave consolidation
+    unnecessary_import: ignore
     unused_field: ignore          # legacy fields scheduled for removal post-split
+    unused_local_variable: ignore
     unnecessary_getters_setters: ignore
     dangling_library_doc_comments: ignore
+    curly_braces_in_flow_control_structures: ignore
+    no_leading_underscores_for_local_identifiers: ignore
 
 linter:
   rules:

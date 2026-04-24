@@ -21,3 +21,12 @@ export 'src/rendering/lod_config.dart';
 // Infinite canvas camera / physics controller.
 export 'src/canvas/liquid_canvas_config.dart';
 export 'src/canvas/infinite_canvas_controller.dart';
+export 'src/canvas/infinite_canvas_gesture_detector.dart';
+export 'src/canvas/stylus_hover_tracker.dart';
+
+// Drawing input primitives.
+export 'src/drawing/input/stylus_detector.dart' show StylusDetector;
+export 'src/drawing/input/palm_rejection_policy.dart';
+
+// Platform utilities.
+export 'src/utils/platform_guard.dart' show PlatformGuard;
