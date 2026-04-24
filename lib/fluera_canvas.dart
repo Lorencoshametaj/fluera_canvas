@@ -136,7 +136,11 @@ export 'src/rendering/canvas/paper_grain_painter.dart';
 // until Ondata 6 moves it into this package.
 
 export 'src/rendering/gpu/vulkan_stroke_overlay_service.dart';
-export 'src/rendering/gpu/webgpu_stroke_overlay_service.dart';
+// WebGPU service unconditionally imports dart:js_interop + package:web —
+// which doesn't type-check on non-web. Fall back to the stub everywhere
+// except web so native builds compile.
+export 'src/rendering/gpu/webgpu_stroke_overlay_service_stub.dart'
+    if (dart.library.js_interop) 'src/rendering/gpu/webgpu_stroke_overlay_service.dart';
 export 'src/rendering/gpu/webgpu_overlay_view.dart' show WebGpuOverlayView;
 export 'src/rendering/native_stroke_overlay.dart'
     show NativeStrokeOverlay, NativeStrokeOverlayController;
