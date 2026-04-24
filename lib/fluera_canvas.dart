@@ -79,8 +79,29 @@ export 'src/drawing/models/velocity_curve.dart';
 export 'src/drawing/models/brush_preset.dart';
 export 'src/drawing/models/pro_brush_settings.dart';
 
-// Rendering configuration primitives.
+// Rendering configuration + optimization primitives.
 export 'src/rendering/lod_config.dart';
+export 'src/rendering/optimization/spatial_index.dart';
+export 'src/rendering/optimization/viewport_culler.dart';
+export 'src/rendering/optimization/stroke_optimizer.dart';
+export 'src/rendering/optimization/optimized_path_builder.dart';
+export 'src/rendering/optimization/paint_pool.dart';
+export 'src/rendering/optimization/dirty_region_tracker.dart';
+
+// Scene graph rendering leaves.
+export 'src/rendering/scene_graph/path_renderer.dart';
+export 'src/rendering/scene_graph/render_batch.dart';
+
+// Canvas painters that have no app-layer dependencies.
+export 'src/rendering/canvas/shape_painter.dart';
+export 'src/rendering/canvas/digital_text_painter.dart';
+export 'src/rendering/canvas/origin_indicator_painter.dart';
+export 'src/rendering/canvas/paper_pattern_painter.dart';
+export 'src/rendering/canvas/paper_grain_painter.dart';
+
+// Brush infrastructure (texture sampler). Concrete brush engines remain
+// in fluera_engine because they depend on EngineScope / GPU shader services.
+export 'src/drawing/brushes/brush_texture.dart';
 
 // Infinite canvas camera / physics controller.
 export 'src/canvas/liquid_canvas_config.dart';

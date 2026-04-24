@@ -15,6 +15,7 @@ analyzer:
     curly_braces_in_flow_control_structures: ignore
     unnecessary_this: ignore
     prefer_collection_literals: ignore
+    prefer_conditional_assignment: ignore
     no_leading_underscores_for_local_identifiers: ignore
 
 linter:
