@@ -38,6 +38,16 @@ export 'src/rendering/gpu/vulkan_stroke_overlay_service.dart';
 export 'src/rendering/gpu/webgpu_stroke_overlay_service.dart';
 export 'src/rendering/gpu/webgpu_overlay_view.dart' show WebGpuOverlayView;
 export 'src/drawing/input/input_predictor.dart';
+export 'src/drawing/input/raw_input_processor_120hz.dart';
+
+// Drawing filters (pressure-aware smoothing, prediction, noise generators).
+export 'src/drawing/filters/one_euro_filter.dart';
+export 'src/drawing/filters/advanced_one_euro_filter.dart';
+export 'src/drawing/filters/dynamic_pressure_mapper.dart';
+export 'src/drawing/filters/organic_noise.dart';
+export 'src/drawing/filters/physics_ink_simulator.dart';
+export 'src/drawing/filters/post_stroke_optimizer.dart';
+export 'src/drawing/filters/predictive_renderer.dart';
 
 // Public SDK façade for the native live-stroke pipeline.
 export 'src/rendering/native_stroke_overlay.dart'
