@@ -3,3 +3,5 @@
 0	1814	1777036698589087055	CMakeFiles/fluera_vk_stroke.dir/vk_stroke_renderer.cpp.o	4310c9736e2eac61
 1814	1852	1777036698633087056	/tmp/fluera_canvas_consumer_test/build/fluera_canvas/intermediates/cxx/Debug/2q58y5a1/obj/arm64-v8a/libfluera_vk_stroke.so	12d544b0d9bcbcf6
 11	47	1777036754848087742	/tmp/fluera_canvas_consumer_test/build/fluera_canvas/intermediates/cxx/Debug/2q58y5a1/obj/arm64-v8a/libfluera_vk_stroke.so	12d544b0d9bcbcf6
+2	822	1777036931054089893	CMakeFiles/fluera_vk_stroke.dir/vk_jni_bridge.cpp.o	35870e5354cb299a
+822	851	1777036931084089893	/tmp/fluera_canvas_consumer_test/build/fluera_canvas/intermediates/cxx/Debug/2q58y5a1/obj/arm64-v8a/libfluera_vk_stroke.so	12d544b0d9bcbcf6

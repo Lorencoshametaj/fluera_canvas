@@ -15,7 +15,7 @@ extern "C" {
 // ═══════════════════════════════════════════════════════════════════
 
 JNIEXPORT jboolean JNICALL
-Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeInit(
+Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeInit(
     JNIEnv *env, jobject /* this */, jobject surface, jint width, jint height) {
   if (g_renderer) {
     g_renderer->destroy();
@@ -50,7 +50,7 @@ Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeInit(
 // ═══════════════════════════════════════════════════════════════════
 
 JNIEXPORT void JNICALL
-Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeUpdateAndRender(
+Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeUpdateAndRender(
     JNIEnv *env, jobject /* this */, jfloatArray pointsArray, jint colorArgb,
     jfloat strokeWidth, jint totalPoints, jint brushType,
     jfloat pencilBaseOpacity, jfloat pencilMaxOpacity,
@@ -93,7 +93,7 @@ Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeUpdateAndRe
 // ═══════════════════════════════════════════════════════════════════
 
 JNIEXPORT void JNICALL
-Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeSetTransform(
+Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeSetTransform(
     JNIEnv *env, jobject /* this */, jfloatArray matrixArray) {
   if (!g_renderer || !g_renderer->isInitialized())
     return;
@@ -112,7 +112,7 @@ Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeSetTransfor
 // ═══════════════════════════════════════════════════════════════════
 
 JNIEXPORT void JNICALL
-Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeClear(
+Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeClear(
     JNIEnv * /* env */, jobject /* this */) {
   if (g_renderer && g_renderer->isInitialized()) {
     g_renderer->clearFrame();
@@ -124,7 +124,7 @@ Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeClear(
 // ═══════════════════════════════════════════════════════════════════
 
 JNIEXPORT jboolean JNICALL
-Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeResize(
+Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeResize(
     JNIEnv * /* env */, jobject /* this */, jint width, jint height) {
   if (!g_renderer || !g_renderer->isInitialized())
     return JNI_FALSE;
@@ -136,7 +136,7 @@ Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeResize(
 // ═══════════════════════════════════════════════════════════════════
 
 JNIEXPORT void JNICALL
-Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeDestroy(
+Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeDestroy(
     JNIEnv * /* env */, jobject /* this */) {
   if (g_renderer) {
     g_renderer->destroy();
@@ -150,7 +150,7 @@ Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeDestroy(
 // ═══════════════════════════════════════════════════════════════════
 
 JNIEXPORT jboolean JNICALL
-Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeIsInitialized(
+Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeIsInitialized(
     JNIEnv * /* env */, jobject /* this */) {
   return (g_renderer && g_renderer->isInitialized()) ? JNI_TRUE : JNI_FALSE;
 }
@@ -163,7 +163,7 @@ Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeIsInitializ
 // ═══════════════════════════════════════════════════════════════════
 
 JNIEXPORT jfloatArray JNICALL
-Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeGetStats(
+Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeGetStats(
     JNIEnv *env, jobject /* this */) {
   jfloatArray result = env->NewFloatArray(11);
   if (!result)
@@ -194,7 +194,7 @@ Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeGetStats(
 // ═══════════════════════════════════════════════════════════════════
 
 JNIEXPORT jstring JNICALL
-Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeGetDeviceName(
+Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeGetDeviceName(
     JNIEnv *env, jobject /* this */) {
   if (g_renderer && g_renderer->isInitialized()) {
     VkStrokeStats s = g_renderer->getStats();
@@ -208,7 +208,7 @@ Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeGetDeviceNa
 // ═══════════════════════════════════════════════════════════════════
 
 JNIEXPORT void JNICALL
-Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeSetZoomLevel(
+Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeSetZoomLevel(
     JNIEnv * /* env */, jobject /* this */, jfloat zoom) {
   if (g_renderer && g_renderer->isInitialized()) {
     g_renderer->setZoomLevel(zoom);
@@ -220,7 +220,7 @@ Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeSetZoomLeve
 // ═══════════════════════════════════════════════════════════════════
 
 JNIEXPORT void JNICALL
-Java_com_flueraengine_fluera_1engine_VulkanStrokeOverlayPlugin_nativeTrimMemory(
+Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeTrimMemory(
     JNIEnv * /* env */, jobject /* this */, jint level) {
   if (g_renderer) {
     g_renderer->trimMemory(level);
