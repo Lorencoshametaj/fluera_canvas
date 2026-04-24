@@ -73,8 +73,8 @@ class FlueraCanvas extends StatefulWidget {
   const FlueraCanvas({
     super.key,
     this.controller,
-    this.strokeColor = Colors.black,
-    this.strokeWidth = 3.0,
+    this.strokeColor = const Color(0xFF1A1A1A),
+    this.strokeWidth = 2.0,
     this.background = const Color(0xFFFAFAFA),
     this.onStrokeCommitted,
     this.enableNativeLiveStroke = true,
@@ -323,15 +323,18 @@ class FlueraCanvasState extends State<FlueraCanvas>
 
   @override
   Widget build(BuildContext context) {
-    // When the native overlay is active, we hide the Dart-side live stroke
-    // so they don't double-render. The native layer fades out on endStroke,
-    // at which point the committed stroke (rendered by the Dart painter)
-    // takes over seamlessly.
+    // Always render the Dart-side live stroke. When the native overlay
+    // composites correctly on top, the two visuals overlap — which is
+    // visually harmless because they're drawn at the same coordinates
+    // with the same color / width. When the native Texture fails to
+    // composite (observed on some Impeller + Adreno paths), the Dart
+    // stroke is still there so the user sees SOMETHING. Better a minor
+    // double-paint than an invisible canvas.
     final useNative = _useNative;
     final scenePainter = _InfiniteCanvasPainter(
       strokes: _strokes,
-      livePoints: useNative ? null : _livePoints,
-      livePressures: useNative ? null : _livePressures,
+      livePoints: _livePoints,
+      livePressures: _livePressures,
       baseWidth: widget.strokeWidth,
       liveColor: widget.strokeColor,
       cameraOffset: _controller.offset,
@@ -353,6 +356,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
                   child: NativeStrokeOverlay(
                     canvasController: _controller,
                     controller: _nativeOverlay,
+                    // Dart fallback inside the overlay is disabled —
+                    // the parent CustomPaint above already renders the
+                    // live stroke in Dart. Keep only the native Texture
+                    // layer inside the overlay to avoid triple paint.
+                    fallbackToDart: false,
                   ),
                 ),
               ],
