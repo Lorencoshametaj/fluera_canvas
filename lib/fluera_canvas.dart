@@ -30,3 +30,11 @@ export 'src/drawing/input/palm_rejection_policy.dart';
 
 // Platform utilities.
 export 'src/utils/platform_guard.dart' show PlatformGuard;
+
+// GPU live-stroke bridges (engine-agnostic Dart side — native platform
+// code still ships via fluera_engine's plugin until Ondata 6 moves it).
+export 'src/rendering/memory_pressure.dart';
+export 'src/rendering/gpu/vulkan_stroke_overlay_service.dart';
+export 'src/rendering/gpu/webgpu_stroke_overlay_service.dart';
+export 'src/rendering/gpu/webgpu_overlay_view.dart' show WebGpuOverlayView;
+export 'src/drawing/input/input_predictor.dart';
