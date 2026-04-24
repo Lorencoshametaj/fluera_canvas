@@ -4,9 +4,15 @@
 
 #include "vk_stroke_renderer.h"
 #include <android/native_window_jni.h>
+#include <android/log.h>
 #include <jni.h>
 
+#define FLUERA_DIAG(fmt, ...) \
+  __android_log_print(ANDROID_LOG_ERROR, "FlueraDiag", fmt, ##__VA_ARGS__)
+
 static VkStrokeRenderer *g_renderer = nullptr;
+static int g_lastInitResult = -1;   // -1 never called, 0 failed, 1 ok
+static int g_lastUpdateCount = 0;   // incremented on each updateAndRender FFI call
 
 extern "C" {
 
@@ -17,6 +23,7 @@ extern "C" {
 JNIEXPORT jboolean JNICALL
 Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeInit(
     JNIEnv *env, jobject /* this */, jobject surface, jint width, jint height) {
+  FLUERA_DIAG("nativeInit called w=%d h=%d", width, height);
   if (g_renderer) {
     g_renderer->destroy();
     delete g_renderer;
@@ -24,7 +31,9 @@ Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeInit(
 
   ANativeWindow *window = ANativeWindow_fromSurface(env, surface);
   if (!window) {
+    FLUERA_DIAG("ANativeWindow_fromSurface returned null");
     LOGE("ANativeWindow_fromSurface returned null");
+    g_lastInitResult = 0;
     return JNI_FALSE;
   }
 
@@ -34,13 +43,17 @@ Java_com_fluera_canvas_VulkanStrokeOverlayPlugin_nativeInit(
 
   g_renderer = new VkStrokeRenderer();
   if (!g_renderer->init(window, width, height)) {
+    FLUERA_DIAG("VkStrokeRenderer::init FAILED");
     LOGE("VkStrokeRenderer::init failed");
     delete g_renderer;
     g_renderer = nullptr;
     ANativeWindow_release(window);
+    g_lastInitResult = 0;
     return JNI_FALSE;
   }
 
+  FLUERA_DIAG("VkStrokeRenderer::init OK");
+  g_lastInitResult = 1;
   return JNI_TRUE;
 }
 
@@ -271,14 +284,23 @@ extern "C" {
 
 __attribute__((visibility("default")))
 void fluera_stroke_execute(float* buf) {
-  if (!buf || !g_renderer || !g_renderer->isInitialized()) return;
+  if (!buf) {
+    FLUERA_DIAG("fluera_stroke_execute: null buffer");
+    return;
+  }
+  if (!g_renderer) {
+    FLUERA_DIAG("fluera_stroke_execute: g_renderer is NULL (nativeInit not called?)");
+    return;
+  }
+  if (!g_renderer->isInitialized()) {
+    FLUERA_DIAG("fluera_stroke_execute: g_renderer not initialized");
+    return;
+  }
 
   const float cmd = buf[FLUERA_FFI_CMD];
 
   if (cmd == FLUERA_CMD_CLEAR) {
     g_renderer->clearFrame();
-    // Also reset ring buffer accumulator (safety net — resetRing sequence
-    // should handle this, but belt-and-suspenders for edge cases)
     g_ringAccumPoints.clear();
     g_ringAccumCount = 0;
     return;
@@ -292,6 +314,11 @@ void fluera_stroke_execute(float* buf) {
   if (cmd == FLUERA_CMD_UPDATE_AND_RENDER) {
     const int pointCount = (int)buf[FLUERA_FFI_POINT_COUNT];
     if (pointCount < 2) return;
+    ++g_lastUpdateCount;
+    if (g_lastUpdateCount == 1 || g_lastUpdateCount % 30 == 0) {
+      FLUERA_DIAG("fluera_stroke_execute render #%d pointCount=%d",
+                  g_lastUpdateCount, pointCount);
+    }
 
     const float r = buf[FLUERA_FFI_COLOR_R];
     const float g = buf[FLUERA_FFI_COLOR_G];
@@ -316,6 +343,24 @@ void fluera_stroke_execute(float* buf) {
   }
 }
 
+// Diagnostic entry point — writes state into buf[0..5]:
+//   buf[0] = g_lastInitResult (-1 never called, 0 failed, 1 ok)
+//   buf[1] = g_renderer != nullptr ? 1 : 0
+//   buf[2] = g_renderer && g_renderer->isInitialized() ? 1 : 0
+//   buf[3] = g_lastUpdateCount (number of FFI render calls received)
+//   buf[4] = g_ringAccumCount (points currently in ring accumulator)
+//   buf[5] = g_ringLastSequence
+__attribute__((visibility("default")))
+void fluera_canvas_diagnostic(int32_t* buf) {
+  if (!buf) return;
+  buf[0] = g_lastInitResult;
+  buf[1] = g_renderer ? 1 : 0;
+  buf[2] = (g_renderer && g_renderer->isInitialized()) ? 1 : 0;
+  buf[3] = g_lastUpdateCount;
+  buf[4] = g_ringAccumCount;
+  buf[5] = g_ringLastSequence;
+}
+
 } // extern "C"
 
 // ═══════════════════════════════════════════════════════════════════
@@ -326,7 +371,15 @@ extern "C" {
 
 __attribute__((visibility("default")))
 void fluera_stroke_ring_execute(int32_t* buf) {
-  if (!buf || !g_renderer || !g_renderer->isInitialized()) return;
+  if (!buf) return;
+  if (!g_renderer) {
+    FLUERA_DIAG("fluera_stroke_ring_execute: g_renderer is NULL");
+    return;
+  }
+  if (!g_renderer->isInitialized()) {
+    FLUERA_DIAG("fluera_stroke_ring_execute: g_renderer not initialized");
+    return;
+  }
 
   const int cmd = buf[RING_CMD];
 

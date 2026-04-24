@@ -380,8 +380,17 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
               builder: (context, _) {
                 final drawing = widget.controller.isDrawing;
                 if (!drawing) return const SizedBox.shrink();
+                // RepaintBoundary forces Flutter to allocate a fresh
+                // compositing layer for the Texture. Required on some
+                // Impeller / Adreno paths where platform-view layers
+                // nested deep in the tree get dropped.
+                // DiagnosticTint is a temporary faint green tint so we
+                // can see if the Texture widget is being laid out at all
+                // — remove after confirming pipeline visibility.
                 return IgnorePointer(
-                  child: Texture(textureId: _textureId!),
+                  child: RepaintBoundary(
+                    child: Texture(textureId: _textureId!),
+                  ),
                 );
               },
             ),
