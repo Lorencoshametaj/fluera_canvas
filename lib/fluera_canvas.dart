@@ -58,6 +58,19 @@ export 'src/core/models/color_adjustments.dart';
 export 'src/core/models/gradient_filter.dart';
 export 'src/core/models/perspective_settings.dart';
 export 'src/core/models/export_settings.dart';
+export 'src/core/models/canvas_layer.dart';
+
+// Export pipeline — raster encoding, SVG import, Fluera file format,
+// timelapse config. All pure-Dart leaves.
+export 'src/export/binary_canvas_format.dart';
+export 'src/export/raster_image_encoder.dart';
+export 'src/export/raster_encoder_channel.dart';
+export 'src/export/export_preset.dart';
+export 'src/export/fluera_file_format.dart';
+export 'src/export/fluera_file_export_service.dart';
+export 'src/export/pdf_export_models.dart';
+export 'src/export/svg_importer.dart';
+export 'src/export/timelapse_export_config.dart';
 
 // Vector geometry shared by path / shape nodes.
 export 'src/core/vector/vector_path.dart';
