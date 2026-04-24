@@ -13,6 +13,7 @@ analyzer:
     unnecessary_getters_setters: ignore
     dangling_library_doc_comments: ignore
     curly_braces_in_flow_control_structures: ignore
+    unnecessary_this: ignore
     no_leading_underscores_for_local_identifiers: ignore
 
 linter:

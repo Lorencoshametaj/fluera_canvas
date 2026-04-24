@@ -14,10 +14,51 @@ export 'src/core/schema_version.dart';
 export 'src/core/engine_error.dart';
 export 'src/core/engine_telemetry.dart';
 
-// Scene graph leaf primitives.
+// Scene graph core — node tree, visitor double-dispatch, mixins,
+// base node types. The SceneGraph class itself still lives in engine
+// until Ondata 3c finishes the EngineScope bridge refactor.
+export 'src/core/scene_graph/canvas_node.dart';
+export 'src/core/scene_graph/canvas_node_factory.dart';
+export 'src/core/scene_graph/node_visitor.dart';
+export 'src/core/scene_graph/frozen_node_view.dart';
+export 'src/core/scene_graph/paint_stack_mixin.dart';
+export 'src/core/scene_graph/scene_graph_interceptor.dart';
+export 'src/core/scene_graph/transform_bridge.dart';
+export 'src/core/scene_graph/node_constraint.dart';
 export 'src/core/scene_graph/content_origin.dart';
 export 'src/core/scene_graph/invalidation_graph.dart';
 export 'src/core/scene_graph/node_id.dart';
+
+// Base nodes (group / layer / shape / stroke / text / image / path).
+export 'src/core/nodes/group_node.dart';
+export 'src/core/nodes/layer_node.dart';
+export 'src/core/nodes/shape_node.dart';
+export 'src/core/nodes/stroke_node.dart';
+export 'src/core/nodes/text_node.dart';
+export 'src/core/nodes/image_node.dart';
+export 'src/core/nodes/path_node.dart';
+
+// Node effects + paint extensions.
+export 'src/core/effects/node_effect.dart';
+export 'src/core/effects/shader_effect.dart';
+export 'src/core/effects/shader_effect_wrapper.dart';
+export 'src/core/effects/mesh_gradient.dart';
+
+// Core models consumed by base nodes.
+export 'src/core/models/digital_text_element.dart';
+export 'src/core/models/image_element.dart';
+export 'src/core/models/text_overlay.dart';
+export 'src/core/models/tone_curve.dart';
+export 'src/core/models/color_adjustments.dart';
+export 'src/core/models/gradient_filter.dart';
+export 'src/core/models/perspective_settings.dart';
+export 'src/core/models/export_settings.dart';
+
+// Vector geometry shared by path / shape nodes.
+export 'src/core/vector/vector_path.dart';
+
+// Accessibility tree — consumed by CanvasNode via semantic labels.
+export 'src/systems/accessibility_tree.dart';
 
 // Paint / gradient primitives (stack order, fill definitions).
 export 'src/core/effects/gradient_fill.dart';
