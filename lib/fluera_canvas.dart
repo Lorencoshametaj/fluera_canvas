@@ -13,6 +13,11 @@ export 'src/utils/uid.dart';
 export 'src/core/schema_version.dart';
 export 'src/core/engine_error.dart';
 export 'src/core/engine_telemetry.dart';
+export 'src/core/engine_event.dart';
+export 'src/core/engine_event_bus.dart';
+
+// Scene graph observer (canvas-side; works with any EngineEventBus).
+export 'src/core/scene_graph/scene_graph_observer.dart';
 
 // Scene graph core — node tree, visitor double-dispatch, mixins,
 // base node types. The SceneGraph class itself still lives in engine

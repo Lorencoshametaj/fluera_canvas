@@ -14,6 +14,7 @@ analyzer:
     dangling_library_doc_comments: ignore
     curly_braces_in_flow_control_structures: ignore
     unnecessary_this: ignore
+    prefer_collection_literals: ignore
     no_leading_underscores_for_local_identifiers: ignore
 
 linter:
