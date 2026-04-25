@@ -30,6 +30,9 @@ export 'src/canvas/stylus_hover_tracker.dart';
 // This is what most pub.dev consumers should reach for; the low-level
 // primitives above are the power-user surface.
 export 'src/canvas/fluera_canvas_widget.dart';
+export 'src/canvas/fluera_canvas_toolbar.dart';
+export 'src/canvas/canvas_background.dart';
+export 'src/canvas/canvas_serializer.dart';
 
 // ─── DRAWING INPUT + FILTERS ───────────────────────────────────────────────
 
@@ -137,17 +140,16 @@ export 'src/rendering/canvas/paper_grain_painter.dart';
 
 // ─── GPU LIVE-STROKE BRIDGE ────────────────────────────────────────────────
 //
-// Dart-side bridge to the native platform renderers (Vulkan / Metal / GL /
-// D3D11 / WebGPU). The native plugin code still ships via fluera_engine
-// until Ondata 6 moves it into this package.
+// The free core ships the abstract [GpuStrokeBackend] + the [NativeStrokeOverlay]
+// widget. Consumers who want native GPU live strokes (Vulkan / Metal /
+// OpenGL / D3D11 / WebGPU) add the commercial `fluera_canvas_gpu` package
+// and register its backend at app boot via [FlueraCanvasGpu.setBackend].
+// With no backend registered the overlay transparently falls back to a
+// Dart painter — the stroke stays visible, just with slightly higher
+// latency on the live path.
 
-export 'src/rendering/gpu/vulkan_stroke_overlay_service.dart';
-// WebGPU service unconditionally imports dart:js_interop + package:web —
-// which doesn't type-check on non-web. Fall back to the stub everywhere
-// except web so native builds compile.
-export 'src/rendering/gpu/webgpu_stroke_overlay_service_stub.dart'
-    if (dart.library.js_interop) 'src/rendering/gpu/webgpu_stroke_overlay_service.dart';
-export 'src/rendering/gpu/webgpu_overlay_view.dart' show WebGpuOverlayView;
+export 'src/rendering/gpu/gpu_stroke_backend.dart'
+    show GpuStrokeBackend, FlueraCanvasGpu;
 export 'src/rendering/native_stroke_overlay.dart'
     show NativeStrokeOverlay, NativeStrokeOverlayController;
 

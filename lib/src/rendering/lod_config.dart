@@ -1,14 +1,14 @@
-/// ═══════════════════════════════════════════════════════════════════════════
-/// 🎯 LOD (Level of Detail) threshold constants and tier computation.
-///
-/// SINGLE SOURCE OF TRUTH for all zoom-based LOD decisions across the engine.
-/// Used by DrawingPainter, InfiniteCanvasController, and the UI canvas layer.
-///
-/// TIER OVERVIEW:
-///   0 = Full quality   (scale ≥ 0.50)
-///   1 = Simplified     (0.25 ≤ scale < 0.50)
-///   2 = Thumbnails     (scale < 0.25)
-/// ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// 🎯 LOD (Level of Detail) threshold constants and tier computation.
+//
+// SINGLE SOURCE OF TRUTH for all zoom-based LOD decisions across the engine.
+// Used by DrawingPainter, InfiniteCanvasController, and the UI canvas layer.
+//
+// TIER OVERVIEW:
+//   0 = Full quality   (scale ≥ 0.50)
+//   1 = Simplified     (0.25 ≤ scale < 0.50)
+//   2 = Thumbnails     (scale < 0.25)
+// ═══════════════════════════════════════════════════════════════════════════
 
 /// Tier 0→1 / 1→2 boundary when zooming OUT: strokes become thumbnails.
 const double kLodTier2Threshold = 0.25;
@@ -37,10 +37,16 @@ int computeLodTier(double scale, [int? currentTier]) {
     return scale < kLodTier2Threshold ? 2 : (scale < kLodTier1Standard ? 1 : 0);
   }
   if (currentTier == 0) {
-    return scale < kLodTier2Threshold ? 2 : (scale < kLodTier1Threshold ? 1 : 0);
+    return scale < kLodTier2Threshold
+        ? 2
+        : (scale < kLodTier1Threshold ? 1 : 0);
   } else if (currentTier == 1) {
-    return scale < kLodTier2Threshold ? 2 : (scale >= kLodTier0UpThreshold ? 0 : 1);
+    return scale < kLodTier2Threshold
+        ? 2
+        : (scale >= kLodTier0UpThreshold ? 0 : 1);
   } else {
-    return scale >= kLodTier0UpThreshold ? 0 : (scale >= kLodTier1UpThreshold ? 1 : 2);
+    return scale >= kLodTier0UpThreshold
+        ? 0
+        : (scale >= kLodTier1UpThreshold ? 1 : 2);
   }
 }

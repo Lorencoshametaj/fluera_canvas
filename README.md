@@ -4,17 +4,30 @@
 > with a native GPU live-stroke pipeline, a scene graph, and pluggable brush
 > engines.
 >
-> **Status:** `0.1.0` pre-release. API unstable until `1.0.0`.
+> **Status:** `0.3.0` pre-release. API unstable until `1.0.0`.
 > Marketing site: **[engine.fluera.dev](https://engine.fluera.dev/)**
 
 ## What you get
 
+- `FlueraCanvas` — drop-in drawing widget. Pen / eraser tools, undo / redo
+  history, pressure-aware input, infinite pan / zoom / rotation, native
+  GPU live-stroke pipeline, PNG export. One `GlobalKey<FlueraCanvasState>`
+  and you have a full canvas in your app.
+- `FlueraCanvasToolbar` — drop-in Material toolbar that wires the most
+  common controls (pen / eraser, color swatches, stroke-width slider,
+  undo / redo / clear) into the canvas with zero glue code. Auto-syncs
+  to history state via `FlueraCanvasState.historyListenable`.
 - `InfiniteCanvasController` — camera with pan, zoom, rotation, spring
-  physics, momentum, multi-phase animation.
+  physics, momentum, multi-phase animation. Use it if you want to drive the
+  view from outside (e.g. "reset view" button, programmatic fly-to).
 - `InfiniteCanvasGestureDetector` — multi-touch, stylus, palm rejection,
   hover tracking. All policies are pluggable.
 - Scene graph primitives (`StrokeNode`, `ShapeNode`, `TextNode`, `ImageNode`,
   `PathNode`, `GroupNode`, `LayerNode`) with a visitor pattern.
+- Spatial index (`RTree`, `ViewportCuller`) used by default — combined
+  with a per-stroke `ui.Picture` cache and a committed-strokes
+  `RepaintBoundary`, the canvas scales to **5 k–10 k strokes at 60 FPS**
+  on mid-tier Android devices (Adreno 660 / Impeller-Vulkan, profile mode).
 - Input pipeline — One-Euro smoothing, dynamic pressure mapping, palm
   rejection, stylus prediction, 120 Hz raw processor.
 - Drawing models — `ProDrawingPoint`, `PressureCurve`, `VelocityCurve`,
@@ -26,7 +39,7 @@
 
 ```yaml
 dependencies:
-  fluera_canvas: ^0.1.0
+  fluera_canvas: ^0.3.0
 ```
 
 ## Hello canvas
@@ -35,36 +48,94 @@ dependencies:
 import 'package:flutter/material.dart';
 import 'package:fluera_canvas/fluera_canvas.dart';
 
-class MyCanvas extends StatefulWidget {
-  const MyCanvas({super.key});
+class MyPage extends StatefulWidget {
+  const MyPage({super.key});
   @override
-  State<MyCanvas> createState() => _MyCanvasState();
+  State<MyPage> createState() => _MyPageState();
 }
 
-class _MyCanvasState extends State<MyCanvas> {
-  final controller = InfiniteCanvasController();
-
-  @override
-  void dispose() {
-    controller.dispose();
-    super.dispose();
-  }
+class _MyPageState extends State<MyPage> {
+  final _canvasKey = GlobalKey<FlueraCanvasState>();
+  CanvasTool _tool = CanvasTool.draw;
 
   @override
   Widget build(BuildContext context) {
-    return InfiniteCanvasGestureDetector(
-      controller: controller,
-      onDrawStart: (p, pressure, tiltX, tiltY) { /* push stroke */ },
-      onDrawUpdate: (p, pressure, tiltX, tiltY) { /* extend stroke */ },
-      onDrawEnd: (p) { /* commit stroke */ },
-      child: CustomPaint(
-        painter: MyScenePainter(controller),
-        size: Size.infinite,
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notes'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.undo),
+            onPressed: () => _canvasKey.currentState?.undo(),
+          ),
+          IconButton(
+            icon: const Icon(Icons.redo),
+            onPressed: () => _canvasKey.currentState?.redo(),
+          ),
+        ],
+      ),
+      body: FlueraCanvas(
+        key: _canvasKey,
+        tool: _tool,
+        strokeColor: Colors.black87,
+        strokeWidth: 2.5,
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => setState(() => _tool =
+            _tool == CanvasTool.draw ? CanvasTool.erase : CanvasTool.draw),
+        child: Icon(_tool == CanvasTool.draw
+            ? Icons.edit
+            : Icons.cleaning_services),
       ),
     );
   }
 }
 ```
+
+Advanced camera control: pass a `controller: InfiniteCanvasController()`
+if you want to drive pan / zoom / rotation from outside.
+
+## Drop-in toolbar
+
+Don't want to wire your own pen / eraser / color / undo UI?
+`FlueraCanvasToolbar` does it for you:
+
+```dart
+class _DemoState extends State<Demo> {
+  final _canvasKey = GlobalKey<FlueraCanvasState>();
+  CanvasTool _tool = CanvasTool.draw;
+  Color _color = Colors.black;
+  double _width = 2.5;
+
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    Expanded(child: FlueraCanvas(
+      key: _canvasKey,
+      tool: _tool,
+      strokeColor: _color,
+      strokeWidth: _width,
+    )),
+    FlueraCanvasToolbar(
+      canvasKey: _canvasKey,
+      tool: _tool,
+      onToolChanged: (t) => setState(() => _tool = t),
+      color: _color,
+      onColorChanged: (c) => setState(() => _color = c),
+      strokeWidth: _width,
+      onStrokeWidthChanged: (w) => setState(() => _width = w),
+    ),
+  ]);
+}
+```
+
+The toolbar subscribes to `FlueraCanvasState.historyListenable` so
+`Undo` / `Redo` automatically reflect the live history state — no
+`onStrokeCommitted` plumbing required. Use `palette: [...]` for a
+custom color set, or pass `showUndo: false` etc. to suppress
+individual buttons. Want a different layout (Cupertino, sidebar,
+floating)? Skip the toolbar and drive `tool` / `strokeColor` /
+`strokeWidth` from your own UI — `FlueraCanvas` is intentionally
+headless.
 
 A runnable demo lives in [`example/`](example/). Full quickstart with
 persistence and camera animation: **[engine.fluera.dev/quickstart](https://engine.fluera.dev/quickstart)**.
@@ -74,14 +145,16 @@ persistence and camera animation: **[engine.fluera.dev/quickstart](https://engin
 | Platform | Live-stroke backend | Status |
 | --- | --- | --- |
 | Android | Vulkan              | ✅ Native path ships with this package |
-| iOS     | Metal               | Native path via `fluera_engine` plugin (migration pending) |
-| macOS   | Metal               | Native path via `fluera_engine` plugin (migration pending) |
-| Linux   | OpenGL              | Dart fallback |
-| Windows | Direct3D 11         | Dart fallback |
-| Web     | WebGPU              | Dart fallback (WebGPU path experimental) |
+| iOS     | Metal               | ✅ Native path ships with this package |
+| macOS   | Metal               | ✅ Native path ships with this package |
+| Linux   | OpenGL              | ✅ Native path ships with this package |
+| Windows | Direct3D 11         | ✅ Native path ships with this package |
+| Web     | WebGPU              | ✅ Native path (Chrome 113+, Edge 113+, Safari 18+) |
 
-Dart-only consumers can depend on `fluera_canvas` alone — the fallback Dart
-painter inside `NativeStrokeOverlay` takes over automatically.
+Consumers can depend on `fluera_canvas` alone — every platform's native
+live-stroke plugin ships with this package. If a specific GPU isn't
+available at runtime (e.g. WebGPU disabled in the browser), the Dart
+fallback inside `NativeStrokeOverlay` takes over automatically.
 
 ## Native live-stroke plugin
 
@@ -105,16 +178,21 @@ APK footprint on `arm64-v8a + armv7 + x86_64`: ~5 MB multi-arch.
 > Without this, the Texture widget renders an empty surface — the
 > strokes are drawn on a Vulkan image Flutter's compositor never reads.
 
-**iOS / macOS**: Metal renderer will move in here in the next release.
-For now the native path still registers via the companion `fluera_engine`
-package if you have it in your workspace.
+**iOS / macOS**: Metal renderer ships in this package — no extra
+dependency. CADisplayLink 120 Hz ProMotion sync (iOS) is also bundled.
 
-**Linux / Windows**: Dart fallback painter runs automatically — the OpenGL
-and Direct3D 11 renderers use a different tessellator that produces
-slightly different visuals, so we keep them out of the native path for
-cross-platform consistency.
+**Linux**: OpenGL/GTK plugin. Requires `libgtk-3-dev`, `libegl1-mesa-dev`,
+`libgl1-mesa-dev` at build time.
 
-`MethodChannel` name: `fluera_canvas/native_stroke`.
+**Windows**: Direct3D 11 plugin. Links against `d3d11`, `dxgi`,
+`d3dcompiler` (all shipped with the Windows 10 SDK).
+
+**Web**: WebGPU plugin. Lives alongside the other platforms but is
+gated on `navigator.gpu` availability — falls back to Dart on browsers
+without WebGPU (Firefox stable, Safari < 18).
+
+`MethodChannel` name: `fluera_canvas/native_stroke` on all native
+platforms. Web uses a direct JS interop bridge (no MethodChannel).
 
 ## What's *not* in here
 

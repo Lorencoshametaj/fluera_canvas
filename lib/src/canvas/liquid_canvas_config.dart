@@ -127,9 +127,7 @@ class LiquidCanvasConfig {
   });
 
   /// Disabled configuration — all physics off.
-  static const disabled = LiquidCanvasConfig(
-    enabled: false,
-  );
+  static const disabled = LiquidCanvasConfig(enabled: false);
 
   /// Maximum allowed scale including overshoot
   double maxElasticScale(double maxScale) =>

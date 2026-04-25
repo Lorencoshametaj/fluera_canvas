@@ -67,13 +67,16 @@ class InfiniteCanvasGestureDetector extends StatefulWidget {
   final VoidCallback?
   onDoubleTapZoom; // 🎯 Called on double-tap zoom to undo the first tap's dot
   final Function(Offset)? onLongPress;
+
   /// 🎯 Long-press continuation: move and end events forwarded to radial menu
   final Function(Offset screenPos)? onLongPressMoveUpdate;
   final Function(Offset screenPos)? onLongPressEnd;
 
   // ✂️ SPACE-SPLIT: Two-finger spread gesture callbacks
-  final Function(double splitLinePosition, {bool isHorizontal})? onSpaceSplitStart;
-  final Function(double splitLinePosition, double spreadDistance)? onSpaceSplitUpdate;
+  final Function(double splitLinePosition, {bool isHorizontal})?
+  onSpaceSplitStart;
+  final Function(double splitLinePosition, double spreadDistance)?
+  onSpaceSplitUpdate;
   final VoidCallback? onSpaceSplitEnd;
 
   // ✌️ MULTI-FINGER TAP: Undo with 2-finger tap, Redo with 3-finger tap
@@ -91,7 +94,8 @@ class InfiniteCanvasGestureDetector extends StatefulWidget {
   final Function(Offset canvasPosition)? onGesturalLassoEnd;
   final VoidCallback? onGesturalLassoArmed; // #2: Haptic when lasso arms
 
-  final bool Function() blockPanZoom; // 🔒 Block pan/zoom when true (evaluated at gesture time)
+  final bool Function()
+  blockPanZoom; // 🔒 Block pan/zoom when true (evaluated at gesture time)
   final bool
   enableSingleFingerPan; // 🖐️ Enable pan with a finger instead of drawing
   /// 📄 Optional callback: given a canvas-space position, returns true if
@@ -106,8 +110,14 @@ class InfiniteCanvasGestureDetector extends StatefulWidget {
 
   // 🌀 Image rotation callbacks (two-finger rotate + scale on selected image)
   final VoidCallback? onImageScaleStart;
-  final Function(double rotationDelta, double scaleDelta, Offset focalPointDelta)? onImageTransform;
+  final Function(
+    double rotationDelta,
+    double scaleDelta,
+    Offset focalPointDelta,
+  )?
+  onImageTransform;
   final VoidCallback? onImageScaleEnd;
+
   /// ⚡ Evaluated at GESTURE TIME (not build time) to decide whether
   /// two-finger gestures should route to image rotation.
   /// Receives the gesture focal point (screen coords) to hit-test images.
@@ -116,8 +126,14 @@ class InfiniteCanvasGestureDetector extends StatefulWidget {
 
   // 🤏 SELECTION TRANSFORM: Two-finger rotate + scale on lasso selection
   final VoidCallback? onSelectionScaleStart;
-  final Function(double rotationDelta, double scaleDelta, Offset focalPointDelta)? onSelectionTransform;
+  final Function(
+    double rotationDelta,
+    double scaleDelta,
+    Offset focalPointDelta,
+  )?
+  onSelectionTransform;
   final VoidCallback? onSelectionScaleEnd;
+
   /// Evaluated at GESTURE TIME to decide whether two-finger gestures
   /// should route to selection rotation/scale.
   final bool Function(Offset focalPoint) shouldRouteToSelectionTransform;
@@ -174,7 +190,8 @@ class InfiniteCanvasGestureDetector extends StatefulWidget {
     this.onImageScaleStart,
     this.onImageTransform,
     this.onImageScaleEnd,
-    this.shouldRouteToImageRotation = _defaultShouldRotateImage, // default: never route
+    this.shouldRouteToImageRotation =
+        _defaultShouldRotateImage, // default: never route
     this.onSelectionScaleStart,
     this.onSelectionTransform,
     this.onSelectionScaleEnd,
@@ -248,7 +265,8 @@ class _InfiniteCanvasGestureDetectorState
   // 🔄 GESTURE CONTINUITY: Smooth transition when pointer count changes
   bool _gestureTransitioning = false;
   int _previousPointerCount = 0;
-  bool _semanticTapConsumed = false; // 🧠 Set when semantic node consumed the tap
+  bool _semanticTapConsumed =
+      false; // 🧠 Set when semantic node consumed the tap
 
   // 🌀 ROTATION: State tracking
   double _initialRotation = 0.0;
@@ -262,19 +280,22 @@ class _InfiniteCanvasGestureDetectorState
   // 🌀 ROTATION: Deadzone to prevent accidental rotation during zoom/pan.
   // The user must rotate at least ~3° before rotation activates.
   static const double _rotationDeadzone = 0.05; // ~3° in radians
-  static const double _rotationDeadzoneZoomDominant = 0.20; // ~11° when zoom dominates
+  static const double _rotationDeadzoneZoomDominant =
+      0.20; // ~11° when zoom dominates
   static const double _maxAngularVelocity = 3.0; // Cap spin speed (rad/s)
 
   // ✂️ SPACE-SPLIT: Two-finger spread tracking
   bool _isSpaceSplitting = false;
-  bool _splitIsHorizontal = false; // true = horizontal split (↔), false = vertical (↕)
+  bool _splitIsHorizontal =
+      false; // true = horizontal split (↔), false = vertical (↕)
   final Map<int, Offset> _pointerPositions = {}; // pointerId → screen position
   double _splitInitialVerticalDistance = 0.0;
   double _splitInitialHorizontalDistance = 0.0;
   double _splitInitialHorizontalCenter = 0.0;
   double _splitInitialVerticalCenter = 0.0;
   static const double _splitActivationThreshold = 30.0; // px spread to activate
-  static const double _splitDirectionalityRatio = 3.0; // primary axis must be 3× secondary
+  static const double _splitDirectionalityRatio =
+      3.0; // primary axis must be 3× secondary
   // ✂️ LONG-PRESS: Hold 2 fingers still for 400ms to arm space-split
   Timer? _splitLongPressTimer;
   bool _splitLongPressReady = false;
@@ -290,7 +311,8 @@ class _InfiniteCanvasGestureDetectorState
   bool _imageScaleStarted = false; // Whether we fired onImageScaleStart
 
   double _imageInitialScale = 1.0; // Scale at gesture start
-  Offset _imagePreviousFocalPoint = Offset.zero; // Previous focal point for drag delta
+  Offset _imagePreviousFocalPoint =
+      Offset.zero; // Previous focal point for drag delta
 
   // 🤏 SELECTION TRANSFORM: State tracking for selection pinch rotate+scale
   bool _selectionScaleStarted = false;
@@ -305,8 +327,9 @@ class _InfiniteCanvasGestureDetectorState
       false; // True while waiting to see if second tap comes
 
   // 🔲 GESTURAL LASSO: Tap + Drag state
-  bool _isGesturalLassoArmed = false; // True when 2nd tap detected, awaiting movement
-  bool _isGesturalLassoing = false;   // True when actively drawing gestural lasso
+  bool _isGesturalLassoArmed =
+      false; // True when 2nd tap detected, awaiting movement
+  bool _isGesturalLassoing = false; // True when actively drawing gestural lasso
   Offset _gesturalLassoStartPos = Offset.zero; // Screen position at arm time
 
   // ─── 🚀 GESTURE COALESCING ──────────────────────────────────────
@@ -499,7 +522,9 @@ class _InfiniteCanvasGestureDetectorState
 
       // 🐌 Begin drift tracking for deferred rejection
       widget.palmRejection.beginDriftTracking(
-          event.pointer, event.localPosition);
+        event.pointer,
+        event.localPosition,
+      );
     }
 
     // ✂️ SPACE-SPLIT: Track individual pointer positions
@@ -542,8 +567,10 @@ class _InfiniteCanvasGestureDetectorState
       // ✂️ SPACE-SPLIT: Start long-press timer when 2nd finger arrives
       if (_pointerCount == 2 && _pointerPositions.length >= 2) {
         final positions = _pointerPositions.values.toList();
-        _splitInitialVerticalDistance = (positions[0].dy - positions[1].dy).abs();
-        _splitInitialHorizontalDistance = (positions[0].dx - positions[1].dx).abs();
+        _splitInitialVerticalDistance =
+            (positions[0].dy - positions[1].dy).abs();
+        _splitInitialHorizontalDistance =
+            (positions[0].dx - positions[1].dx).abs();
         _splitInitialHorizontalCenter = (positions[0].dx + positions[1].dx) / 2;
         _splitInitialVerticalCenter = (positions[0].dy + positions[1].dy) / 2;
         // Start 400ms long-press timer
@@ -628,24 +655,6 @@ class _InfiniteCanvasGestureDetectorState
       }
     }
     if (_pointerCount == 1 && _shouldEnableDrawing && shouldDraw) {
-      // 🔍 OVERVIEW GUARD: Block drawing when zoomed out ≤50%.
-      // At this scale the user is in navigation/overview mode.
-      // _isDrawing is NOT set, so _onPointerMove won't forward draw updates.
-      // onDrawStart is still fired so that non-drawing tap handlers
-      // (e.g. Fog of War node reveal) work at any zoom level.
-      if (widget.controller.scale <= 0.5 && !_panIntercepted) {
-        // At low zoom, fire onDrawStart for tap handlers (fog node reveal)
-        // but don't set _isDrawing so moves aren't forwarded as strokes.
-        // _panIntercepted means the onPanInterceptTest returned true
-        // (e.g. fog zone selection) — in that case, let the draw proceed.
-        if (widget.onDrawStart != null) {
-          final canvasPoint = widget.controller.screenToCanvas(
-            event.localPosition,
-          );
-          widget.onDrawStart!(canvasPoint, 0.5, 0.0, 0.0);
-        }
-        return;
-      }
       // 🎯 DOUBLE-TAP CHECK: If this could be the second tap of a double-tap,
       // suppress drawing to avoid the temporary dot flash.
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -679,7 +688,8 @@ class _InfiniteCanvasGestureDetectorState
           event.localPosition,
         );
         _lastCanvasPosition = canvasPoint;
-        _strokeStartPosition = canvasPoint; // 📊 AUTO-DETECT: record stroke start
+        _strokeStartPosition =
+            canvasPoint; // 📊 AUTO-DETECT: record stroke start
         widget.onDrawStart!(
           canvasPoint,
           normalizedPressure,
@@ -698,12 +708,19 @@ class _InfiniteCanvasGestureDetectorState
 
     // ✂️ SPACE-SPLIT: Detect spread (only after long-press armed it)
     // Cancel long-press timer if zooming (scale change before 400ms timer fires)
-    if (_pointerCount == 2 && !_splitLongPressReady && !_isSpaceSplitting && _splitLongPressTimer != null) {
+    if (_pointerCount == 2 &&
+        !_splitLongPressReady &&
+        !_isSpaceSplitting &&
+        _splitLongPressTimer != null) {
       // Check if fingers moved significantly (= zoom, not hold-still)
       if (_pointerPositions.length >= 2) {
         final positions = _pointerPositions.values.toList();
         final currentDist = (positions[0] - positions[1]).distance;
-        final initialDist = Offset(_splitInitialHorizontalDistance, _splitInitialVerticalDistance).distance;
+        final initialDist =
+            Offset(
+              _splitInitialHorizontalDistance,
+              _splitInitialVerticalDistance,
+            ).distance;
         if (initialDist > 0 && (currentDist / initialDist - 1.0).abs() > 0.15) {
           // Scale changed > 15% before timer fired → this is zoom, not hold
           _splitLongPressTimer?.cancel();
@@ -711,12 +728,17 @@ class _InfiniteCanvasGestureDetectorState
         }
       }
     }
-    if (_pointerCount == 2 && _pointerPositions.length >= 2 && !_isDrawing && (_splitLongPressReady || _isSpaceSplitting)) {
+    if (_pointerCount == 2 &&
+        _pointerPositions.length >= 2 &&
+        !_isDrawing &&
+        (_splitLongPressReady || _isSpaceSplitting)) {
       final positions = _pointerPositions.values.toList();
       final currentVerticalDist = (positions[0].dy - positions[1].dy).abs();
       final currentHorizontalDist = (positions[0].dx - positions[1].dx).abs();
-      final verticalSpread = currentVerticalDist - _splitInitialVerticalDistance;
-      final horizontalSpread = currentHorizontalDist - _splitInitialHorizontalDistance;
+      final verticalSpread =
+          currentVerticalDist - _splitInitialVerticalDistance;
+      final horizontalSpread =
+          currentHorizontalDist - _splitInitialHorizontalDistance;
 
       if (_isSpaceSplitting) {
         // Already splitting — update along the locked axis
@@ -740,21 +762,33 @@ class _InfiniteCanvasGestureDetectorState
         // Vertical split (horizontal line)
         _isSpaceSplitting = true;
         _splitIsHorizontal = false;
-        final splitLineY = widget.controller.screenToCanvas(
-          Offset(_splitInitialHorizontalCenter, _splitInitialVerticalCenter),
-        ).dy;
+        final splitLineY =
+            widget.controller
+                .screenToCanvas(
+                  Offset(
+                    _splitInitialHorizontalCenter,
+                    _splitInitialVerticalCenter,
+                  ),
+                )
+                .dy;
         widget.onSpaceSplitStart?.call(splitLineY, isHorizontal: false);
         HapticFeedback.lightImpact();
         return;
       } else if (absH > _splitActivationThreshold &&
-                 absH > absV * _splitDirectionalityRatio &&
-                 widget.onSpaceSplitStart != null) {
+          absH > absV * _splitDirectionalityRatio &&
+          widget.onSpaceSplitStart != null) {
         // Horizontal split (vertical line)
         _isSpaceSplitting = true;
         _splitIsHorizontal = true;
-        final splitLineX = widget.controller.screenToCanvas(
-          Offset(_splitInitialHorizontalCenter, _splitInitialVerticalCenter),
-        ).dx;
+        final splitLineX =
+            widget.controller
+                .screenToCanvas(
+                  Offset(
+                    _splitInitialHorizontalCenter,
+                    _splitInitialVerticalCenter,
+                  ),
+                )
+                .dx;
         widget.onSpaceSplitStart?.call(splitLineX, isHorizontal: true);
         HapticFeedback.lightImpact();
         return;
@@ -773,15 +807,22 @@ class _InfiniteCanvasGestureDetectorState
       if (settings.recordPressureSample(event.pointer, event.pressure)) {
         // Flat pressure curve detected — cancel this touch
         settings.recordDeferredRejection(
-            event.localPosition, PalmRejectionReason.pressureCurve,
-            event.radiusMajor);
+          event.localPosition,
+          PalmRejectionReason.pressureCurve,
+          event.radiusMajor,
+        );
         return; // Swallow further move events for this palm
       }
       if (settings.checkDrift(
-          event.pointer, event.localPosition, event.radiusMajor)) {
+        event.pointer,
+        event.localPosition,
+        event.radiusMajor,
+      )) {
         settings.recordDeferredRejection(
-            event.localPosition, PalmRejectionReason.drift,
-            event.radiusMajor);
+          event.localPosition,
+          PalmRejectionReason.drift,
+          event.radiusMajor,
+        );
         return; // Near-zero movement — likely palm resting
       }
     }
@@ -927,9 +968,7 @@ class _InfiniteCanvasGestureDetectorState
       return;
     }
     if (_pointerCount == 1 && _isGesturalLassoing) {
-      final canvasPoint = widget.controller.screenToCanvas(
-        event.localPosition,
-      );
+      final canvasPoint = widget.controller.screenToCanvas(event.localPosition);
       widget.onGesturalLassoUpdate?.call(canvasPoint);
       _hasMoved = true;
       return;
@@ -1347,9 +1386,11 @@ class _InfiniteCanvasGestureDetectorState
 
         // ✌️ MULTI-FINGER TAP: Check if this was a quick tap (not a zoom/pan)
         if (_wasMultiTouch && !_multiTouchMoved && _multiTouchDownTime > 0) {
-          final tapDuration = DateTime.now().millisecondsSinceEpoch - _multiTouchDownTime;
+          final tapDuration =
+              DateTime.now().millisecondsSinceEpoch - _multiTouchDownTime;
           if (tapDuration < 300) {
-            if (_maxPointerCountInGesture == 2 && widget.onTwoFingerTap != null) {
+            if (_maxPointerCountInGesture == 2 &&
+                widget.onTwoFingerTap != null) {
               widget.onTwoFingerTap!();
               // Skip the normal cleanup path for onDrawEnd to avoid side effects
               _wasMultiTouch = false;
@@ -1359,7 +1400,8 @@ class _InfiniteCanvasGestureDetectorState
               _lastCanvasPosition = null;
               _lastPressure = 1.0;
               return; // Done
-            } else if (_maxPointerCountInGesture == 3 && widget.onThreeFingerTap != null) {
+            } else if (_maxPointerCountInGesture == 3 &&
+                widget.onThreeFingerTap != null) {
               widget.onThreeFingerTap!();
               _wasMultiTouch = false;
               _firstPointerPosition = null;
@@ -1443,11 +1485,13 @@ class _InfiniteCanvasGestureDetectorState
   void _onPointerSignal(PointerSignalEvent event) {
     if (event is PointerScrollEvent) {
       // Check if Ctrl is held (zoom) or plain scroll (pan)
-      final isCtrlHeld = HardwareKeyboard.instance.logicalKeysPressed
-          .any((key) => key == LogicalKeyboardKey.controlLeft ||
-                        key == LogicalKeyboardKey.controlRight ||
-                        key == LogicalKeyboardKey.metaLeft ||
-                        key == LogicalKeyboardKey.metaRight);
+      final isCtrlHeld = HardwareKeyboard.instance.logicalKeysPressed.any(
+        (key) =>
+            key == LogicalKeyboardKey.controlLeft ||
+            key == LogicalKeyboardKey.controlRight ||
+            key == LogicalKeyboardKey.metaLeft ||
+            key == LogicalKeyboardKey.metaRight,
+      );
 
       if (isCtrlHeld) {
         // 🔍 Ctrl+Scroll = Zoom
@@ -1514,11 +1558,15 @@ class _InfiniteCanvasGestureDetectorState
     // Apply scale from trackpad pinch, clamp to prevent drift at limits
     final newScale = (_trackpadInitialScale * event.scale).clamp(0.1, 5.0);
     if ((newScale - controller.scale).abs() < 0.0001 &&
-        event.panDelta == Offset.zero) return; // No change
+        event.panDelta == Offset.zero) {
+      return; // No change
+    }
 
     // Zoom centered on trackpad focal point
     final focalCanvas = controller.screenToCanvas(focalPoint);
-    final newOffset = focalPoint - focalCanvas * newScale +
+    final newOffset =
+        focalPoint -
+        focalCanvas * newScale +
         event.panDelta; // Include pan delta from trackpad
 
     controller.updateTransform(offset: newOffset, scale: newScale);
@@ -1538,8 +1586,12 @@ class _InfiniteCanvasGestureDetectorState
     // ⚡ BUT allow through when image rotation is active (evaluated at gesture time) —
     // blockPanZoom includes _imageTool.isRotating, which creates a deadlock.
     final _blockPZ = widget.blockPanZoom();
-    final _routeImg = widget.shouldRouteToImageRotation(details.localFocalPoint);
-    final _routeSel = widget.shouldRouteToSelectionTransform(details.localFocalPoint);
+    final _routeImg = widget.shouldRouteToImageRotation(
+      details.localFocalPoint,
+    );
+    final _routeSel = widget.shouldRouteToSelectionTransform(
+      details.localFocalPoint,
+    );
 
     if (_blockPZ && !_routeImg && !_routeSel) return;
     // 🔄 GESTURE CONTINUITY: When transitioning between pointer counts
@@ -1605,7 +1657,8 @@ class _InfiniteCanvasGestureDetectorState
     // _onPointerMove only tracks per-frame delta (which can be tiny on
     // high-refresh devices). The real movement happens here in _onScaleUpdate.
     if (!_multiTouchMoved) {
-      final panned = (details.localFocalPoint - _initialFocalPoint).distance > 8;
+      final panned =
+          (details.localFocalPoint - _initialFocalPoint).distance > 8;
       final scaled = (details.scale - 1.0).abs() > 0.02;
       if (panned || scaled) _multiTouchMoved = true;
     }
@@ -1614,7 +1667,9 @@ class _InfiniteCanvasGestureDetectorState
     if (_isSpaceSplitting || _splitLongPressReady) return;
 
     // 🤏 SELECTION TRANSFORM: Route pinch to selection rotate+scale
-    final shouldTransformSelection = widget.shouldRouteToSelectionTransform(details.localFocalPoint);
+    final shouldTransformSelection = widget.shouldRouteToSelectionTransform(
+      details.localFocalPoint,
+    );
 
     if (shouldTransformSelection && widget.onSelectionScaleStart != null) {
       if (!_selectionScaleStarted) {
@@ -1644,7 +1699,9 @@ class _InfiniteCanvasGestureDetectorState
     // route rotation + scale to the image instead of the canvas.
     // ⚡ Uses shouldRouteToImageRotation() instead of checking callbacks at build time
     // because the gesture detector widget may not rebuild when state changes.
-    final shouldRotateImage = widget.shouldRouteToImageRotation(details.localFocalPoint);
+    final shouldRotateImage = widget.shouldRouteToImageRotation(
+      details.localFocalPoint,
+    );
     if (shouldRotateImage && widget.onImageScaleStart != null) {
       // Fire start callback once
       if (!_imageScaleStarted) {
@@ -1686,7 +1743,6 @@ class _InfiniteCanvasGestureDetectorState
       return;
     }
     widget.controller.isPanning = true; // 🚀 SCROLL OPT
-
 
     // 🌊 LIQUID: Track velocity for momentum
     final now = DateTime.now().microsecondsSinceEpoch;
@@ -1744,9 +1800,8 @@ class _InfiniteCanvasGestureDetectorState
     // 🌀 ROTATION: Track rotation from gesture with adaptive deadzone.
     // When zoom-dominant, rotation requires a much larger intentional twist
     // (~11° instead of ~3°) to activate — prevents accidental rotation.
-    final effectiveDeadzone = _zoomDominant
-        ? _rotationDeadzoneZoomDominant
-        : _rotationDeadzone;
+    final effectiveDeadzone =
+        _zoomDominant ? _rotationDeadzoneZoomDominant : _rotationDeadzone;
     double newRotation;
     if (_rotationUnlocked || details.rotation.abs() > effectiveDeadzone) {
       _rotationUnlocked = true;
@@ -1835,7 +1890,8 @@ class _InfiniteCanvasGestureDetectorState
       final snapAngle = widget.controller.checkSnapAngle(newRotation);
       if (snapAngle != null && snapAngle != _lastSnappedAngle) {
         // 📐 Cardinal angle check: 0°, ±90°, ±180°
-        final isCardinal = snapAngle.abs() < 0.001 ||
+        final isCardinal =
+            snapAngle.abs() < 0.001 ||
             (snapAngle.abs() - math.pi / 2).abs() < 0.001 ||
             (snapAngle.abs() - math.pi).abs() < 0.001;
 
@@ -1895,8 +1951,6 @@ class _InfiniteCanvasGestureDetectorState
       widget.controller.markNeedsPaint();
       return;
     }
-
-
 
     // 🌊 LIQUID: Launch zoom spring-back if scale is beyond limits
     widget.controller.startZoomSpringBack(_lastScaleEndFocalPoint);

@@ -198,7 +198,6 @@ class ProStroke {
     return path;
   }
 
-
   ui.Path _buildCatmullRomPathImpl() {
     final path = ui.Path();
     if (points.isEmpty) return path;

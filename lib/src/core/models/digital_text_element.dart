@@ -256,12 +256,22 @@ class DigitalTextElement {
       isOCR: isOCR ?? this.isOCR,
       pageIndex: pageIndex == _sentinel ? this.pageIndex : pageIndex as int?,
       createdAt: createdAt ?? this.createdAt,
-      modifiedAt: modifiedAt == _sentinel ? this.modifiedAt : modifiedAt as DateTime?,
+      modifiedAt:
+          modifiedAt == _sentinel ? this.modifiedAt : modifiedAt as DateTime?,
       shadow: shadow == _sentinel ? this.shadow : shadow as ui.Shadow?,
-      backgroundColor: backgroundColor == _sentinel ? this.backgroundColor : backgroundColor as Color?,
-      outlineColor: outlineColor == _sentinel ? this.outlineColor : outlineColor as Color?,
+      backgroundColor:
+          backgroundColor == _sentinel
+              ? this.backgroundColor
+              : backgroundColor as Color?,
+      outlineColor:
+          outlineColor == _sentinel
+              ? this.outlineColor
+              : outlineColor as Color?,
       outlineWidth: outlineWidth ?? this.outlineWidth,
-      gradientColors: gradientColors == _sentinel ? this.gradientColors : gradientColors as List<Color>?,
+      gradientColors:
+          gradientColors == _sentinel
+              ? this.gradientColors
+              : gradientColors as List<Color>?,
       spans: spans == _sentinel ? this.spans : spans as List<DigitalTextSpan>?,
       maxWidth: maxWidth == _sentinel ? this.maxWidth : maxWidth as double?,
     );

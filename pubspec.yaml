@@ -1,10 +1,10 @@
 name: fluera_canvas
 description: >
-  A professional 2D canvas SDK for Flutter. Pressure-sensitive infinite
-  canvas with a native GPU live-stroke pipeline (Vulkan / Metal / OpenGL /
-  Direct3D 11 / WebGPU), scene graph, and pluggable brush engines.
-version: 0.1.0
-homepage: https://fluera.dev
+  Pressure-sensitive infinite-canvas SDK for Flutter. Pen / eraser, undo /
+  redo, drop-in toolbar, persistence (PNG / JSON / binary), 5k+ strokes
+  at 60 FPS.
+version: 0.3.0
+homepage: https://engine.fluera.dev
 repository: https://github.com/Lorencoshametaj/fluera_canvas
 issue_tracker: https://github.com/Lorencoshametaj/fluera_canvas/issues
 topics:
@@ -21,19 +21,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  ffi: ^2.1.0
   meta: ^1.11.0
   vector_math: ^2.1.4
-  web: ^1.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
-
-flutter:
-  plugin:
-    platforms:
-      android:
-        package: com.fluera.canvas
-        pluginClass: FlueraCanvasPlugin

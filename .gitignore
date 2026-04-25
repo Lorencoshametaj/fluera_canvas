@@ -12,8 +12,20 @@ pubspec.lock
 
 # Platform host artifacts
 android/.gradle/
+android/.cxx/
+android/.kotlin/
 android/local.properties
+android/app/build/
+android/build/
 ios/Pods/
 ios/.symlinks/
 macos/Pods/
 macos/.symlinks/
+
+# Coverage
+coverage/
+
+# Generated
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata

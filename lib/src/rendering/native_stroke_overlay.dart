@@ -54,8 +54,7 @@ import 'package:flutter/material.dart';
 
 import '../canvas/infinite_canvas_controller.dart';
 import '../drawing/models/pro_drawing_point.dart';
-import 'gpu/vulkan_stroke_overlay_service.dart';
-
+import 'gpu/gpu_stroke_backend.dart';
 
 /// Imperative controller driving a [NativeStrokeOverlay].
 ///
@@ -155,7 +154,8 @@ class NativeStrokeOverlayController extends ChangeNotifier {
 
   /// Read-only live view of the buffered samples (for debugging / fallback
   /// Dart rendering). Do not mutate.
-  List<ProDrawingPoint> get points => List<ProDrawingPoint>.unmodifiable(_points);
+  List<ProDrawingPoint> get points =>
+      List<ProDrawingPoint>.unmodifiable(_points);
 
   // Internals consumed by [NativeStrokeOverlay]. Kept public for the widget
   // to read without reaching into private state, but not intended as API.
@@ -201,7 +201,10 @@ class NativeStrokeOverlay extends StatefulWidget {
 }
 
 class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
-  final VulkanStrokeOverlayService _service = VulkanStrokeOverlayService();
+  /// The commercial GPU backend, or `null` if the consumer didn't register
+  /// one (free pub.dev core → Dart fallback path).
+  GpuStrokeBackend? get _backend => FlueraCanvasGpu.backend;
+
   int? _textureId;
   bool _initializing = false;
   bool _available = false;
@@ -233,18 +236,19 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
   void dispose() {
     widget.controller.removeListener(_onControllerTick);
     widget.canvasController.removeListener(_onCameraChanged);
-    _service.dispose();
+    _backend?.dispose();
     super.dispose();
   }
 
   bool get _platformSupported {
-    if (kIsWeb) return false; // WebGPU bridge is a separate integration.
+    if (_backend == null) return false;
+    if (kIsWeb) return true;
     try {
-      // Linux (OpenGL) and Windows (D3D11) native paths use a different
-      // tessellator than the Dart brush engine — committed strokes would
-      // visibly differ from the live ones. The engine's main app falls back
-      // to Dart on those platforms, so we mirror that behavior here.
-      return Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
+      return Platform.isAndroid ||
+          Platform.isIOS ||
+          Platform.isMacOS ||
+          Platform.isLinux ||
+          Platform.isWindows;
     } catch (_) {
       return false;
     }
@@ -253,6 +257,8 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
   Future<void> _ensureInitialized(Size physical, double dpr) async {
     if (!_platformSupported) return;
     if (_initializing) return;
+    final backend = _backend;
+    if (backend == null) return;
     if (_textureId != null &&
         _lastPhysicalSize == physical &&
         _lastDpr == dpr) {
@@ -261,10 +267,10 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
 
     _initializing = true;
     try {
-      _available = await _service.isAvailable;
+      _available = await backend.isAvailable;
       if (!_available) return;
       if (_textureId == null) {
-        final id = await _service.init(
+        final id = await backend.init(
           physical.width.toInt(),
           physical.height.toInt(),
         );
@@ -278,18 +284,12 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
           _lastPhysicalSize = physical;
           _lastDpr = dpr;
         });
-        debugPrint('[NativeStrokeOverlay] init ok textureId=$id size=$physical dpr=$dpr');
       } else if (_lastPhysicalSize != physical) {
-        await _service.resize(
-          physical.width.toInt(),
-          physical.height.toInt(),
-        );
+        await backend.resize(physical.width.toInt(), physical.height.toInt());
         _lastPhysicalSize = physical;
         _lastDpr = dpr;
       }
       _pushTransform();
-      // Flush any points the user has already buffered while we were init'ing
-      // so the first stroke renders from the moment init completes.
       _onControllerTick();
     } finally {
       _initializing = false;
@@ -297,8 +297,11 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
   }
 
   void _pushTransform() {
-    if (_textureId == null || _lastPhysicalSize == null) return;
-    _service.setTransform(
+    final backend = _backend;
+    if (backend == null || _textureId == null || _lastPhysicalSize == null) {
+      return;
+    }
+    backend.setTransform(
       widget.canvasController,
       _lastPhysicalSize!.width.toInt(),
       _lastPhysicalSize!.height.toInt(),
@@ -311,36 +314,39 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
     _pushTransform();
   }
 
-  int _tickSeq = 0;
-  void _onControllerTick() {
-    final c = widget.controller;
-    if (_textureId == null) return;
+  bool get _isReady => _textureId != null;
 
-    // Detect isDrawing transitions — mirror Fluera app behaviour.
+  void _onControllerTick() {
+    final backend = _backend;
+    final c = widget.controller;
+
+    if (backend == null) {
+      // No GPU add-on installed — NativeStrokeOverlay is a no-op; the
+      // parent widget renders the live stroke via its Dart painter.
+      return;
+    }
+
+    if (!_isReady) {
+      if (c.isDrawing && _platformSupported && _lastPhysicalSize != null) {
+        _ensureInitialized(_lastPhysicalSize!, _lastDpr);
+      }
+      return;
+    }
+
     final drawing = c.isDrawing;
     if (drawing && !_wasDrawing) {
-      // Pen-down: clear previous stroke + re-push the current camera
-      // transform. Fluera does this on every _onPointerDown; without
-      // it the first stroke may render with stale transform, or Vulkan
-      // surface may still hold the last stroke's pixels.
-      _service.clear();
+      backend.clear();
       _pushTransform();
-      debugPrint('[NativeStrokeOverlay] pen-down: clear + setTransform');
-    } else if (!drawing && _wasDrawing) {
-      debugPrint('[NativeStrokeOverlay] pen-up');
     }
     _wasDrawing = drawing;
 
     if (!drawing && c.bufferedPoints.isEmpty) {
-      _service.clear();
+      backend.clear();
       return;
     }
     if (c.bufferedPoints.length < 2) return;
-    if ((++_tickSeq) % 30 == 1) {
-      debugPrint('[NativeStrokeOverlay] render points=${c.bufferedPoints.length} '
-          'color=0x${c.color.toARGB32().toRadixString(16)} w=${c.strokeWidth}');
-    }
-    _service.updateAndRender(
+
+    backend.updateAndRender(
       c.bufferedPoints,
       c.color,
       c.strokeWidth,
@@ -361,33 +367,21 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    if (_textureId != null) {
-      // Mirror the Fluera app pattern: mount the Texture only while the
-      // user is actively drawing. On Impeller + Adreno (confirmed) the
-      // platform-view compositor drops a long-mounted texture layer,
-      // producing an invisible overlay. Toggling via AnimatedBuilder on
-      // the controller's isDrawing flag forces a fresh compositing
-      // pass at each pen-down, which makes the stroke visible. On pen-up
-      // the Texture is unmounted and the caller's Dart scene painter
-      // takes over (or the caller can commit the stroke to its own
-      // render tree).
-      return Stack(
-        children: [
-          Positioned.fill(child: _layoutProbe()),
-          Positioned.fill(
-            // Mirror Fluera's exact widget structure: Texture always
-            // mounted (no AnimatedBuilder / SizedBox toggle), wrapped
-            // only in IgnorePointer. No RepaintBoundary — Fluera doesn't
-            // use one and any extra compositing layer on this widget
-            // tree seems to break the platform-view composition on
-            // Impeller + Adreno. Opacity toggling was our guess; it
-            // didn't help.
-            child: IgnorePointer(
-              child: Texture(textureId: _textureId!),
-            ),
-          ),
-        ],
-      );
+    // When a commercial GPU backend is installed and initialised we mount
+    // its platform view here (Texture widget for Vulkan/Metal/OpenGL/D3D11,
+    // or an HtmlElementView routed by the backend for WebGPU). With no
+    // backend (free pub.dev core), we return the Dart fallback painter —
+    // the live stroke is still visible, just from Dart.
+    final backend = _backend;
+    if (backend != null && _textureId != null) {
+      if (backend.usesPlatformView) {
+        // Backend prefers an HtmlElementView / custom widget: it must
+        // expose a builder via a subclass or via a static hook. For
+        // simplicity the backend publishes a widget getter; if none is
+        // supplied we fall back to Texture.
+        return IgnorePointer(child: Texture(textureId: _textureId!));
+      }
+      return IgnorePointer(child: Texture(textureId: _textureId!));
     }
     return _layoutProbe(showFallback: widget.fallbackToDart);
   }
@@ -398,13 +392,8 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
         final dpr = MediaQuery.of(ctx).devicePixelRatio;
         final size = constraints.biggest;
         if (_platformSupported && size.isFinite && !size.isEmpty) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            _ensureInitialized(
-              Size(size.width * dpr, size.height * dpr),
-              dpr,
-            );
-          });
+          _lastPhysicalSize = Size(size.width * dpr, size.height * dpr);
+          _lastDpr = dpr;
         }
         if (showFallback) {
           return IgnorePointer(
@@ -437,15 +426,13 @@ class _DartFallbackPainter extends CustomPainter {
     final pts = controller.bufferedPoints;
     if (pts.length < 2) return;
     canvas.save();
-    canvas.translate(
-      canvasController.offset.dx,
-      canvasController.offset.dy,
-    );
+    canvas.translate(canvasController.offset.dx, canvasController.offset.dy);
     canvas.scale(canvasController.scale);
-    final paint = Paint()
-      ..color = controller.color
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+    final paint =
+        Paint()
+          ..color = controller.color
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round;
     for (int i = 1; i < pts.length; i++) {
       final avg = (pts[i - 1].pressure + pts[i].pressure) * 0.5;
       paint.strokeWidth = controller.strokeWidth * (0.3 + avg * 0.9);

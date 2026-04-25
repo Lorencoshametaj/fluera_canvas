@@ -121,7 +121,8 @@ class InfiniteCanvasController extends ChangeNotifier {
   }
 
   // 🌀 Rotation lock (default: LOCKED for first-time users)
-  bool _rotationLocked = true; // 🔒 Locked by default — simpler first experience
+  bool _rotationLocked =
+      true; // 🔒 Locked by default — simpler first experience
   bool get rotationLocked => _rotationLocked;
   set rotationLocked(bool value) {
     _rotationLocked = value;
@@ -200,6 +201,7 @@ class InfiniteCanvasController extends ChangeNotifier {
   Offset _diveTargetOffset = Offset.zero;
   double _diveTargetScale = 1.0;
   VoidCallback? _onDiveComplete;
+
   /// Curve for the dive animation — fast entry, smooth deceleration.
   static const Cubic _diveCurve = Cubic(0.16, 1.0, 0.3, 1.0);
 
@@ -256,15 +258,18 @@ class InfiniteCanvasController extends ChangeNotifier {
   int get flightPhase => _isFlightActive ? _flightCurrentPhase : -1;
 
   /// 🎯 Source cluster ID of the active flight (null if no flight).
-  String? get flightSourceClusterId => _isFlightActive ? _flightSourceClusterId : null;
+  String? get flightSourceClusterId =>
+      _isFlightActive ? _flightSourceClusterId : null;
 
   /// 🎯 Target cluster ID of the active flight (null if no flight).
-  String? get flightTargetClusterId => _isFlightActive ? _flightTargetClusterId : null;
+  String? get flightTargetClusterId =>
+      _isFlightActive ? _flightTargetClusterId : null;
 
   /// 🎬 Landing pulse progress (0.0—1.0). 0.0 when not active.
-  double get landingPulseProgress => _landingPulseActive
-      ? (_landingPulseElapsed / _landingPulseDuration).clamp(0.0, 1.0)
-      : 0.0;
+  double get landingPulseProgress =>
+      _landingPulseActive
+          ? (_landingPulseElapsed / _landingPulseDuration).clamp(0.0, 1.0)
+          : 0.0;
 
   /// 🎬 Landing pulse center (canvas coordinates).
   Offset get landingPulseCenter => _landingPulseCenter;
@@ -274,7 +279,8 @@ class InfiniteCanvasController extends ChangeNotifier {
   /// or running any physics animation (momentum, spring-back).
   /// Painters use this to skip expensive work during all gesture types.
   bool _isPanning = false;
-  bool get isPanning => _isPanning ||
+  bool get isPanning =>
+      _isPanning ||
       _isMomentumActive ||
       _isRotationMomentumActive ||
       _isRotationSpringActive ||
@@ -573,7 +579,7 @@ class InfiniteCanvasController extends ChangeNotifier {
     const spring = SpringDescription(
       mass: 1.0,
       stiffness: 220.0, // Fast arrival (was 180)
-      damping: 16.0,    // Underdamped (was 22) — micro-bounce on landing
+      damping: 16.0, // Underdamped (was 22) — micro-bounce on landing
     );
 
     _zoomSim = SpringSimulation(
@@ -886,7 +892,8 @@ class InfiniteCanvasController extends ChangeNotifier {
     final logVelocity = scaleVelocity / _scale; // Convert to log-space velocity
 
     _zoomMomentumSim = FrictionSimulation(
-      _liquidConfig.panFriction * 2.5, // 🏎️ Lower friction → longer, premium glide
+      _liquidConfig.panFriction *
+          2.5, // 🏎️ Lower friction → longer, premium glide
       logScale,
       logVelocity,
     );
@@ -900,8 +907,22 @@ class InfiniteCanvasController extends ChangeNotifier {
 
   // 📐 Clean scale levels for snap-to-grid on zoom settle
   static const List<double> _cleanScales = [
-    0.1, 0.15, 0.2, 0.25, 0.33, 0.5, 0.67, 0.75,
-    1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0,
+    0.1,
+    0.15,
+    0.2,
+    0.25,
+    0.33,
+    0.5,
+    0.67,
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    2.0,
+    2.5,
+    3.0,
+    4.0,
+    5.0,
   ];
   static const double _cleanScaleSnapThreshold = 0.04; // 4% tolerance
 
@@ -927,7 +948,10 @@ class InfiniteCanvasController extends ChangeNotifier {
 
   /// Animate rotation to a target angle with a spring.
   /// [initialVelocity] allows seamless handoff from momentum → spring.
-  void _animateRotationTo(double targetRotation, {double initialVelocity = 0.0}) {
+  void _animateRotationTo(
+    double targetRotation, {
+    double initialVelocity = 0.0,
+  }) {
     if (_ticker == null) return;
     if ((_rotation - targetRotation).abs() < 0.001) {
       _rotation = targetRotation;
@@ -1252,7 +1276,10 @@ class InfiniteCanvasController extends ChangeNotifier {
     // — MULTI-PHASE FLIGHT (cinematic camera sequence) —
     if (_isFlightActive && _flightKeyframes.isNotEmpty) {
       _flightElapsed += t;
-      _flightProgressValue = (_flightElapsed / _flightTotalDuration).clamp(0.0, 1.0);
+      _flightProgressValue = (_flightElapsed / _flightTotalDuration).clamp(
+        0.0,
+        1.0,
+      );
 
       // Determine current phase
       int phase = 0;
@@ -1276,9 +1303,10 @@ class InfiniteCanvasController extends ChangeNotifier {
       final phaseStart = phase > 0 ? _flightPhaseEnds[phase - 1] : 0.0;
       final phaseEnd = _flightPhaseEnds[phase];
       final phaseDuration = phaseEnd - phaseStart;
-      final localT = phaseDuration > 0
-          ? ((_flightElapsed - phaseStart) / phaseDuration).clamp(0.0, 1.0)
-          : 1.0;
+      final localT =
+          phaseDuration > 0
+              ? ((_flightElapsed - phaseStart) / phaseDuration).clamp(0.0, 1.0)
+              : 1.0;
 
       // Apply easing curve for this phase
       final kf = _flightKeyframes[phase];
@@ -1423,11 +1451,7 @@ class InfiniteCanvasController extends ChangeNotifier {
   ///
   /// Calculates contain-fit scale + centered offset, then uses
   /// [animateToTransform] for smooth spring animation.
-  void fitRect(
-    Rect targetRect,
-    Size viewportSize, {
-    double padding = 60.0,
-  }) {
+  void fitRect(Rect targetRect, Size viewportSize, {double padding = 60.0}) {
     if (targetRect.isEmpty || viewportSize.isEmpty) return;
 
     final availW = viewportSize.width - padding * 2;

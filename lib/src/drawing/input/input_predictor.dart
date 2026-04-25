@@ -197,12 +197,14 @@ class InputPredictor {
       // Pressure: smoothly fade toward resting pressure
       final fadedPressure = lastPressure * (1.0 - 0.1 * (i + 1));
 
-      predicted.add(ProDrawingPoint(
-        position: newPos,
-        pressure: fadedPressure.clamp(0.1, 1.0),
-        tiltX: lastTiltX,
-        tiltY: lastTiltY,
-      ));
+      predicted.add(
+        ProDrawingPoint(
+          position: newPos,
+          pressure: fadedPressure.clamp(0.1, 1.0),
+          tiltX: lastTiltX,
+          tiltY: lastTiltY,
+        ),
+      );
 
       prevPos = newPos;
     }
