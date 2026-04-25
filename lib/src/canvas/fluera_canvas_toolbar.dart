@@ -82,6 +82,11 @@ class FlueraCanvasToolbar extends StatelessWidget {
     this.showShapeTools = false,
     this.showPixelEraser = false,
     this.showColorPickerButton = false,
+    this.eraserRadius,
+    this.onEraserRadiusChanged,
+    this.minEraserRadius = 8.0,
+    this.maxEraserRadius = 80.0,
+    this.eraserRadiusDivisions = 18,
     this.padding = const EdgeInsets.all(12),
     this.background,
   });
@@ -142,6 +147,27 @@ class FlueraCanvasToolbar extends StatelessWidget {
   /// pops up [FlueraColorPickerDialog] for arbitrary HSV / hex picks
   /// beyond the 6-swatch preset. Default `false`.
   final bool showColorPickerButton;
+
+  /// Current eraser radius in screen pixels. When non-null AND
+  /// [onEraserRadiusChanged] is also provided, the toolbar's slider
+  /// switches between controlling [strokeWidth] (for draw / line /
+  /// rectangle / ellipse tools) and [eraserRadius] (for erase /
+  /// erasePixel tools). The eraser preview circle drawn under the
+  /// pointer matches this value, so the user always sees what they're
+  /// about to cut.
+  final double? eraserRadius;
+
+  /// Fired when the user drags the slider while the eraser tool is
+  /// active. Forward into your State and pass the new value down to
+  /// [FlueraCanvas.eraserRadius].
+  final ValueChanged<double>? onEraserRadiusChanged;
+
+  /// Eraser-radius slider bounds (screen pixels). Defaults give a
+  /// touch-friendly range — small enough for fine cuts, large enough
+  /// to wipe whole strokes in one tap.
+  final double minEraserRadius;
+  final double maxEraserRadius;
+  final int eraserRadiusDivisions;
 
   /// Inner padding around the toolbar content.
   final EdgeInsetsGeometry padding;
@@ -241,13 +267,18 @@ class FlueraCanvasToolbar extends StatelessWidget {
                   ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Slider(
-                    value: strokeWidth.clamp(minStrokeWidth, maxStrokeWidth),
-                    min: minStrokeWidth,
-                    max: maxStrokeWidth,
-                    divisions: strokeWidthDivisions,
-                    label: '${strokeWidth.toStringAsFixed(1)} px',
-                    onChanged: onStrokeWidthChanged,
+                  child: _SizeSlider(
+                    tool: tool,
+                    strokeWidth: strokeWidth,
+                    onStrokeWidthChanged: onStrokeWidthChanged,
+                    minStrokeWidth: minStrokeWidth,
+                    maxStrokeWidth: maxStrokeWidth,
+                    strokeWidthDivisions: strokeWidthDivisions,
+                    eraserRadius: eraserRadius,
+                    onEraserRadiusChanged: onEraserRadiusChanged,
+                    minEraserRadius: minEraserRadius,
+                    maxEraserRadius: maxEraserRadius,
+                    eraserRadiusDivisions: eraserRadiusDivisions,
                   ),
                 ),
               ],
@@ -255,6 +286,66 @@ class FlueraCanvasToolbar extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Slider that shows the stroke width when a draw / shape tool is
+/// active and the eraser radius when an eraser tool is active.
+/// Falls back to the stroke-width slider if the consumer didn't wire
+/// up `eraserRadius` + `onEraserRadiusChanged` — backward-compatible
+/// with toolbars built before 0.4.0.
+class _SizeSlider extends StatelessWidget {
+  const _SizeSlider({
+    required this.tool,
+    required this.strokeWidth,
+    required this.onStrokeWidthChanged,
+    required this.minStrokeWidth,
+    required this.maxStrokeWidth,
+    required this.strokeWidthDivisions,
+    required this.eraserRadius,
+    required this.onEraserRadiusChanged,
+    required this.minEraserRadius,
+    required this.maxEraserRadius,
+    required this.eraserRadiusDivisions,
+  });
+
+  final CanvasTool tool;
+  final double strokeWidth;
+  final ValueChanged<double> onStrokeWidthChanged;
+  final double minStrokeWidth;
+  final double maxStrokeWidth;
+  final int strokeWidthDivisions;
+  final double? eraserRadius;
+  final ValueChanged<double>? onEraserRadiusChanged;
+  final double minEraserRadius;
+  final double maxEraserRadius;
+  final int eraserRadiusDivisions;
+
+  bool get _isEraserTool =>
+      tool == CanvasTool.erase || tool == CanvasTool.erasePixel;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isEraserTool &&
+        eraserRadius != null &&
+        onEraserRadiusChanged != null) {
+      return Slider(
+        value: eraserRadius!.clamp(minEraserRadius, maxEraserRadius),
+        min: minEraserRadius,
+        max: maxEraserRadius,
+        divisions: eraserRadiusDivisions,
+        label: 'Eraser ${eraserRadius!.toStringAsFixed(0)} px',
+        onChanged: onEraserRadiusChanged,
+      );
+    }
+    return Slider(
+      value: strokeWidth.clamp(minStrokeWidth, maxStrokeWidth),
+      min: minStrokeWidth,
+      max: maxStrokeWidth,
+      divisions: strokeWidthDivisions,
+      label: '${strokeWidth.toStringAsFixed(1)} px',
+      onChanged: onStrokeWidthChanged,
     );
   }
 }

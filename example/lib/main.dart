@@ -232,6 +232,7 @@ class _ToolbarDemoState extends State<_ToolbarDemo> {
   CanvasTool _tool = CanvasTool.draw;
   Color _color = const Color(0xFF1A1A1A);
   double _width = 2.5;
+  double _eraserRadius = 32.0;
 
   @override
   Widget build(BuildContext context) {
@@ -245,6 +246,7 @@ class _ToolbarDemoState extends State<_ToolbarDemo> {
               tool: _tool,
               strokeColor: _color,
               strokeWidth: _width,
+              eraserRadius: _eraserRadius,
             ),
           ),
           FlueraCanvasToolbar(
@@ -255,6 +257,8 @@ class _ToolbarDemoState extends State<_ToolbarDemo> {
             onColorChanged: (c) => setState(() => _color = c),
             strokeWidth: _width,
             onStrokeWidthChanged: (w) => setState(() => _width = w),
+            eraserRadius: _eraserRadius,
+            onEraserRadiusChanged: (r) => setState(() => _eraserRadius = r),
             showShapeTools: true,
             showPixelEraser: true,
             showColorPickerButton: true,
@@ -821,6 +825,7 @@ class _CanvasEditorState extends State<_CanvasEditor> {
   CanvasTool _tool = CanvasTool.draw;
   Color _color = const Color(0xFF1A1A1A);
   double _width = 3.0;
+  double _eraserRadius = 32.0;
 
   bool _loaded = false;
   Uint8List? _initialBytes;
@@ -937,6 +942,7 @@ class _CanvasEditorState extends State<_CanvasEditor> {
                       tool: _tool,
                       strokeColor: _color,
                       strokeWidth: _width,
+                      eraserRadius: _eraserRadius,
                       background:
                           const CanvasBackground.solid(Color(0xFFFAFAFA)),
                       initialBytes: _initialBytes,
@@ -952,6 +958,9 @@ class _CanvasEditorState extends State<_CanvasEditor> {
                     onColorChanged: (c) => setState(() => _color = c),
                     strokeWidth: _width,
                     onStrokeWidthChanged: (w) => setState(() => _width = w),
+                    eraserRadius: _eraserRadius,
+                    onEraserRadiusChanged: (r) =>
+                        setState(() => _eraserRadius = r),
                     showShapeTools: true,
                     showPixelEraser: true,
                     showColorPickerButton: true,

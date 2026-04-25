@@ -337,7 +337,7 @@ class FlueraCanvas extends StatefulWidget {
     this.strokeWidth = 2.0,
     this.background = const CanvasBackground.solid(Color(0xFFFAFAFA)),
     this.tool = CanvasTool.draw,
-    this.eraserRadius = 24.0,
+    this.eraserRadius = 32.0,
     this.showEraserPreview = true,
     this.historyCapacity = 100,
     this.enableKeyboardShortcuts = true,
@@ -1423,17 +1423,30 @@ class _CommittedStrokesPainter extends CustomPainter {
     if (showPreview) {
       final preview = canvasState._eraserPreviewWorld!;
       final radiusWorld = canvasState.widget.eraserRadius / ctrl.scale;
+      // Tinted fill so the user sees the area that will be cut /
+      // erased. Pixel-mode tints reddish to signal "destructive" cut;
+      // stroke-mode tints neutral grey.
+      final isPixel = canvasState.widget.tool == CanvasTool.erasePixel;
       final fill =
           Paint()
-            ..color = const Color(0x22000000)
+            ..color =
+                isPixel ? const Color(0x22D32F2F) : const Color(0x33000000)
             ..style = PaintingStyle.fill;
-      final ring =
+      // Ring: outer dark + inner light = double-ring "marching-ants"
+      // look that stays visible on any background colour.
+      final outerRing =
           Paint()
-            ..color = const Color(0x66000000)
+            ..color = const Color(0xCC000000)
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.5 / ctrl.scale;
+            ..strokeWidth = 2.0 / ctrl.scale;
+      final innerRing =
+          Paint()
+            ..color = const Color(0xCCFFFFFF)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.0 / ctrl.scale;
       canvas.drawCircle(preview, radiusWorld, fill);
-      canvas.drawCircle(preview, radiusWorld, ring);
+      canvas.drawCircle(preview, radiusWorld, outerRing);
+      canvas.drawCircle(preview, radiusWorld, innerRing);
     }
 
     canvas.restore();
