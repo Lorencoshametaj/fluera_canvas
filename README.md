@@ -4,19 +4,25 @@
 > with a native GPU live-stroke pipeline, a scene graph, and pluggable brush
 > engines.
 >
-> **Status:** `0.3.0` pre-release. API unstable until `1.0.0`.
+> **Status:** `0.4.0` pre-release. API unstable until `1.0.0`.
 > Marketing site: **[engine.fluera.dev](https://engine.fluera.dev/)**
 
 ## What you get
 
-- `FlueraCanvas` — drop-in drawing widget. Pen / eraser tools, undo / redo
-  history, pressure-aware input, infinite pan / zoom / rotation, native
-  GPU live-stroke pipeline, PNG export. One `GlobalKey<FlueraCanvasState>`
-  and you have a full canvas in your app.
+- `FlueraCanvas` — drop-in drawing widget. **Pen, stroke-mode eraser,
+  pixel-mode eraser, line / rectangle / ellipse shape tools**, undo /
+  redo history, pressure-aware input, infinite pan / zoom / rotation,
+  native GPU live-stroke pipeline, PNG export. One
+  `GlobalKey<FlueraCanvasState>` and you have a full canvas in your app.
 - `FlueraCanvasToolbar` — drop-in Material toolbar that wires the most
-  common controls (pen / eraser, color swatches, stroke-width slider,
-  undo / redo / clear) into the canvas with zero glue code. Auto-syncs
-  to history state via `FlueraCanvasState.historyListenable`.
+  common controls (tool segmented control, color swatches, stroke-width
+  slider, undo / redo / clear) into the canvas with zero glue code.
+  Opt-in flags `showShapeTools`, `showPixelEraser`, `showColorPickerButton`
+  expose the new 0.4.0 features. Auto-syncs to history state via
+  `FlueraCanvasState.historyListenable`.
+- `FlueraCanvasColorPickerDialog` + `showFlueraColorPicker(...)` —
+  zero-dependency HSV / hex color picker for arbitrary color choices
+  beyond the 6-swatch preset.
 - `InfiniteCanvasController` — camera with pan, zoom, rotation, spring
   physics, momentum, multi-phase animation. Use it if you want to drive the
   view from outside (e.g. "reset view" button, programmatic fly-to).
@@ -39,7 +45,7 @@
 
 ```yaml
 dependencies:
-  fluera_canvas: ^0.3.0
+  fluera_canvas: ^0.4.0
 ```
 
 ## Hello canvas
@@ -95,6 +101,24 @@ class _MyPageState extends State<MyPage> {
 Advanced camera control: pass a `controller: InfiniteCanvasController()`
 if you want to drive pan / zoom / rotation from outside.
 
+## Tools
+
+`FlueraCanvas` ships **6 input tools** out of the box, switched via the
+`tool:` parameter:
+
+| Tool | What it does |
+|---|---|
+| `CanvasTool.draw` | Free-form pressure-aware stroke. |
+| `CanvasTool.erase` | Stroke-mode eraser — removes whole strokes the eraser circle touches. Vector-preserving (undo brings them back intact). |
+| `CanvasTool.erasePixel` | Pixel-mode eraser — splits intersected strokes around the eraser circle and keeps the surviving pieces. |
+| `CanvasTool.line` | Drag from A to B for a straight line. |
+| `CanvasTool.rectangle` | Drag corner-to-corner for a rectangle outline. |
+| `CanvasTool.ellipse` | Drag for an ellipse outline (32-segment polyline). |
+
+Shape tools commit as ordinary `CanvasStroke` instances, so they
+participate in undo / redo, persistence (`toBytes` / `loadFromBytes`),
+spatial-index hit-test, and the per-stroke `ui.Picture` cache for free.
+
 ## Drop-in toolbar
 
 Don't want to wire your own pen / eraser / color / undo UI?
@@ -123,6 +147,10 @@ class _DemoState extends State<Demo> {
       onColorChanged: (c) => setState(() => _color = c),
       strokeWidth: _width,
       onStrokeWidthChanged: (w) => setState(() => _width = w),
+      // Optional 0.4.0 opt-in flags:
+      showShapeTools: true,        // adds Line / Rect / Oval segments
+      showPixelEraser: true,       // adds Pixel eraser segment
+      showColorPickerButton: true, // adds a "+ more colors" gradient button
     ),
   ]);
 }
@@ -209,6 +237,32 @@ All of the above ship in the commercial `fluera_engine_pro` package. See
 
 ## FAQ / Troubleshooting
 
+**What's the difference between the stroke eraser and the pixel eraser?**
+The stroke eraser (`CanvasTool.erase`) removes whole strokes whose
+bounds touch the eraser circle. Vector-preserving — `undo` brings
+them back intact. The pixel eraser (`CanvasTool.erasePixel`) splits
+each touched stroke around the circle and keeps the surviving pieces;
+on `undo` the original is restored. Use stroke-mode for sketching
+apps where strokes are atoms; use pixel-mode for fine corrections in
+note-taking apps.
+
+**Can I add a custom shape tool (polygon, arrow, …)?**
+The built-in `line` / `rectangle` / `ellipse` cover the common cases.
+For anything else, build the polyline yourself and call
+`canvasState.pushStroke(CanvasStroke(points: [...], ...))`. It rides
+the same undo / redo / persistence / hit-test infrastructure for free.
+
+**How do I open the color picker without the toolbar?**
+```dart
+final picked = await showFlueraColorPicker(
+  context: context,
+  initial: currentColor,
+  enableAlpha: true, // optional, default true
+);
+if (picked != null) setState(() => currentColor = picked);
+```
+Returns `null` on cancel.
+
 **My persisted canvas appears empty when I reopen it.**
 Use `FlueraCanvas(initialBytes: bytesFromDisk)` to restore — it decodes
 the bytes inside `initState`, before the first paint. Calling
@@ -268,7 +322,8 @@ That's an Android system warning unrelated to `fluera_canvas`. Add
 More guides: [doc/architecture.md](doc/architecture.md),
 [doc/performance.md](doc/performance.md),
 [doc/troubleshooting-impeller.md](doc/troubleshooting-impeller.md),
-[doc/migration-0.2-to-0.3.md](doc/migration-0.2-to-0.3.md).
+[doc/migration-0.2-to-0.3.md](doc/migration-0.2-to-0.3.md),
+[doc/migration-0.3-to-0.4.md](doc/migration-0.3-to-0.4.md).
 
 ## Contributing
 

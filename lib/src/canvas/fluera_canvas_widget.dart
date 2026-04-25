@@ -60,7 +60,17 @@ class CanvasStroke {
     required this.pressures,
     required this.color,
     required this.baseWidth,
+    this.smooth = true,
   }) : _cachedBounds = _computeBounds(points, baseWidth);
+
+  /// When `true` (default), the rasteriser smooths the polyline with
+  /// quadratic-bezier curves through the midpoints — eliminates kinks
+  /// on diagonal free-form strokes. Set to `false` for shapes whose
+  /// corners must stay sharp (rectangles, polygons, polylines that
+  /// trace explicit angles): the rasteriser uses straight `lineTo`
+  /// segments instead. Free-form draws and ellipses use `smooth: true`;
+  /// lines and rectangles commit with `smooth: false` automatically.
+  final bool smooth;
 
   final Rect _cachedBounds;
 
@@ -82,7 +92,14 @@ class CanvasStroke {
     if (cached != null) return cached;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
-    _paintStrokeSegments(canvas, points, pressures, color, baseWidth);
+    _paintStrokeSegments(
+      canvas,
+      points,
+      pressures,
+      color,
+      baseWidth,
+      smooth: smooth,
+    );
     return _cachedPicture = recorder.endRecording();
   }
 
@@ -586,9 +603,14 @@ class FlueraCanvasState extends State<FlueraCanvas>
       }
       return;
     }
+    // Lines and rectangles need sharp corners (no quadratic-bezier
+    // smoothing). Ellipses and free-form draws stay smoothed.
+    final smooth =
+        widget.tool != CanvasTool.line && widget.tool != CanvasTool.rectangle;
     _liveStroke.beginStroke(
       color: widget.strokeColor,
       baseWidth: widget.strokeWidth,
+      smooth: smooth,
     );
     if (widget.tool == CanvasTool.line ||
         widget.tool == CanvasTool.rectangle ||
@@ -695,6 +717,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
       pressures: List<double>.unmodifiable(_livePressures!),
       color: widget.strokeColor,
       baseWidth: widget.strokeWidth,
+      smooth: _liveStroke.smooth,
     );
     if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
     _strokes.add(stroke);
@@ -1198,8 +1221,9 @@ void _paintStrokeSegments(
   List<Offset> points,
   List<double> pressures,
   Color color,
-  double baseWidth,
-) {
+  double baseWidth, {
+  bool smooth = true,
+}) {
   final n = points.length;
   if (n < 2) return;
 
@@ -1221,14 +1245,16 @@ void _paintStrokeSegments(
   final avgPressure = pressureSum / n;
   final strokeWidth = baseWidth * (0.3 + avgPressure * 0.9);
 
-  // Quadratic-bezier smoothing: each interior point becomes the
-  // control point and the curve passes through the midpoint between
-  // consecutive samples. Result is C¹-continuous, tightly tracks the
-  // polyline, and removes the polyline kinks that show up between
-  // sparsely-sampled stylus points (= the "humps" on diagonal strokes).
+  // Path construction:
+  //   • smooth = true  → quadratic-bezier through midpoints (default
+  //     for free-form strokes; removes polyline kinks).
+  //   • smooth = false → straight `lineTo` segments. Used for shapes
+  //     whose corners must stay sharp (rectangles, polygons).
   final path = Path()..moveTo(points[0].dx, points[0].dy);
-  if (n == 2) {
-    path.lineTo(points[1].dx, points[1].dy);
+  if (n == 2 || !smooth) {
+    for (int i = 1; i < n; i++) {
+      path.lineTo(points[i].dx, points[i].dy);
+    }
   } else {
     for (int i = 1; i < n - 1; i++) {
       final ctrl = points[i];
@@ -1371,6 +1397,7 @@ class _LiveStrokePainter extends CustomPainter {
       prs,
       strokeNotifier.color,
       strokeNotifier.baseWidth,
+      smooth: strokeNotifier.smooth,
     );
     canvas.restore();
   }
@@ -1406,10 +1433,16 @@ class _LiveStrokeNotifier extends ChangeNotifier {
   List<double> pressures = const <double>[];
   Color color = const Color(0xFF000000);
   double baseWidth = 1.0;
+  bool smooth = true;
 
-  void beginStroke({required Color color, required double baseWidth}) {
+  void beginStroke({
+    required Color color,
+    required double baseWidth,
+    bool smooth = true,
+  }) {
     this.color = color;
     this.baseWidth = baseWidth;
+    this.smooth = smooth;
   }
 
   void setStroke(List<Offset> pts, List<double> prs) {

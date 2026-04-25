@@ -351,10 +351,7 @@ class _HueGradientPainter extends CustomPainter {
     final rect = Offset.zero & size;
     canvas.drawRect(
       rect,
-      Paint()
-        ..shader = const LinearGradient(
-          colors: _hues,
-        ).createShader(Rect.fromLTWH(0, 0, 1, 1)),
+      Paint()..shader = const LinearGradient(colors: _hues).createShader(rect),
     );
     final x = hue / 360 * size.width;
     canvas.drawCircle(

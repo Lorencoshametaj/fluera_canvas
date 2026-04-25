@@ -74,6 +74,28 @@ native overlay.
   the Dart `_LiveStrokePainter` handles the live stroke and the user
   still sees ink.
 
+## Tools
+
+`CanvasTool` enum dispatches gesture handling inside the State:
+
+| Tool | Gesture flow |
+|---|---|
+| `draw` | Free-form: `_livePoints` accumulates pointer samples; pen-up commits a `CanvasStroke`. |
+| `erase` | Stroke-mode: `_eraseAt(world)` queries the spatial index for strokes intersecting the eraser circle, removes whole hits, accumulates them in `_erasedThisGesture`. Pen-up pushes one `_EraseOp` for the entire swipe. |
+| `erasePixel` | Pixel-mode: `_eraseAtPixel(world)` calls `CanvasStroke.splitAroundCircle` for each touched stroke, replaces the original with the survivors at the same Z-order, accumulates in `_pixelEraseOriginals` / `_pixelEraseReplacements`. Pen-up pushes a `_PixelEraseOp`. |
+| `line` / `rectangle` / `ellipse` | Shape: `_shapeAnchor` captures pen-down position; on every pen-move `_buildShapePoints(tool, anchor, current)` recomputes the live polyline (2 / 5 / 33 points respectively); pen-up commits as a `CanvasStroke` with uniform pressure 1.0. |
+
+Shape strokes are NOT a separate model — they're regular
+`CanvasStroke`s with pre-built point lists, so they participate in
+undo / redo, persistence, hit-test, spatial-index, eraser (both
+modes), and the per-stroke `ui.Picture` cache for free.
+
+`CanvasStroke.splitAroundCircle(stroke, center, r²)` is exposed
+publicly so consumers can build custom pixel-mode UX (lasso-to-cut,
+polygon-erase, magnetic-erase) without re-implementing the splitting
+geometry. Pure function — no canvas state, no widgets, easy to
+unit-test.
+
 ## State flow
 
 ### Pen-down → pen-move → pen-up (draw tool)
