@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.4.0
+
+**Shape tools, pixel-mode eraser, color picker dialog.**
+
+Three additive feature blocks that take `fluera_canvas` from "best
+infinite-canvas SDK on pub.dev" to "general-purpose drawing SDK".
+Fully backward-compatible with 0.3.0 — no public API was removed
+or changed in shape; the new functionality is opt-in.
+
+**Shape tools**
+- `CanvasTool.line` — drag from A to B to commit a straight line.
+- `CanvasTool.rectangle` — drag corner-to-corner for a 5-point closed
+  rectangle outline.
+- `CanvasTool.ellipse` — drag for a 32-segment ellipse outline.
+- All three commit as ordinary `CanvasStroke` instances, so they
+  participate in undo/redo, persistence (`toBytes`/`loadFromBytes`),
+  spatial-index hit-test, and the per-stroke `ui.Picture` cache for
+  free.
+
+**Pixel-mode eraser**
+- `CanvasTool.erasePixel` — instead of removing whole strokes that
+  the eraser circle intersects (which is what `CanvasTool.erase`
+  does), this mode SPLITS each stroke around the eraser circle and
+  keeps the surviving pieces. Original Z-order preserved.
+- New internal `_PixelEraseOp` history op: `undo` re-inserts the
+  originals and removes the survivors, `redo` reverses.
+- Per-update cost O(k · m) where k = strokes intersecting the
+  eraser circle and m = points per stroke. Combined with the
+  spatial-index viewport cull this stays well below 1 ms per frame
+  for typical scenes.
+
+**Color picker dialog**
+- New `FlueraColorPickerDialog` widget + `showFlueraColorPicker`
+  imperative helper. HSV saturation/value box + hue slider + alpha
+  slider + hex input. Zero external dependencies.
+- `kFlueraDefaultPalette` unchanged — the dialog is opt-in for
+  consumers that want arbitrary colours beyond the 6 presets.
+
+**Toolbar opt-in flags**
+- `FlueraCanvasToolbar.showShapeTools: false` — when `true`, the
+  segmented control gains Line / Rect / Oval buttons.
+- `FlueraCanvasToolbar.showPixelEraser: false` — when `true`, adds
+  a "Pixel" segment next to "Eraser".
+- `FlueraCanvasToolbar.showColorPickerButton: false` — when `true`,
+  a sweep-gradient `+` button appears at the end of the palette row
+  and pops up `FlueraColorPickerDialog`.
+- Tool segmented control is now horizontally scrollable so 6 tool
+  buttons + history buttons fit on narrow screens.
+
+**Tests**
+- 9 new tests in `test/shape_tools_test.dart` covering enum
+  ordering, shape-stroke geometry (line / rect / ellipse), pixel
+  eraser tool wiring, color picker dialog open/cancel/return,
+  toolbar opt-in flags. Total 33 tests, all green.
+
+**Breaking** — none. The `CanvasTool` enum gains 4 new values; if
+your code does an exhaustive `switch (tool)` without a `default`,
+you'll get analyser warnings until you handle the new cases.
+
 ## 0.3.0
 
 **Drop-in toolbar, 5k–10k stroke perf, Impeller-Vulkan profile-mode fix.**

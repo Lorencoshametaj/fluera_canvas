@@ -3,7 +3,7 @@ description: >
   Pressure-sensitive infinite-canvas SDK for Flutter. Pen / eraser, undo /
   redo, drop-in toolbar, persistence (PNG / JSON / binary), 5k+ strokes
   at 60 FPS.
-version: 0.3.0
+version: 0.4.0
 homepage: https://engine.fluera.dev
 repository: https://github.com/Lorencoshametaj/fluera_canvas
 issue_tracker: https://github.com/Lorencoshametaj/fluera_canvas/issues

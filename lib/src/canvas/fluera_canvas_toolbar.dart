@@ -15,6 +15,7 @@
 import 'package:flutter/material.dart';
 
 import 'fluera_canvas_widget.dart';
+import 'fluera_color_picker_dialog.dart';
 
 /// Default 6-color preset used by [FlueraCanvasToolbar] when no
 /// `palette` is provided. Black + 5 saturated hues, consistent with the
@@ -78,6 +79,9 @@ class FlueraCanvasToolbar extends StatelessWidget {
     this.showUndo = true,
     this.showRedo = true,
     this.showClear = true,
+    this.showShapeTools = false,
+    this.showPixelEraser = false,
+    this.showColorPickerButton = false,
     this.padding = const EdgeInsets.all(12),
     this.background,
   });
@@ -123,6 +127,22 @@ class FlueraCanvasToolbar extends StatelessWidget {
   final bool showRedo;
   final bool showClear;
 
+  /// When `true`, the segmented control gains line / rectangle /
+  /// ellipse buttons in addition to pen / eraser. Default `false` to
+  /// keep the toolbar minimal for consumers that only need free-form
+  /// drawing.
+  final bool showShapeTools;
+
+  /// When `true`, the eraser segment is replaced by a 2-mode segmented
+  /// row (stroke eraser + pixel eraser). Default `false` — most apps
+  /// only need stroke-mode erase.
+  final bool showPixelEraser;
+
+  /// When `true`, a "more colors" trailing button on the palette row
+  /// pops up [FlueraColorPickerDialog] for arbitrary HSV / hex picks
+  /// beyond the 6-swatch preset. Default `false`.
+  final bool showColorPickerButton;
+
   /// Inner padding around the toolbar content.
   final EdgeInsetsGeometry padding;
 
@@ -133,6 +153,42 @@ class FlueraCanvasToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final segments = <ButtonSegment<CanvasTool>>[
+      const ButtonSegment(
+        value: CanvasTool.draw,
+        label: Text('Pen'),
+        icon: Icon(Icons.edit_rounded),
+      ),
+      const ButtonSegment(
+        value: CanvasTool.erase,
+        label: Text('Eraser'),
+        icon: Icon(Icons.cleaning_services_rounded),
+      ),
+      if (showPixelEraser)
+        const ButtonSegment(
+          value: CanvasTool.erasePixel,
+          label: Text('Pixel'),
+          icon: Icon(Icons.auto_fix_high_rounded),
+        ),
+      if (showShapeTools) ...[
+        const ButtonSegment(
+          value: CanvasTool.line,
+          label: Text('Line'),
+          icon: Icon(Icons.horizontal_rule_rounded),
+        ),
+        const ButtonSegment(
+          value: CanvasTool.rectangle,
+          label: Text('Rect'),
+          icon: Icon(Icons.crop_square_rounded),
+        ),
+        const ButtonSegment(
+          value: CanvasTool.ellipse,
+          label: Text('Oval'),
+          icon: Icon(Icons.circle_outlined),
+        ),
+      ],
+    ];
+
     return Container(
       padding: padding,
       color: background ?? scheme.surfaceContainerHighest,
@@ -143,23 +199,16 @@ class FlueraCanvasToolbar extends StatelessWidget {
           children: [
             Row(
               children: [
-                SegmentedButton<CanvasTool>(
-                  segments: const [
-                    ButtonSegment(
-                      value: CanvasTool.draw,
-                      label: Text('Pen'),
-                      icon: Icon(Icons.edit_rounded),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SegmentedButton<CanvasTool>(
+                      segments: segments,
+                      selected: {tool},
+                      onSelectionChanged: (s) => onToolChanged(s.first),
                     ),
-                    ButtonSegment(
-                      value: CanvasTool.erase,
-                      label: Text('Eraser'),
-                      icon: Icon(Icons.cleaning_services_rounded),
-                    ),
-                  ],
-                  selected: {tool},
-                  onSelectionChanged: (s) => onToolChanged(s.first),
+                  ),
                 ),
-                const Spacer(),
                 _HistoryButtons(
                   canvasKey: canvasKey,
                   showUndo: showUndo,
@@ -180,6 +229,14 @@ class FlueraCanvasToolbar extends StatelessWidget {
                       onTap: () => onColorChanged(c),
                     ),
                   ),
+                if (showColorPickerButton)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: _MoreColorsButton(
+                      currentColor: color,
+                      onPicked: onColorChanged,
+                    ),
+                  ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Slider(
@@ -195,6 +252,48 @@ class FlueraCanvasToolbar extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _MoreColorsButton extends StatelessWidget {
+  const _MoreColorsButton({required this.currentColor, required this.onPicked});
+  final Color currentColor;
+  final ValueChanged<Color> onPicked;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () async {
+        final picked = await showFlueraColorPicker(
+          context: context,
+          initial: currentColor,
+        );
+        if (picked != null) onPicked(picked);
+      },
+      child: Container(
+        width: 30,
+        height: 30,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: const SweepGradient(
+            colors: [
+              Color(0xFFFF0000),
+              Color(0xFFFFFF00),
+              Color(0xFF00FF00),
+              Color(0xFF00FFFF),
+              Color(0xFF0000FF),
+              Color(0xFFFF00FF),
+              Color(0xFFFF0000),
+            ],
+          ),
+          border: Border.all(
+            color: Colors.black.withValues(alpha: 0.2),
+            width: 1,
+          ),
+        ),
+        child: const Icon(Icons.add_rounded, size: 18, color: Colors.white),
       ),
     );
   }

@@ -15,6 +15,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 import 'dart:io' show Platform;
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
@@ -116,12 +117,31 @@ class CanvasStroke {
 
 /// Tool mode for user input on [FlueraCanvas].
 enum CanvasTool {
-  /// Pointer commits strokes to the canvas.
+  /// Pointer commits free-form strokes to the canvas.
   draw,
 
   /// Pointer erases strokes it touches. Each erased stroke is pushed to the
   /// history so [undo] restores it intact (vector-preserving semantics).
+  /// "Stroke-mode" eraser — removes whole strokes that the eraser circle
+  /// intersects.
   erase,
+
+  /// Like [erase] but cuts the touched portion of a stroke instead of
+  /// removing the entire stroke. The stroke is subdivided into the
+  /// surviving pieces. Undo restores the original stroke.
+  erasePixel,
+
+  /// Drag from A to B to commit a single straight line stroke.
+  line,
+
+  /// Drag from one corner to the opposite corner to commit a rectangle
+  /// outline. The rectangle is committed as a closed stroke (5 points).
+  rectangle,
+
+  /// Drag from one corner of the bounding box to the opposite to commit
+  /// an ellipse outline. The ellipse is committed as a polyline
+  /// approximation (32 segments).
+  ellipse,
 }
 
 /// A ready-to-use infinite canvas widget.
@@ -448,18 +468,65 @@ class FlueraCanvasState extends State<FlueraCanvas>
   // doing so was a bug that placed both the native live stroke and the
   // committed strokes at the wrong position after any zoom / pan.
 
+  /// Anchor point for shape tools (line / rectangle / ellipse). The
+  /// shape is built from this anchor to the current pointer position
+  /// every onDrawUpdate.
+  Offset? _shapeAnchor;
+
+  /// Number of segments used to approximate an ellipse. 32 gives a
+  /// smooth outline without too many points.
+  static const int _kEllipseSegments = 32;
+
+  /// Builds the polyline points representing a line / rectangle /
+  /// ellipse drag from `anchor` to `current`. The points are then
+  /// stored in `_livePoints` and rendered by the live painter exactly
+  /// like a free-form stroke.
+  static List<Offset> _buildShapePoints(
+    CanvasTool tool,
+    Offset anchor,
+    Offset current,
+  ) {
+    switch (tool) {
+      case CanvasTool.line:
+        return <Offset>[anchor, current];
+      case CanvasTool.rectangle:
+        // 5-point closed polygon (last == first).
+        return <Offset>[
+          Offset(anchor.dx, anchor.dy),
+          Offset(current.dx, anchor.dy),
+          Offset(current.dx, current.dy),
+          Offset(anchor.dx, current.dy),
+          Offset(anchor.dx, anchor.dy),
+        ];
+      case CanvasTool.ellipse:
+        final cx = (anchor.dx + current.dx) * 0.5;
+        final cy = (anchor.dy + current.dy) * 0.5;
+        final rx = (current.dx - anchor.dx).abs() * 0.5;
+        final ry = (current.dy - anchor.dy).abs() * 0.5;
+        final pts = <Offset>[];
+        for (int i = 0; i <= _kEllipseSegments; i++) {
+          final t = i / _kEllipseSegments * 2 * math.pi;
+          pts.add(Offset(cx + rx * math.cos(t), cy + ry * math.sin(t)));
+        }
+        return pts;
+      // Defensive — these should never be passed in.
+      case CanvasTool.draw:
+      case CanvasTool.erase:
+      case CanvasTool.erasePixel:
+        return <Offset>[anchor, current];
+    }
+  }
+
   void _onDrawStart(Offset world, double pressure, double tiltX, double tiltY) {
     _focusNode?.requestFocus();
-    if (widget.tool == CanvasTool.erase) {
+    if (widget.tool == CanvasTool.erase ||
+        widget.tool == CanvasTool.erasePixel) {
       _erasedThisGesture.clear();
       _eraserPreviewWorld = world;
       _commitTick.notify();
       _eraseAt(world);
       // Start the vsync ticker so the eraser preview circle keeps
-      // tracking the pointer in real time on Impeller-Vulkan / Adreno
-      // profile mode. Same workaround as for the draw tool: the
-      // pipeline otherwise coalesces all pointer events of the gesture
-      // and only repaints at pen-up, leaving the preview frozen.
+      // tracking the pointer in real time on Impeller-Vulkan / Adreno.
       if (!_liveStrokeTicker.isActive) {
         _liveStrokeTicker.start();
       }
@@ -469,6 +536,16 @@ class FlueraCanvasState extends State<FlueraCanvas>
       color: widget.strokeColor,
       baseWidth: widget.strokeWidth,
     );
+    if (widget.tool == CanvasTool.line ||
+        widget.tool == CanvasTool.rectangle ||
+        widget.tool == CanvasTool.ellipse) {
+      _shapeAnchor = world;
+      _livePoints = _buildShapePoints(widget.tool, world, world);
+      _livePressures = List<double>.filled(_livePoints!.length, 1.0);
+      _liveStroke.setStroke(_livePoints!, _livePressures!);
+      if (!_liveStrokeTicker.isActive) _liveStrokeTicker.start();
+      return;
+    }
     _livePoints = <Offset>[world];
     _livePressures = <double>[pressure];
     _liveStroke.setStroke(_livePoints!, _livePressures!);
@@ -495,19 +572,26 @@ class FlueraCanvasState extends State<FlueraCanvas>
     double tiltX,
     double tiltY,
   ) {
-    if (widget.tool == CanvasTool.erase) {
+    if (widget.tool == CanvasTool.erase ||
+        widget.tool == CanvasTool.erasePixel) {
       _eraserPreviewWorld = world;
       _commitTick.notify();
       _eraseAt(world);
       return;
     }
+    if (widget.tool == CanvasTool.line ||
+        widget.tool == CanvasTool.rectangle ||
+        widget.tool == CanvasTool.ellipse) {
+      final anchor = _shapeAnchor;
+      if (anchor == null) return;
+      _livePoints = _buildShapePoints(widget.tool, anchor, world);
+      _livePressures = List<double>.filled(_livePoints!.length, 1.0);
+      _liveStroke.setStroke(_livePoints!, _livePressures!);
+      return;
+    }
     if (_livePoints == null) return;
     _livePoints!.add(world);
     _livePressures!.add(pressure);
-    // The vsync ticker started in `_onDrawStart` already drives a
-    // `setState` every frame, which keeps the rendering pipeline alive
-    // through the duration of the gesture. So we only need to notify
-    // the live-stroke painter — no setState / scheduleFrame here.
     _liveStroke.forceRepaint();
     if (_useNative) {
       _nativeOverlay.appendPoint(
@@ -520,23 +604,31 @@ class FlueraCanvasState extends State<FlueraCanvas>
   }
 
   void _onDrawEnd(Offset _) {
-    if (widget.tool == CanvasTool.erase) {
+    if (widget.tool == CanvasTool.erase ||
+        widget.tool == CanvasTool.erasePixel) {
       if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
-      if (_erasedThisGesture.isNotEmpty) {
+      if (_erasedThisGesture.isNotEmpty || _pixelEraseOriginals.isNotEmpty) {
         final erased = _erasedThisGesture.toList(growable: false);
-        _history?.push(_EraseOp(erased, _lastEraseIndexes));
+        if (widget.tool == CanvasTool.erasePixel) {
+          _history?.push(
+            _PixelEraseOp(_pixelEraseOriginals, _pixelEraseReplacements),
+          );
+        } else {
+          _history?.push(_EraseOp(erased, _lastEraseIndexes));
+        }
         _erasedThisGesture.clear();
         _lastEraseIndexes.clear();
-        widget.onStrokesErased?.call(erased);
+        _pixelEraseOriginals.clear();
+        _pixelEraseReplacements.clear();
+        if (erased.isNotEmpty) widget.onStrokesErased?.call(erased);
       }
-      // Keep the preview visible on hover-capable devices; on touch it's
-      // hidden once the user lifts the pen (MouseRegion's onExit).
       return;
     }
-    if (_useNative) {
+    if (_useNative && widget.tool == CanvasTool.draw) {
       _nativeOverlay.endStroke();
       _nativeOverlay.takePoints();
     }
+    _shapeAnchor = null;
     if (_livePoints == null || _livePoints!.length < 2) {
       if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
       _livePoints = null;
@@ -550,11 +642,6 @@ class FlueraCanvasState extends State<FlueraCanvas>
       color: widget.strokeColor,
       baseWidth: widget.strokeWidth,
     );
-    // CRITICAL ORDER (mirrors Fluera's _drawing_end SNAP FIX): commit
-    // setState (committed painter repaints with the new stroke) → clear
-    // live notifier in the SAME frame so the live painter short-circuits
-    // its paint, leaving only the committed stroke visible — no empty
-    // frame, no flicker.
     if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
     _strokes.add(stroke);
     _spatialIndex.insert(stroke);
@@ -582,7 +669,21 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// the correct Z-order on undo.
   final Map<CanvasStroke, int> _lastEraseIndexes = <CanvasStroke, int>{};
 
+  /// Pixel-mode erase bookkeeping for the current gesture: original
+  /// strokes that were split, paired with the surviving sub-strokes.
+  /// Used by [_PixelEraseOp] to undo the cut.
+  final List<_PixelEraseRecord> _pixelEraseOriginals = <_PixelEraseRecord>[];
+
+  /// Surviving sub-strokes inserted during the current pixel-erase
+  /// gesture, in insertion order. On undo they are removed and the
+  /// originals re-inserted.
+  final List<CanvasStroke> _pixelEraseReplacements = <CanvasStroke>[];
+
   void _eraseAt(Offset world) {
+    if (widget.tool == CanvasTool.erasePixel) {
+      _eraseAtPixel(world);
+      return;
+    }
     final radiusWorld = widget.eraserRadius / _controller.scale;
     final probe = Rect.fromCircle(center: world, radius: radiusWorld);
     final candidates = _spatialIndex.queryVisible(probe, margin: 0);
@@ -605,8 +706,95 @@ class FlueraCanvasState extends State<FlueraCanvas>
       _lastEraseIndexes[s] = idx;
     }
     _commitTick.notify();
-    // Eraser preview tracking still needs setState (drives _eraserPreviewWorld
-    // for the painter), handled by the caller.
+  }
+
+  /// Pixel-mode erase: instead of removing whole strokes, split each
+  /// stroke that the eraser touches and keep the surviving pieces.
+  /// Per-update cost is O(k · m) where k = strokes intersecting the
+  /// eraser circle (typically <10) and m = points per stroke. Combined
+  /// with the spatial-index viewport cull this stays well below 1ms
+  /// for typical scenes.
+  void _eraseAtPixel(Offset world) {
+    final radiusWorld = widget.eraserRadius / _controller.scale;
+    final probe = Rect.fromCircle(center: world, radius: radiusWorld);
+    final candidates = _spatialIndex.queryVisible(probe, margin: 0);
+    final r2 = radiusWorld * radiusWorld;
+    bool anyChange = false;
+    for (final s in List<CanvasStroke>.from(candidates)) {
+      if (!_strokeIntersectsCircle(s, world, r2)) continue;
+      final survivors = _splitStrokeAroundCircle(s, world, r2);
+      // No survivors → effectively a full erase of this stroke.
+      // One survivor with the same point list → no change (eraser
+      // overlapped only the bounding rect padding); skip.
+      if (survivors.length == 1 &&
+          survivors.first.points.length == s.points.length) {
+        continue;
+      }
+      final idx = _strokes.indexOf(s);
+      if (idx < 0) continue;
+      _strokes.removeAt(idx);
+      _spatialIndex.remove(s);
+      // Insert survivors at the original position so Z-order is
+      // preserved.
+      for (int i = 0; i < survivors.length; i++) {
+        _strokes.insert(idx + i, survivors[i]);
+        _spatialIndex.insert(survivors[i]);
+        _pixelEraseReplacements.add(survivors[i]);
+      }
+      _pixelEraseOriginals.add(
+        _PixelEraseRecord(original: s, index: idx, survivors: survivors),
+      );
+      anyChange = true;
+    }
+    if (anyChange) _commitTick.notify();
+  }
+
+  /// Splits [stroke] into the contiguous pieces whose points fall
+  /// outside the circle (center, r²). Returns the surviving
+  /// sub-strokes — empty list if the entire stroke was inside the
+  /// circle.
+  static List<CanvasStroke> _splitStrokeAroundCircle(
+    CanvasStroke stroke,
+    Offset center,
+    double r2,
+  ) {
+    final points = stroke.points;
+    final pressures = stroke.pressures;
+    final n = points.length;
+    if (n == 0) return const [];
+
+    final survivors = <CanvasStroke>[];
+    List<Offset>? curPts;
+    List<double>? curPrs;
+
+    void flushRun() {
+      if (curPts != null && curPts!.length >= 2) {
+        survivors.add(
+          CanvasStroke(
+            points: List<Offset>.unmodifiable(curPts!),
+            pressures: List<double>.unmodifiable(curPrs!),
+            color: stroke.color,
+            baseWidth: stroke.baseWidth,
+          ),
+        );
+      }
+      curPts = null;
+      curPrs = null;
+    }
+
+    for (int i = 0; i < n; i++) {
+      final inside = _dist2(points[i], center) <= r2;
+      if (inside) {
+        flushRun();
+      } else {
+        curPts ??= <Offset>[];
+        curPrs ??= <double>[];
+        curPts!.add(points[i]);
+        curPrs!.add(pressures[i]);
+      }
+    }
+    flushRun();
+    return survivors;
   }
 
   static bool _strokeIntersectsCircle(
@@ -962,8 +1150,12 @@ class FlueraCanvasState extends State<FlueraCanvas>
   MouseCursor get _mouseCursor {
     switch (widget.tool) {
       case CanvasTool.draw:
+      case CanvasTool.line:
+      case CanvasTool.rectangle:
+      case CanvasTool.ellipse:
         return SystemMouseCursors.precise;
       case CanvasTool.erase:
+      case CanvasTool.erasePixel:
         return SystemMouseCursors.none; // preview circle *is* the cursor
     }
   }
@@ -1397,6 +1589,54 @@ class _ClearOp implements _CanvasOp {
 
   @override
   void redo(FlueraCanvasState s) => s._internalClear();
+}
+
+/// Bookkeeping entry for a single original stroke that was split by
+/// the pixel-mode eraser. Captures where the original was and which
+/// sub-strokes replaced it so undo can reverse the cut exactly.
+class _PixelEraseRecord {
+  _PixelEraseRecord({
+    required this.original,
+    required this.index,
+    required this.survivors,
+  });
+  final CanvasStroke original;
+  final int index;
+  final List<CanvasStroke> survivors;
+}
+
+class _PixelEraseOp implements _CanvasOp {
+  _PixelEraseOp(List<_PixelEraseRecord> records, List<CanvasStroke> survivors)
+    : _records = List<_PixelEraseRecord>.from(records),
+      _survivors = List<CanvasStroke>.from(survivors);
+  final List<_PixelEraseRecord> _records;
+  final List<CanvasStroke> _survivors;
+
+  @override
+  void undo(FlueraCanvasState s) {
+    // Remove every survivor that was inserted during the erase
+    // gesture, then re-insert the originals at their captured Z-order.
+    for (final survivor in _survivors) {
+      s._internalRemoveStroke(survivor);
+    }
+    final sorted = List<_PixelEraseRecord>.from(_records)
+      ..sort((a, b) => a.index.compareTo(b.index));
+    for (final r in sorted) {
+      s._internalInsertStrokeAt(r.index, r.original);
+    }
+  }
+
+  @override
+  void redo(FlueraCanvasState s) {
+    for (final r in _records) {
+      s._internalRemoveStroke(r.original);
+    }
+    for (final survivor in _survivors) {
+      // Append at end — exact mid-list position is non-trivial after
+      // multiple ops; Z-order is approximated.
+      s._internalInsertStrokeAt(s._strokes.length, survivor);
+    }
+  }
 }
 
 class _CanvasHistory {

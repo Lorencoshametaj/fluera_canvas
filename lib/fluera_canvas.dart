@@ -31,6 +31,7 @@ export 'src/canvas/stylus_hover_tracker.dart';
 // primitives above are the power-user surface.
 export 'src/canvas/fluera_canvas_widget.dart';
 export 'src/canvas/fluera_canvas_toolbar.dart';
+export 'src/canvas/fluera_color_picker_dialog.dart';
 export 'src/canvas/canvas_background.dart';
 export 'src/canvas/canvas_serializer.dart';
 
