@@ -598,6 +598,14 @@ class FlueraCanvasState extends State<FlueraCanvas>
     if (oldWidget.background != widget.background) {
       _commitTick.notify();
     }
+    // The eraser preview circle is rendered by the committed painter,
+    // which only repaints when `_commitTick` notifies. If the consumer
+    // resizes the eraser via the toolbar slider, push a tick so the
+    // circle redraws in real time at the new radius.
+    if (oldWidget.eraserRadius != widget.eraserRadius ||
+        oldWidget.showEraserPreview != widget.showEraserPreview) {
+      _commitTick.notify();
+    }
     if (oldWidget.historyCapacity != widget.historyCapacity) {
       if (widget.historyCapacity > 0) {
         _history =
