@@ -1,11 +1,33 @@
 # fluera_canvas
 
-> Professional 2D canvas SDK for Flutter. Pressure-sensitive infinite canvas
-> with a native GPU live-stroke pipeline, a scene graph, and pluggable brush
-> engines.
+> **The document-grade infinite-canvas SDK for Flutter.**
+>
+> Built for **notes apps, whiteboards and design tools** — not signature pads.
+> Multi-thousand strokes at 60 FPS, drop-in Material toolbar, persistence
+> primitives, optional native GPU bridge.
+>
+> The only Flutter canvas SDK on pub.dev with infinite pan / zoom / rotate
+> physics, RTree-backed viewport culling, and per-stroke GPU `Picture` cache.
+> If you're building Notability / Goodnotes / Miro / Figma-class UX, start
+> here.
 >
 > **Status:** `0.4.0` pre-release. API unstable until `1.0.0`.
 > Marketing site: **[engine.fluera.dev](https://engine.fluera.dev/)**
+
+## Positioning
+
+| You're building… | Use |
+|---|---|
+| Notes app, whiteboard, sketching app, design tool, mind-map, diagram editor, infinite-canvas planner | **`fluera_canvas` ✅** |
+| Signature pad, e-signature flow | `signature` / `hand_signature` (more focused) |
+| Photo annotation, draw-on-image, sticker/text overlay | `flutter_painter_v2` (raster, has text + image overlay) |
+| Custom stroke renderer, no widget | `perfect_freehand` (pure rendering primitive) |
+
+Different tools for different jobs. `fluera_canvas` deliberately doesn't
+chase the signature-pad or photo-annotation niches — those are well served.
+What's missing on pub.dev is the **document-grade** category: infinite
+surface, thousands of strokes, persistence-friendly, ready for a real
+note-taking or design product. That's what this SDK is for.
 
 ## What you get
 
