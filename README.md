@@ -207,6 +207,69 @@ platforms. Web uses a direct JS interop bridge (no MethodChannel).
 All of the above ship in the commercial `fluera_engine_pro` package. See
 [engine.fluera.dev/pricing](https://engine.fluera.dev/pricing) for details.
 
+## FAQ / Troubleshooting
+
+**My persisted canvas appears empty when I reopen it.**
+Use `FlueraCanvas(initialBytes: bytesFromDisk)` to restore — it decodes
+the bytes inside `initState`, before the first paint. Calling
+`loadFromBytes` on the State after the first frame can leave the
+`RepaintBoundary` cached layer stale on Impeller-Vulkan / Adreno (the
+second paint is silently coalesced and the canvas looks empty).
+Full write-up: [doc/troubleshooting-impeller.md](doc/troubleshooting-impeller.md#symptom-2).
+
+**My live stroke is invisible until I lift my finger.**
+You're on Android profile mode with Impeller-Vulkan, and the canvas is
+not running 0.3.0 yet. Update — `_liveStrokeTicker` works around the
+Flutter pipeline coalescing that drops mid-gesture frames on Adreno.
+
+**My stroke has visible "humps" or "pinches" when I zoom in.**
+Update to 0.3.0+. The renderer now uses a single `drawPath` per stroke
+with quadratic-bezier smoothing and average pressure — silhouette is
+C¹-continuous regardless of zoom. The 0.2.x pressure-banding renderer
+is gone.
+
+**Can I use `fluera_canvas` without the commercial GPU plugin?**
+Yes — that's the default. The pure-Dart fallback handles the live
+stroke and committed strokes on every platform. The native GPU plugin
+(`fluera_canvas_gpu`, separate package) buys sub-frame latency on the
+live path but is optional.
+
+**Why is the API so big? I see hundreds of exported symbols.**
+Most of them are scene-graph primitives, brush models, filters, and
+input pipeline pieces inherited from the larger commercial
+`fluera_engine`. They're free to use but not required by `FlueraCanvas`
+itself. Stick to the symbols documented in the README and you'll have
+everything you need for typical drawing-app use cases.
+
+**How many strokes can it handle at 60 FPS?**
+~5 000–10 000 strokes in a typical viewport on a mid-tier Android
+(Adreno 660) thanks to per-stroke `ui.Picture` cache + spatial-index
+viewport culling + cached committed `RepaintBoundary`. Beyond that
+you'll start to see frame drops during camera animation; idle and
+during drawing it's still fluid. See
+[doc/performance.md](doc/performance.md) for the breakdown.
+
+**How do I build a multi-canvas / autosave app?**
+That pattern is consumer-side (we don't ship `path_provider` /
+`sqflite` / encrypted storage as SDK deps). The example app's
+"Multi-canvas + autosave" demo shows the full pattern in ~150 lines
+using `path_provider` — copy and adapt.
+
+**Does `fluera_canvas` work on Web?**
+Yes. CanvasKit and WASM compilation both work. WebGPU live-stroke
+requires the commercial `fluera_canvas_gpu`; without it the Dart
+fallback handles the live stroke (works on every browser).
+
+**My CI fails with `OnBackInvokedCallback is not enabled`.**
+That's an Android system warning unrelated to `fluera_canvas`. Add
+`android:enableOnBackInvokedCallback="true"` to your
+`<application>` tag in `AndroidManifest.xml`.
+
+More guides: [doc/architecture.md](doc/architecture.md),
+[doc/performance.md](doc/performance.md),
+[doc/troubleshooting-impeller.md](doc/troubleshooting-impeller.md),
+[doc/migration-0.2-to-0.3.md](doc/migration-0.2-to-0.3.md).
+
 ## Contributing
 
 Issues and PRs welcome at

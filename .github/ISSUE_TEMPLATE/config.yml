@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Marketing site
+    url: https://engine.fluera.dev
+    about: Pricing, commercial GPU plugin, and full quickstart guide.
+  - name: Commercial GPU plugin (fluera_canvas_gpu)
+    url: https://engine.fluera.dev/pricing
+    about: Native Vulkan / Metal / OpenGL / D3D11 / WebGPU live-stroke. Issues with the commercial plugin go to the private repo, not this one.
