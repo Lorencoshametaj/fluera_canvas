@@ -378,7 +378,7 @@ void main() {
         ),
       );
       expect(find.text('Pen'), findsOneWidget);
-      expect(find.text('Eraser'), findsOneWidget);
+      expect(find.text('Erase'), findsOneWidget);
       expect(find.byType(Slider), findsOneWidget);
     });
   });

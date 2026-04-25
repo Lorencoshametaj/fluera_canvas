@@ -112,13 +112,22 @@ class CanvasStroke {
     _cachedPicture = null;
   }
 
-  /// Splits [stroke] into the contiguous pieces whose points fall
-  /// OUTSIDE the circle `(center, r²)`. Returns the surviving
-  /// sub-strokes — empty list if every point is inside the circle.
+  /// Splits [stroke] into the contiguous pieces that lie OUTSIDE the
+  /// circle `(center, r²)`. Returns the surviving sub-strokes —
+  /// empty list if the entire stroke is inside the circle.
+  ///
+  /// Handles segment/circle intersection properly: a long segment
+  /// whose endpoints are both outside the circle but which crosses
+  /// the circle is split into two surviving sub-segments. Without
+  /// this, a rectangle drawn with 5 anchor points (one per corner)
+  /// would be untouchable mid-side because no anchor point ever
+  /// falls inside the eraser circle. The implementation interpolates
+  /// the entry / exit points on each segment, preserving the stroke's
+  /// silhouette at any point density.
   ///
   /// This is the underlying primitive used by [CanvasTool.erasePixel].
-  /// Exposed publicly so consumers can build their own
-  /// pixel-mode UX (e.g. lasso-to-cut) without re-implementing the
+  /// Exposed publicly so consumers can build their own pixel-mode UX
+  /// (e.g. lasso-to-cut, polygon-erase) without re-implementing the
   /// splitter.
   static List<CanvasStroke> splitAroundCircle(
     CanvasStroke stroke,
@@ -134,6 +143,21 @@ class CanvasStroke {
     List<Offset>? curPts;
     List<double>? curPrs;
 
+    void start(Offset p, double pr) {
+      curPts = <Offset>[p];
+      curPrs = <double>[pr];
+    }
+
+    void appendIfDifferent(Offset p, double pr) {
+      curPts ??= <Offset>[];
+      curPrs ??= <double>[];
+      // Avoid degenerate zero-length segments at run boundaries.
+      if (curPts!.isEmpty || curPts!.last != p) {
+        curPts!.add(p);
+        curPrs!.add(pr);
+      }
+    }
+
     void flushRun() {
       if (curPts != null && curPts!.length >= 2) {
         survivors.add(
@@ -142,6 +166,7 @@ class CanvasStroke {
             pressures: List<double>.unmodifiable(curPrs!),
             color: stroke.color,
             baseWidth: stroke.baseWidth,
+            smooth: stroke.smooth,
           ),
         );
       }
@@ -149,19 +174,80 @@ class CanvasStroke {
       curPrs = null;
     }
 
-    for (int i = 0; i < n; i++) {
-      final dx = points[i].dx - center.dx;
-      final dy = points[i].dy - center.dy;
-      final inside = dx * dx + dy * dy <= radiusSquared;
-      if (inside) {
-        flushRun();
-      } else {
-        curPts ??= <Offset>[];
-        curPrs ??= <double>[];
-        curPts!.add(points[i]);
-        curPrs!.add(pressures[i]);
-      }
+    bool isInside(Offset p) {
+      final dx = p.dx - center.dx;
+      final dy = p.dy - center.dy;
+      return dx * dx + dy * dy <= radiusSquared;
     }
+
+    // Single-point strokes are pass-through (they're not normally
+    // committed but we handle the edge case defensively).
+    if (n == 1) return isInside(points[0]) ? const [] : [stroke];
+
+    bool prevInside = isInside(points[0]);
+    if (!prevInside) start(points[0], pressures[0]);
+
+    for (int i = 1; i < n; i++) {
+      final a = points[i - 1];
+      final b = points[i];
+      final pa = pressures[i - 1];
+      final pb = pressures[i];
+      final bInside = isInside(b);
+
+      // Solve |a + t·(b - a) - center|² = r² for t in [0, 1].
+      final dx = b.dx - a.dx;
+      final dy = b.dy - a.dy;
+      final mx = a.dx - center.dx;
+      final my = a.dy - center.dy;
+      final A = dx * dx + dy * dy;
+      final B = 2 * (mx * dx + my * dy);
+      final C = mx * mx + my * my - radiusSquared;
+      final disc = B * B - 4 * A * C;
+      final ts = <double>[];
+      if (A > 0 && disc >= 0) {
+        final sq = math.sqrt(disc);
+        final t1 = (-B - sq) / (2 * A);
+        final t2 = (-B + sq) / (2 * A);
+        if (t1 > 0 && t1 < 1) ts.add(t1);
+        if (t2 > 0 && t2 < 1) ts.add(t2);
+      }
+      ts.sort();
+
+      Offset lerp(double t) => Offset(a.dx + dx * t, a.dy + dy * t);
+      double lerpPr(double t) => pa + (pb - pa) * t;
+
+      if (!prevInside && !bInside) {
+        if (ts.length == 2) {
+          // Segment dips through the circle and exits — close the
+          // current run at entry, flush, restart at exit.
+          appendIfDifferent(lerp(ts[0]), lerpPr(ts[0]));
+          flushRun();
+          start(lerp(ts[1]), lerpPr(ts[1]));
+          appendIfDifferent(b, pb);
+        } else {
+          // Both endpoints outside, no chord (or grazes the circle).
+          appendIfDifferent(b, pb);
+        }
+      } else if (!prevInside && bInside) {
+        // Exiting the outside-run; close at the entry point.
+        if (ts.isNotEmpty) {
+          appendIfDifferent(lerp(ts.first), lerpPr(ts.first));
+        }
+        flushRun();
+      } else if (prevInside && !bInside) {
+        // Entering an outside-run; start at the exit point.
+        if (ts.isNotEmpty) {
+          start(lerp(ts.last), lerpPr(ts.last));
+        } else {
+          start(b, pb);
+        }
+        appendIfDifferent(b, pb);
+      }
+      // else (both inside): no run, nothing to flush.
+
+      prevInside = bInside;
+    }
+
     flushRun();
     return survivors;
   }
@@ -1147,7 +1233,9 @@ class FlueraCanvasState extends State<FlueraCanvas>
       detector = MouseRegion(
         cursor: _mouseCursor,
         onHover: (e) {
-          if (widget.tool == CanvasTool.erase && widget.showEraserPreview) {
+          if ((widget.tool == CanvasTool.erase ||
+                  widget.tool == CanvasTool.erasePixel) &&
+              widget.showEraserPreview) {
             _eraserPreviewWorld = _controller.screenToCanvas(e.localPosition);
             _commitTick.notify();
           }
@@ -1326,9 +1414,11 @@ class _CommittedStrokesPainter extends CustomPainter {
     }
 
     // Eraser hover circle — drawn last so it sits on top of strokes.
+    // Shown for both stroke-mode and pixel-mode eraser tools.
     final showPreview =
         canvasState.widget.showEraserPreview &&
-        canvasState.widget.tool == CanvasTool.erase &&
+        (canvasState.widget.tool == CanvasTool.erase ||
+            canvasState.widget.tool == CanvasTool.erasePixel) &&
         canvasState._eraserPreviewWorld != null;
     if (showPreview) {
       final preview = canvasState._eraserPreviewWorld!;

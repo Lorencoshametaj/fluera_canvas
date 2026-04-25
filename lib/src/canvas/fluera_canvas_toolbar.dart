@@ -161,14 +161,16 @@ class FlueraCanvasToolbar extends StatelessWidget {
       ),
       const ButtonSegment(
         value: CanvasTool.erase,
-        label: Text('Eraser'),
+        label: Text('Erase'),
         icon: Icon(Icons.cleaning_services_rounded),
+        tooltip: 'Erase whole strokes',
       ),
       if (showPixelEraser)
         const ButtonSegment(
           value: CanvasTool.erasePixel,
-          label: Text('Pixel'),
-          icon: Icon(Icons.auto_fix_high_rounded),
+          label: Text('Cut'),
+          icon: Icon(Icons.content_cut_rounded),
+          tooltip: 'Cut the touched portion of strokes',
         ),
       if (showShapeTools) ...[
         const ButtonSegment(
