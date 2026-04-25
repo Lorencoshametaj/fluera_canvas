@@ -95,6 +95,60 @@ class CanvasStroke {
     _cachedPicture = null;
   }
 
+  /// Splits [stroke] into the contiguous pieces whose points fall
+  /// OUTSIDE the circle `(center, r²)`. Returns the surviving
+  /// sub-strokes — empty list if every point is inside the circle.
+  ///
+  /// This is the underlying primitive used by [CanvasTool.erasePixel].
+  /// Exposed publicly so consumers can build their own
+  /// pixel-mode UX (e.g. lasso-to-cut) without re-implementing the
+  /// splitter.
+  static List<CanvasStroke> splitAroundCircle(
+    CanvasStroke stroke,
+    Offset center,
+    double radiusSquared,
+  ) {
+    final points = stroke.points;
+    final pressures = stroke.pressures;
+    final n = points.length;
+    if (n == 0) return const [];
+
+    final survivors = <CanvasStroke>[];
+    List<Offset>? curPts;
+    List<double>? curPrs;
+
+    void flushRun() {
+      if (curPts != null && curPts!.length >= 2) {
+        survivors.add(
+          CanvasStroke(
+            points: List<Offset>.unmodifiable(curPts!),
+            pressures: List<double>.unmodifiable(curPrs!),
+            color: stroke.color,
+            baseWidth: stroke.baseWidth,
+          ),
+        );
+      }
+      curPts = null;
+      curPrs = null;
+    }
+
+    for (int i = 0; i < n; i++) {
+      final dx = points[i].dx - center.dx;
+      final dy = points[i].dy - center.dy;
+      final inside = dx * dx + dy * dy <= radiusSquared;
+      if (inside) {
+        flushRun();
+      } else {
+        curPts ??= <Offset>[];
+        curPrs ??= <double>[];
+        curPts!.add(points[i]);
+        curPrs!.add(pressures[i]);
+      }
+    }
+    flushRun();
+    return survivors;
+  }
+
   static Rect _computeBounds(List<Offset> points, double baseWidth) {
     if (points.isEmpty) return Rect.zero;
     double minX = points.first.dx;
@@ -722,7 +776,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
     bool anyChange = false;
     for (final s in List<CanvasStroke>.from(candidates)) {
       if (!_strokeIntersectsCircle(s, world, r2)) continue;
-      final survivors = _splitStrokeAroundCircle(s, world, r2);
+      final survivors = CanvasStroke.splitAroundCircle(s, world, r2);
       // No survivors → effectively a full erase of this stroke.
       // One survivor with the same point list → no change (eraser
       // overlapped only the bounding rect padding); skip.
@@ -747,54 +801,6 @@ class FlueraCanvasState extends State<FlueraCanvas>
       anyChange = true;
     }
     if (anyChange) _commitTick.notify();
-  }
-
-  /// Splits [stroke] into the contiguous pieces whose points fall
-  /// outside the circle (center, r²). Returns the surviving
-  /// sub-strokes — empty list if the entire stroke was inside the
-  /// circle.
-  static List<CanvasStroke> _splitStrokeAroundCircle(
-    CanvasStroke stroke,
-    Offset center,
-    double r2,
-  ) {
-    final points = stroke.points;
-    final pressures = stroke.pressures;
-    final n = points.length;
-    if (n == 0) return const [];
-
-    final survivors = <CanvasStroke>[];
-    List<Offset>? curPts;
-    List<double>? curPrs;
-
-    void flushRun() {
-      if (curPts != null && curPts!.length >= 2) {
-        survivors.add(
-          CanvasStroke(
-            points: List<Offset>.unmodifiable(curPts!),
-            pressures: List<double>.unmodifiable(curPrs!),
-            color: stroke.color,
-            baseWidth: stroke.baseWidth,
-          ),
-        );
-      }
-      curPts = null;
-      curPrs = null;
-    }
-
-    for (int i = 0; i < n; i++) {
-      final inside = _dist2(points[i], center) <= r2;
-      if (inside) {
-        flushRun();
-      } else {
-        curPts ??= <Offset>[];
-        curPrs ??= <double>[];
-        curPts!.add(points[i]);
-        curPrs!.add(pressures[i]);
-      }
-    }
-    flushRun();
-    return survivors;
   }
 
   static bool _strokeIntersectsCircle(
