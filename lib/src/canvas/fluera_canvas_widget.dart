@@ -27,10 +27,15 @@ import './canvas_background.dart';
 import './canvas_serializer.dart';
 import './infinite_canvas_controller.dart';
 import './infinite_canvas_gesture_detector.dart';
+import '../core/nodes/canvas_stroke_node.dart';
+import '../core/nodes/layer_node.dart';
+import '../core/scene_graph/canvas_node.dart';
+import '../core/scene_graph/node_id.dart';
 import '../drawing/brush_config.dart';
 import '../rendering/native_stroke_overlay.dart';
 import '../rendering/gpu/gpu_stroke_backend.dart';
 import '../rendering/optimization/spatial_index.dart';
+import '../utils/uid.dart' show generateUid;
 
 /// A single committed stroke — an opaque list of pressure-aware samples in
 /// world coordinates plus render metadata.
@@ -65,7 +70,15 @@ class CanvasStroke {
     this.brushType = 0,
     this.pencilConfig = PencilConfig.defaults,
     this.fountainConfig = FountainPenConfig.defaults,
+    this.layerId = FlueraLayer.defaultLayerId,
   }) : _cachedBounds = _computeBounds(points, baseWidth);
+
+  /// ID of the layer this stroke belongs to. Strokes committed before any
+  /// `addLayer` call go to the implicit default layer (`'default'`); strokes
+  /// committed after an `addLayer` call inherit the active layer at commit
+  /// time. The committed-strokes painter iterates layers in order and clips
+  /// each one with `saveLayer` so per-layer opacity and blend mode apply.
+  final String layerId;
 
   /// When `true` (default), the rasteriser smooths the polyline with
   /// quadratic-bezier curves through the midpoints — eliminates kinks
@@ -317,6 +330,86 @@ class CanvasStroke {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 🧁 LAYER MODEL — multi-layer support for FlueraCanvas (0.6.0+).
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A single drawing layer inside a [FlueraCanvas].
+///
+/// Layers stack bottom-to-top; the order returned by [FlueraCanvasState.layers]
+/// is the paint order. Each layer carries its own visibility, lock, opacity and
+/// blend-mode settings; strokes committed while the layer is the active one
+/// are stamped with its [id] (see [CanvasStroke.layerId]).
+///
+/// Layers are an additive feature: a fresh canvas starts with one implicit
+/// layer named `Layer 1` (id [defaultLayerId]) that mirrors the pre-0.6.0
+/// "single flat list" behaviour. Consumers that never call [FlueraCanvasState.addLayer]
+/// see no observable difference.
+@immutable
+class FlueraLayer {
+  /// ID of the implicit layer created when [FlueraCanvas] mounts. Strokes
+  /// committed before any explicit layer management land on this layer.
+  static const String defaultLayerId = 'default';
+
+  const FlueraLayer({
+    required this.id,
+    required this.name,
+    this.opacity = 1.0,
+    this.visible = true,
+    this.locked = false,
+    this.blendMode = BlendMode.srcOver,
+  });
+
+  /// Stable identifier used by [CanvasStroke.layerId] to attach a stroke to
+  /// this layer. Pass-through to [FlueraCanvasState.addLayer]'s return value;
+  /// callers should not mutate it.
+  final String id;
+
+  /// Human-readable name shown in layer panels. Default: `Layer N`.
+  final String name;
+
+  /// Per-layer alpha multiplier in `[0, 1]`. Applied via `Canvas.saveLayer`
+  /// at paint time so it composes correctly with [blendMode].
+  final double opacity;
+
+  /// Hidden layers are skipped entirely by the painter. Strokes inside a
+  /// hidden layer are NOT removed — they reappear when [visible] flips back.
+  final bool visible;
+
+  /// Locked layers reject new strokes and hide the eraser hover preview when
+  /// the layer is the active one. The pre-existing strokes still render
+  /// normally.
+  final bool locked;
+
+  /// Per-layer blend mode applied during the painter's `saveLayer` pass.
+  /// The pub.dev free core supports the standard `BlendMode` enum from
+  /// `dart:ui`; the commercial `fluera_canvas_gpu` add-on layers Photoshop
+  /// modes on top via its GPU compositor.
+  final BlendMode blendMode;
+
+  FlueraLayer copyWith({
+    String? name,
+    double? opacity,
+    bool? visible,
+    bool? locked,
+    BlendMode? blendMode,
+  }) {
+    return FlueraLayer(
+      id: id,
+      name: name ?? this.name,
+      opacity: opacity ?? this.opacity,
+      visible: visible ?? this.visible,
+      locked: locked ?? this.locked,
+      blendMode: blendMode ?? this.blendMode,
+    );
+  }
+
+  @override
+  String toString() =>
+      'FlueraLayer(id: $id, name: $name, opacity: $opacity, '
+      'visible: $visible, locked: $locked, blendMode: $blendMode)';
+}
+
 /// Tool mode for user input on [FlueraCanvas].
 enum CanvasTool {
   /// Pointer commits free-form strokes to the canvas.
@@ -491,12 +584,37 @@ class FlueraCanvasState extends State<FlueraCanvas>
   late final NativeStrokeOverlayController _nativeOverlay;
 
   /// Committed strokes, in draw order (back-to-front).
+  ///
+  /// This flat list is the **hot-path mirror** of the scene graph:
+  /// painter iteration, spatial-index hit-test, eraser cuts and FCV0 v1
+  /// serialization all read from here in tight loops. Every mutation
+  /// site MUST also update [_rootLayer] / [_activeLayer] / [_strokeToNode]
+  /// via the `_addStrokeBoth` / `_removeStrokeBoth` helpers so the two
+  /// representations never diverge.
   final List<CanvasStroke> _strokes = <CanvasStroke>[];
 
   /// Spatial index over [_strokes]. Rebuilt lazily on hit-test when stale.
   late final RTree<CanvasStroke> _spatialIndex = RTree<CanvasStroke>(
     (s) => s.bounds,
   );
+
+  /// Scene-graph root. Always populated; in 0.6.0 (Phase A) it carries
+  /// a single default [LayerNode] named "Layer 1" so the legacy
+  /// strokes-only API maps cleanly into a layered model. Phase B will
+  /// expose layer manipulation; Phase D will add text / image children.
+  late final LayerNode _rootLayer;
+
+  /// The layer new content is appended to. Defaults to the single
+  /// "Layer 1" created in [initState]. Future `setActiveLayer(...)`
+  /// (Phase B) will rotate this pointer.
+  late LayerNode _activeLayer;
+
+  /// Identity-keyed lookup from [CanvasStroke] to its scene-graph node.
+  /// Lets removal find the wrapping node without an O(n) scan of every
+  /// layer. Entries are dropped on stroke removal so the map size
+  /// matches `_strokes.length`.
+  final Map<CanvasStroke, CanvasStrokeNode> _strokeToNode =
+      Map<CanvasStroke, CanvasStrokeNode>.identity();
 
   /// Undo / redo stacks. `null` when [widget.historyCapacity] <= 0.
   _CanvasHistory? _history;
@@ -567,6 +685,13 @@ class FlueraCanvasState extends State<FlueraCanvas>
   @override
   void initState() {
     super.initState();
+    // Bootstrap the scene-graph: a single root carrying a default
+    // "Layer 1". Doing this BEFORE anything that may push strokes
+    // (initialBytes decode below) so `_addStrokeBoth` always finds an
+    // active layer.
+    _rootLayer = LayerNode(id: NodeId(generateUid()), name: 'Root');
+    _activeLayer = LayerNode(id: NodeId(generateUid()), name: 'Layer 1');
+    _rootLayer.add(_activeLayer);
     _ownsController = widget.controller == null;
     _controller = widget.controller ?? InfiniteCanvasController();
     // Camera changes trigger committed repaint via _commitTick (the
@@ -611,8 +736,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
       try {
         final loaded = CanvasSerializer.decodeBytes(initial);
         for (final s in loaded) {
-          _strokes.add(s);
-          _spatialIndex.insert(s);
+          _internalInsertStrokeAt(_strokes.length, s);
         }
       } catch (_) {
         // Corrupt bytes — start with empty canvas.
@@ -898,8 +1022,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
       fountainConfig: widget.fountainConfig,
     );
     if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
-    _strokes.add(stroke);
-    _spatialIndex.insert(stroke);
+    _internalInsertStrokeAt(_strokes.length, stroke);
     _livePoints = null;
     _livePressures = null;
     _commitTick.notify();
@@ -954,8 +1077,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
     for (final s in toErase) {
       final idx = _strokes.indexOf(s);
       if (idx < 0) continue;
-      _strokes.removeAt(idx);
-      _spatialIndex.remove(s);
+      _internalRemoveStroke(s);
       s.dispose();
       _erasedThisGesture.add(s);
       _lastEraseIndexes[s] = idx;
@@ -987,13 +1109,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
       }
       final idx = _strokes.indexOf(s);
       if (idx < 0) continue;
-      _strokes.removeAt(idx);
-      _spatialIndex.remove(s);
+      _internalRemoveStroke(s);
       // Insert survivors at the original position so Z-order is
       // preserved.
       for (int i = 0; i < survivors.length; i++) {
-        _strokes.insert(idx + i, survivors[i]);
-        _spatialIndex.insert(survivors[i]);
+        _internalInsertStrokeAt(idx + i, survivors[i]);
         _pixelEraseReplacements.add(survivors[i]);
       }
       _pixelEraseOriginals.add(
@@ -1050,10 +1170,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
   void clear() {
     if (_strokes.isEmpty) return;
     final snapshot = List<CanvasStroke>.from(_strokes);
-    _strokes.clear();
-    for (final s in snapshot) {
-      _spatialIndex.remove(s);
-    }
+    _internalClear();
     _livePoints = null;
     _livePressures = null;
     _commitTick.notify();
@@ -1066,10 +1183,32 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// Read-only view of the committed stroke list (defensive copy).
   List<CanvasStroke> get strokes => List.unmodifiable(_strokes);
 
+  /// Root of the scene graph. Always non-null. Contains the layer
+  /// hierarchy that backs the canvas content. In 0.6.0 the root carries
+  /// a single default `Layer 1` that holds every stroke; multi-layer
+  /// workflows arrive in Phase B.
+  ///
+  /// Mutating the returned [LayerNode] directly is **unsupported** —
+  /// always go through the public layer / stroke API on this state so
+  /// the flat `_strokes` mirror, the spatial index and the undo stack
+  /// stay in sync.
+  LayerNode get rootLayer => _rootLayer;
+
+  /// Currently-active layer. New strokes / shapes / images are appended
+  /// here. Defaults to the auto-created `Layer 1`. Phase B will expose
+  /// `setActiveLayer(...)` and the layer-management helpers.
+  LayerNode get activeLayer => _activeLayer;
+
+  /// Read-only ordered view (back-to-front) of every [LayerNode] under
+  /// the [rootLayer]. Useful for rendering a layers panel without
+  /// reaching into the scene graph internals.
+  List<LayerNode> get layers => List.unmodifiable(
+        _rootLayer.children.whereType<LayerNode>(),
+      );
+
   /// Programmatically append a stroke. Pushes an undo step.
   void pushStroke(CanvasStroke stroke) {
-    _strokes.add(stroke);
-    _spatialIndex.insert(stroke);
+    _internalInsertStrokeAt(_strokes.length, stroke);
     _commitTick.notify();
     _history?.push(_AddOp(stroke, _strokes.length - 1));
     widget.onStrokeCommitted?.call(stroke);
@@ -1082,8 +1221,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
     final indexes = <int>[];
     for (final s in batch) {
       indexes.add(_strokes.length);
-      _strokes.add(s);
-      _spatialIndex.insert(s);
+      _internalInsertStrokeAt(_strokes.length, s);
     }
     _commitTick.notify();
     _history?.push(_AddBatchOp(batch, indexes));
@@ -1191,15 +1329,13 @@ class FlueraCanvasState extends State<FlueraCanvas>
   }
 
   void _replaceStrokes(List<CanvasStroke> loaded) {
-    for (final s in _strokes) {
-      _spatialIndex.remove(s);
+    final disposeList = List<CanvasStroke>.from(_strokes);
+    _internalClear();
+    for (final s in disposeList) {
       s.dispose();
     }
-    _strokes
-      ..clear()
-      ..addAll(loaded);
     for (final s in loaded) {
-      _spatialIndex.insert(s);
+      _internalInsertStrokeAt(_strokes.length, s);
     }
     _livePoints = null;
     _livePressures = null;
@@ -1380,16 +1516,45 @@ class FlueraCanvasState extends State<FlueraCanvas>
 
   // ── Internal history hooks (invoked by _CanvasOp implementations) ────────
 
-  void _internalRemoveStroke(CanvasStroke s) {
-    _strokes.remove(s);
-    _spatialIndex.remove(s);
-  }
-
+  /// Insert [s] at [index] in the flat list AND wrap it in a
+  /// `CanvasStrokeNode` appended to [_activeLayer] at the equivalent
+  /// position. Keeps the spatial index, the flat mirror and the scene
+  /// graph atomically consistent.
   void _internalInsertStrokeAt(int index, CanvasStroke s) {
     if (index < 0) index = 0;
     if (index > _strokes.length) index = _strokes.length;
     _strokes.insert(index, s);
     _spatialIndex.insert(s);
+    final node = _strokeToNode[s] ??
+        CanvasStrokeNode(id: NodeId(generateUid()), stroke: s);
+    _strokeToNode[s] = node;
+    // For now (Phase A) every stroke lives in the active layer at the
+    // same Z-index as in the flat list. Future multi-layer work will
+    // route this through a `Map<CanvasStroke, LayerNode>` to support
+    // strokes across heterogeneous layers.
+    if (node.parent != null && node.parent != _activeLayer) {
+      // Defensive: if a stroke is being moved across layers, detach
+      // first so `add` / `insertAt` doesn't trip the duplicate-id
+      // assertion in GroupNode.
+      (node.parent! as LayerNode).remove(node);
+    }
+    if (index >= _activeLayer.children.length) {
+      if (node.parent != _activeLayer) _activeLayer.add(node);
+    } else {
+      if (node.parent == _activeLayer) {
+        _activeLayer.remove(node);
+      }
+      _activeLayer.insertAt(index, node);
+    }
+  }
+
+  void _internalRemoveStroke(CanvasStroke s) {
+    _strokes.remove(s);
+    _spatialIndex.remove(s);
+    final node = _strokeToNode.remove(s);
+    if (node != null && node.parent is LayerNode) {
+      (node.parent! as LayerNode).remove(node);
+    }
   }
 
   void _internalClear() {
@@ -1397,6 +1562,17 @@ class FlueraCanvasState extends State<FlueraCanvas>
       _spatialIndex.remove(s);
     }
     _strokes.clear();
+    _strokeToNode.clear();
+    // Preserve layer structure (ids + visibility / opacity) — only
+    // detach the stroke nodes. Phase B (layer ops) will revisit this
+    // to also handle non-stroke children (text / image) once those
+    // can land in the canvas.
+    for (final layer in _rootLayer.children.whereType<LayerNode>()) {
+      final children = List<CanvasNode>.from(layer.children);
+      for (final c in children) {
+        if (c is CanvasStrokeNode) layer.remove(c);
+      }
+    }
   }
 }
 
