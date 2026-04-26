@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'fluera_canvas_widget.dart';
 import 'fluera_color_picker_dialog.dart';
 import 'fluera_layer_panel.dart';
+import 'tools/image_tool.dart';
 
 /// Default 6-color preset used by [FlueraCanvasToolbar] when no
 /// `palette` is provided. Black + 5 saturated hues, consistent with the
@@ -85,6 +86,9 @@ class FlueraCanvasToolbar extends StatelessWidget {
     this.showColorPickerButton = false,
     this.showLayers = false,
     this.layersBottomSheetTitle,
+    this.showSelectionTool = false,
+    this.showImageTool = false,
+    this.showTransformActions = false,
     this.eraserRadius,
     this.onEraserRadiusChanged,
     this.minEraserRadius = 8.0,
@@ -162,6 +166,24 @@ class FlueraCanvasToolbar extends StatelessWidget {
   /// sheet. Defaults to "Layers".
   final String? layersBottomSheetTitle;
 
+  /// When `true`, the tool segmented control gains a `Select` segment
+  /// that maps to [CanvasTool.select]. Tap a stroke to select, drag on
+  /// empty space to marquee-select, drag a handle to scale / rotate
+  /// (Phase C2). Default `false`.
+  final bool showSelectionTool;
+
+  /// When `true`, a "picture" trailing IconButton invokes
+  /// [FlueraImageTool.pickAndCommit] — opens the platform-native file
+  /// picker, decodes the chosen image and commits it on the active
+  /// layer. Imperative on purpose: tapping the button doesn't change
+  /// `tool`. Default `false`.
+  final bool showImageTool;
+
+  /// When `true` AND a non-empty selection exists, mirror-H / mirror-V
+  /// trailing buttons appear in the selection-action row. Wires
+  /// directly into `state.mirrorSelection(Axis)`. Default `false`.
+  final bool showTransformActions;
+
   /// Current eraser radius in screen pixels. When non-null AND
   /// [onEraserRadiusChanged] is also provided, the toolbar's slider
   /// switches between controlling [strokeWidth] (for draw / line /
@@ -229,6 +251,13 @@ class FlueraCanvasToolbar extends StatelessWidget {
           icon: Icon(Icons.circle_outlined),
         ),
       ],
+      if (showSelectionTool)
+        const ButtonSegment(
+          value: CanvasTool.select,
+          label: Text('Select'),
+          icon: Icon(Icons.crop_free_rounded),
+          tooltip: 'Tap to select, drag empty space to marquee-select',
+        ),
     ];
 
     return Container(
@@ -252,6 +281,16 @@ class FlueraCanvasToolbar extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (showImageTool)
+                  IconButton(
+                    icon: const Icon(Icons.image_rounded),
+                    tooltip: 'Insert image',
+                    onPressed: () {
+                      final state = canvasKey.currentState;
+                      if (state == null) return;
+                      FlueraImageTool.pickAndCommit(context, state);
+                    },
+                  ),
                 if (showLayers)
                   IconButton(
                     icon: const Icon(Icons.layers_rounded),
@@ -304,6 +343,8 @@ class FlueraCanvasToolbar extends StatelessWidget {
                 ),
               ],
             ),
+            if (showTransformActions)
+              _SelectionActionsRow(canvasKey: canvasKey),
           ],
         ),
       ),
@@ -320,34 +361,33 @@ class FlueraCanvasToolbar extends StatelessWidget {
       isScrollControlled: true,
       showDragHandle: true,
       builder: (sheetCtx) {
-        return DraggableScrollableSheet(
-          expand: false,
-          initialChildSize: 0.55,
-          minChildSize: 0.35,
-          maxChildSize: 0.95,
-          builder: (_, scrollController) {
-            return SingleChildScrollView(
-              controller: scrollController,
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    child: Text(
-                      layersBottomSheetTitle ?? 'Layers',
-                      style: Theme.of(sheetCtx).textTheme.titleMedium,
-                    ),
+        // FlueraLayerPanel internally uses a `Column` with `Expanded`
+        // children for the reorderable list, so the sheet body needs a
+        // bounded height. We use FractionallySizedBox to give it 60%
+        // of the viewport — generous enough for ~12 layer rows; the
+        // panel's own list scrolls beyond that.
+        return FractionallySizedBox(
+          heightFactor: 0.6,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.max,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
                   ),
-                  FlueraLayerPanel(canvasKey: canvasKey),
-                ],
-              ),
-            );
-          },
+                  child: Text(
+                    layersBottomSheetTitle ?? 'Layers',
+                    style: Theme.of(sheetCtx).textTheme.titleMedium,
+                  ),
+                ),
+                Expanded(child: FlueraLayerPanel(canvasKey: canvasKey)),
+              ],
+            ),
+          ),
         );
       },
     );
@@ -557,6 +597,65 @@ class _ColorSwatch extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Inline action row that appears below the slider row when
+/// `showTransformActions` is `true`. Subscribes to the canvas's
+/// [FlueraCanvasState.selectionListenable] so the buttons fade in /
+/// out as the user picks or clears the selection — no consumer-side
+/// `setState` plumbing required.
+class _SelectionActionsRow extends StatelessWidget {
+  const _SelectionActionsRow({required this.canvasKey});
+
+  final GlobalKey<FlueraCanvasState> canvasKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = canvasKey.currentState;
+    if (state == null) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: state.selectionListenable,
+      builder: (context, _) {
+        final hasSelection = state.selection.isNotEmpty;
+        if (!hasSelection) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Row(
+            children: [
+              Text(
+                '${state.selection.length} selected',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.flip_rounded),
+                tooltip: 'Mirror horizontally',
+                onPressed: () => state.mirrorSelection(Axis.horizontal),
+              ),
+              Transform.rotate(
+                angle: 1.5707963, // 90° — turn the same icon vertical
+                child: IconButton(
+                  icon: const Icon(Icons.flip_rounded),
+                  tooltip: 'Mirror vertically',
+                  onPressed: () => state.mirrorSelection(Axis.vertical),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline_rounded),
+                tooltip: 'Delete selection',
+                onPressed: () => state.deleteSelection(),
+              ),
+              IconButton(
+                icon: const Icon(Icons.deselect_rounded),
+                tooltip: 'Clear selection',
+                onPressed: () => state.clearSelection(),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
