@@ -611,9 +611,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// Cached list of nodes the active transform applies to. Computed
   /// once at `_beginTransform` so the per-frame `_applyTransform`
   /// inner loop is O(S) on the selected set (typically 1–10) instead
-  /// of O(N) on every stroke in the canvas. Cleared on transform end /
-  /// cancel along with the rest of the snapshot.
-  List<CanvasStrokeNode>? _transformTargets;
+  /// of O(N) on every node in the canvas. Cleared on transform end /
+  /// cancel along with the rest of the snapshot. Type-agnostic
+  /// `CanvasNode` so future text / shape selections plug in without
+  /// touching the transform code path.
+  List<CanvasNode>? _transformTargets;
 
   /// Last gesture-area size measured by the build's `LayoutBuilder`
   /// — used by [_edgePan] to know where the edges are.
@@ -1723,11 +1725,15 @@ class FlueraCanvasState extends State<FlueraCanvas>
   }) {
     final ids = _selectionController.value.ids;
     final before = <NodeId, Matrix4>{};
-    final targets = <CanvasStrokeNode>[];
-    for (final entry in _strokeToNode.entries) {
-      if (!ids.contains(entry.value.id)) continue;
-      before[entry.value.id] = entry.value.localTransform.clone();
-      targets.add(entry.value);
+    final targets = <CanvasNode>[];
+    // Iterate the unified selectable index — picks up strokes AND
+    // images (and any future selectable node type) that are part of
+    // the current selection.
+    for (final id in ids) {
+      final node = _selectableNodes[id];
+      if (node == null) continue;
+      before[id] = node.localTransform.clone();
+      targets.add(node);
     }
     _transformMode = mode;
     _transformHandle = handle;
@@ -1886,13 +1892,17 @@ class FlueraCanvasState extends State<FlueraCanvas>
         ? TransformMath.mirrorH(pivot)
         : TransformMath.mirrorV(pivot);
     var count = 0;
-    for (final entry in _strokeToNode.entries) {
-      if (!ids.contains(entry.value.id)) continue;
-      before[entry.value.id] = entry.value.localTransform.clone();
-      final newM = delta.clone()..multiply(entry.value.localTransform);
-      entry.value.localTransform = newM;
-      entry.value.invalidateTransformCache();
-      after[entry.value.id] = newM.clone();
+    // Iterate the unified selectable index — picks up strokes,
+    // images, and any future selectable node type that's part of the
+    // current selection.
+    for (final id in ids) {
+      final node = _selectableNodes[id];
+      if (node == null) continue;
+      before[id] = node.localTransform.clone();
+      final newM = delta.clone()..multiply(node.localTransform);
+      node.localTransform = newM;
+      node.invalidateTransformCache();
+      after[id] = newM.clone();
       count++;
     }
     if (count > 0) {
@@ -4131,12 +4141,15 @@ class _TransformNodesOp implements _CanvasOp {
   final Map<NodeId, Matrix4> _after;
 
   void _apply(FlueraCanvasState s, Map<NodeId, Matrix4> snapshots) {
-    for (final entry in s._strokeToNode.entries) {
-      final m = snapshots[entry.value.id];
-      if (m == null) continue;
-      entry.value.localTransform = m.clone();
-      entry.value.invalidateTransformCache();
-    }
+    // Walk the snapshot keys — direct O(K) lookup against the
+    // unified selectable index. Works for stroke + image + any
+    // future CanvasNode-derived type.
+    snapshots.forEach((id, m) {
+      final node = s._selectableNodes[id];
+      if (node == null) return;
+      node.localTransform = m.clone();
+      node.invalidateTransformCache();
+    });
     s._refreshSelectionBoundsAfterTransform();
   }
 
