@@ -22,6 +22,7 @@
 import 'dart:ui' show Color;
 
 import '../../canvas/infinite_canvas_controller.dart';
+import '../../drawing/brush_config.dart';
 import '../../drawing/models/pro_drawing_point.dart';
 
 /// Contract a commercial GPU backend must satisfy to plug into the free
@@ -49,27 +50,42 @@ abstract class GpuStrokeBackend {
   /// Stream a new batch of world-space stroke samples to the GPU and
   /// trigger a render. Implementations may coalesce consecutive calls
   /// at the native refresh rate.
+  ///
+  /// 0.5.0 BREAKING CHANGE: per-brush tuning moved out of the positional
+  /// parameter list and into the [PencilConfig] / [FountainPenConfig]
+  /// value classes. Callers that didn't tune anything migrate by
+  /// dropping the old `pencilXxx` / `fountainXxx` arguments — the
+  /// defaults of the new structs match the old positional defaults
+  /// byte-for-byte.
+  ///
+  /// [transformSeq] is the producer's view of the camera-transform
+  /// counter (incremented on every accepted [setTransform]). The
+  /// native scoreboard rejects renders whose `transformSeq` is older
+  /// than the most-recently-applied transform — this is what closes
+  /// the historical race where a stroke could ship with a stale matrix
+  /// for ~16 ms after a pan/zoom. Pass `0` from non-camera-aware
+  /// callers; the native side treats `0` as "no scoreboard check".
   void updateAndRender(
     List<ProDrawingPoint> points,
     Color color,
     double strokeWidth, {
     bool force = false,
     int brushType = 0,
-    double pencilBaseOpacity = 0.4,
-    double pencilMaxOpacity = 0.8,
-    double pencilMinPressure = 0.5,
-    double pencilMaxPressure = 1.2,
-    double fountainThinning = 0.5,
-    double fountainNibAngleDeg = 30.0,
-    double fountainNibStrength = 0.35,
-    double fountainPressureRate = 0.275,
-    int fountainTaperEntry = 6,
+    PencilConfig pencil = PencilConfig.defaults,
+    FountainPenConfig fountainPen = FountainPenConfig.defaults,
     double zoomScale = 1.0,
+    int transformSeq = 0,
   });
 
   /// Push the current camera transform (pan / zoom / rotation) into the
   /// native renderer. Called on every camera tick.
-  void setTransform(
+  ///
+  /// Returns the producer's monotonic transform sequence number. Pass
+  /// it on the next [updateAndRender] call so the native side can
+  /// reject stroke batches that were queued before this transform was
+  /// applied. Implementations that don't (yet) scoreboard can return
+  /// any monotonic value — the contract is that the value increases.
+  int setTransform(
     InfiniteCanvasController controller,
     int width,
     int height, [

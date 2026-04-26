@@ -51,8 +51,10 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 
 import '../canvas/infinite_canvas_controller.dart';
+import '../drawing/brush_config.dart';
 import '../drawing/models/pro_drawing_point.dart';
 import 'gpu/gpu_stroke_backend.dart';
 
@@ -200,7 +202,8 @@ class NativeStrokeOverlay extends StatefulWidget {
   State<NativeStrokeOverlay> createState() => _NativeStrokeOverlayState();
 }
 
-class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
+class _NativeStrokeOverlayState extends State<NativeStrokeOverlay>
+    with SingleTickerProviderStateMixin {
   /// The commercial GPU backend, or `null` if the consumer didn't register
   /// one (free pub.dev core → Dart fallback path).
   GpuStrokeBackend? get _backend => FlueraCanvasGpu.backend;
@@ -212,11 +215,54 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
   double _lastDpr = 1.0;
   bool _wasDrawing = false;
 
+  /// vsync-driven repaint pulse. On Impeller-Vulkan / Adreno the
+  /// `Texture` widget does not get marked dirty when the underlying
+  /// SurfaceProducer presents a new Vulkan frame — Flutter's compositor
+  /// silently keeps showing the previous frame, which manifests as a
+  /// blank canvas while strokes are happening. Driving a `setState`
+  /// from a Ticker (one tick per vsync, ~60 / 120 Hz) re-mounts the
+  /// `Texture` every frame so the compositor pulls the latest swap-
+  /// chain image. The Ticker is started on pen-down and stopped on
+  /// pen-up to avoid the 60 Hz CPU cost when nothing is drawing.
+  late final Ticker _repaintTicker;
+  int _repaintTick = 0;
+
   @override
   void initState() {
     super.initState();
+    _repaintTicker = createTicker(_onRepaintTick);
     widget.controller.addListener(_onControllerTick);
     widget.canvasController.addListener(_onCameraChanged);
+    // 🎯 Cold-start fix: kick the GPU backend init right after the first
+    // build instead of waiting for the user's first pen-down. Without
+    // this the first stroke loses its leading 4-8 sample points because
+    // backend.init() is async and the pointer events arrive faster than
+    // the platform-channel hop. See `_scheduleProactiveInit`.
+    _scheduleProactiveInit();
+  }
+
+  // Counter for the proactive init scheduling — bounds the retry loop
+  // when `_lastPhysicalSize` is not yet available because LayoutBuilder
+  // hasn't run.
+  int _proactiveInitRetries = 0;
+  static const int _kProactiveInitMaxRetries = 8;
+
+  void _scheduleProactiveInit() {
+    if (_backend == null) return; // No GPU add-on; nothing to warm up.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_textureId != null) return; // Already initialised.
+      if (_lastPhysicalSize != null) {
+        // First build resolved the size — fire the init now.
+        _ensureInitialized(_lastPhysicalSize!, _lastDpr);
+        return;
+      }
+      // LayoutBuilder hasn't produced a size yet; try again next frame.
+      if (_proactiveInitRetries < _kProactiveInitMaxRetries) {
+        _proactiveInitRetries++;
+        _scheduleProactiveInit();
+      }
+    });
   }
 
   @override
@@ -234,10 +280,48 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
 
   @override
   void dispose() {
+    _repaintTicker.dispose();
     widget.controller.removeListener(_onControllerTick);
     widget.canvasController.removeListener(_onCameraChanged);
     _backend?.dispose();
     super.dispose();
+  }
+
+  void _onRepaintTick(Duration _) {
+    if (!mounted) return;
+    // Empty setState: the build() method will rebuild the `Texture`
+    // widget, which triggers the Impeller compositor to pull the
+    // latest swap-chain image. Tick counter exists only as a witness
+    // value so the build closes over a changing identity (otherwise
+    // the framework can short-circuit identical rebuilds).
+    setState(() => _repaintTick++);
+    // Warmup countdown: stop the ticker once we've burned through the
+    // post-init frame budget AND there's no active stroke driving it.
+    if (_warmupTicksLeft > 0) {
+      _warmupTicksLeft--;
+      if (_warmupTicksLeft == 0 && !_wasDrawing && _repaintTicker.isActive) {
+        _repaintTicker.stop();
+      }
+    }
+  }
+
+  void _ensureRepaintTickerRunning(bool drawing) {
+    // Keep the ticker active for one extra frame after pen-up so the
+    // committed final stroke definitely makes it onto the screen.
+    if (drawing && !_repaintTicker.isActive) {
+      _repaintTicker.start();
+    } else if (!drawing && _repaintTicker.isActive && _warmupTicksLeft == 0) {
+      // Defer the stop one frame so the compositor sees the cleared
+      // surface before we go quiet again. Skipped while warmup is in
+      // progress — the ticker callback owns that lifecycle.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_wasDrawing &&
+            _repaintTicker.isActive &&
+            _warmupTicksLeft == 0) {
+          _repaintTicker.stop();
+        }
+      });
+    }
   }
 
   bool get _platformSupported {
@@ -269,6 +353,7 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
     try {
       _available = await backend.isAvailable;
       if (!_available) return;
+      final justInitialized = _textureId == null;
       if (_textureId == null) {
         final id = await backend.init(
           physical.width.toInt(),
@@ -290,9 +375,53 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
         _lastDpr = dpr;
       }
       _pushTransform();
+      // 🎯 Cold-start fix: do the swap-chain warmup BEFORE replaying the
+      // current buffered points. The previous order was:
+      //   _pushTransform() → _onControllerTick() → backend.clear()
+      // but `_onControllerTick` already pushes `bufferedPoints` to the
+      // backend, so the subsequent `backend.clear()` was wiping them.
+      // The new order does the warmup clear first (so the swap-chain
+      // is alive and the descriptor-set cache is populated) and only
+      // then drains the buffer.
+      if (justInitialized) {
+        // Cold-start pre-roll. Right after `init` returns a textureId
+        // the Impeller-Vulkan compositor on Adreno is still showing
+        // whatever the SurfaceProducer's first swap-chain image
+        // happens to be (uninitialised pixels until the C++ side does
+        // its first `vkQueuePresentKHR`). If we wait for the user's
+        // first stroke to trigger that present, the first 4–8 sample
+        // points get rendered into a swap-chain image the compositor
+        // never reads.
+        //
+        // Calling `clear()` here forces the C++ renderer to do a
+        // fully-transparent present immediately, which:
+        //   1. lights up the swap-chain (the compositor now knows
+        //      where to read),
+        //   2. warms the Vulkan pipeline (descriptor sets, MSAA
+        //      resolve, the whole shader cache),
+        //   3. marks the Texture widget dirty via the next `_repaintTick`
+        //      bump so the compositor re-binds the texture id to the
+        //      now-populated SurfaceProducer.
+        backend.clear();
+        _runPostInitWarmup();
+      }
       _onControllerTick();
     } finally {
       _initializing = false;
+    }
+  }
+
+  /// How many vsync ticks to keep the Texture rebuilding after the
+  /// first init, even with no stroke in flight. ~8 frames at 60 Hz =
+  /// ~133 ms, plenty for the Impeller compositor to bind the new
+  /// SurfaceProducer and pump the first present.
+  static const int _kPostInitWarmupFrames = 8;
+  int _warmupTicksLeft = 0;
+
+  void _runPostInitWarmup() {
+    _warmupTicksLeft = _kPostInitWarmupFrames;
+    if (!_repaintTicker.isActive) {
+      _repaintTicker.start();
     }
   }
 
@@ -301,7 +430,7 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
     if (backend == null || _textureId == null || _lastPhysicalSize == null) {
       return;
     }
-    backend.setTransform(
+    _lastTransformSeq = backend.setTransform(
       widget.canvasController,
       _lastPhysicalSize!.width.toInt(),
       _lastPhysicalSize!.height.toInt(),
@@ -327,6 +456,12 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
     }
 
     if (!_isReady) {
+      // Safety net: the proactive init in `initState` should have run by
+      // now. If it didn't (e.g. LayoutBuilder still hadn't produced a
+      // size after `_kProactiveInitMaxRetries` post-frame retries), kick
+      // the init now on the first pen-down. The user will see the leading
+      // points of this very first stroke under the Dart fallback (or lost,
+      // if `fallbackToDart` is false) — but only in this fallback path.
       if (c.isDrawing && _platformSupported && _lastPhysicalSize != null) {
         _ensureInitialized(_lastPhysicalSize!, _lastDpr);
       }
@@ -337,8 +472,32 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
     if (drawing && !_wasDrawing) {
       backend.clear();
       _pushTransform();
+      if (kDebugMode) {
+        debugPrint('[NSO] PEN-DOWN. tick=$_repaintTick '
+            'points=${c.bufferedPoints.length} '
+            'textureId=$_textureId');
+      }
+    }
+    if (kDebugMode && drawing) {
+      debugPrint('[NSO] tick=$_repaintTick '
+          'points=${c.bufferedPoints.length}');
     }
     _wasDrawing = drawing;
+    _ensureRepaintTickerRunning(drawing);
+
+    // Drive the Texture rebuild from the data flow, not from vsync.
+    // Every time a new sample lands in the buffer this listener fires
+    // (`InfiniteCanvasController.bufferedPoints` is a ChangeNotifier);
+    // we bump the witness key and call setState synchronously so the
+    // Texture widget gets a fresh ValueKey in the SAME frame as the
+    // upcoming `backend.updateAndRender`, instead of waiting for the
+    // Ticker's next vsync (which is what was eating the first 4–8
+    // points of every fresh stroke on Impeller-Vulkan / Adreno).
+    if (drawing && mounted) {
+      setState(() {
+        _repaintTick++;
+      });
+    }
 
     if (!drawing && c.bufferedPoints.isEmpty) {
       backend.clear();
@@ -352,18 +511,28 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
       c.strokeWidth,
       force: true,
       brushType: c.brushType,
-      pencilBaseOpacity: c.pencilBaseOpacity,
-      pencilMaxOpacity: c.pencilMaxOpacity,
-      pencilMinPressure: c.pencilMinPressure,
-      pencilMaxPressure: c.pencilMaxPressure,
-      fountainThinning: c.fountainThinning,
-      fountainNibAngleDeg: c.fountainNibAngleDeg,
-      fountainNibStrength: c.fountainNibStrength,
-      fountainPressureRate: c.fountainPressureRate,
-      fountainTaperEntry: c.fountainTaperEntry,
+      pencil: PencilConfig(
+        baseOpacity: c.pencilBaseOpacity,
+        maxOpacity: c.pencilMaxOpacity,
+        minPressure: c.pencilMinPressure,
+        maxPressure: c.pencilMaxPressure,
+      ),
+      fountainPen: FountainPenConfig(
+        thinning: c.fountainThinning,
+        nibAngleDeg: c.fountainNibAngleDeg,
+        nibStrength: c.fountainNibStrength,
+        pressureRate: c.fountainPressureRate,
+        taperEntry: c.fountainTaperEntry,
+      ),
       zoomScale: widget.canvasController.scale,
+      transformSeq: _lastTransformSeq,
     );
   }
+
+  /// Latest transform sequence number returned by `backend.setTransform`.
+  /// Stamped on every `updateAndRender` so the native scoreboard can drop
+  /// stroke batches that were queued under an older camera matrix.
+  int _lastTransformSeq = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -374,14 +543,38 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay> {
     // the live stroke is still visible, just from Dart.
     final backend = _backend;
     if (backend != null && _textureId != null) {
-      if (backend.usesPlatformView) {
-        // Backend prefers an HtmlElementView / custom widget: it must
-        // expose a builder via a subclass or via a static hook. For
-        // simplicity the backend publishes a widget getter; if none is
-        // supplied we fall back to Texture.
-        return IgnorePointer(child: Texture(textureId: _textureId!));
+      // Impeller-Vulkan platform-view trap: on Android the `Texture`
+      // widget is composited at hardware-overlay level by the engine,
+      // ABOVE every Flutter-painted widget regardless of `Stack`
+      // z-order. So during drawing we mount ONLY the Dart preview —
+      // the native renderer keeps receiving the stream (engine
+      // commits the stroke from there on pen-up) but its swap-chain
+      // output stays hidden during the live phase. On pen-up the
+      // texture re-mounts.
+      //
+      // Importantly, the drawing branch has NO `Stack` wrapper — a
+      // bare `CustomPaint` inside `SizedBox.expand` so the parent
+      // `Positioned.fill` constraints flow through unchanged.
+      // (StackFit.expand inside an already-expanded child sometimes
+      // ends up with a zero `paint(canvas, size)` call on Adreno.)
+      final tickKey = ValueKey<int>(_repaintTick);
+      if (_wasDrawing) {
+        return IgnorePointer(
+          child: SizedBox.expand(
+            child: CustomPaint(
+              painter: _DartFallbackPainter(
+                controller: widget.controller,
+                canvasController: widget.canvasController,
+              ),
+            ),
+          ),
+        );
       }
-      return IgnorePointer(child: Texture(textureId: _textureId!));
+      // Idle: mount the texture so any non-stroke surface (e.g. the
+      // committed canvas the engine commits to it on pen-up) is shown.
+      return IgnorePointer(
+        child: Texture(key: tickKey, textureId: _textureId!),
+      );
     }
     return _layoutProbe(showFallback: widget.fallbackToDart);
   }
@@ -424,13 +617,34 @@ class _DartFallbackPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final pts = controller.bufferedPoints;
-    if (pts.length < 2) return;
+    if (kDebugMode) {
+      debugPrint('[DartPreview] paint pts=${pts.length} '
+          'color=${controller.color.toARGB32().toRadixString(16)} '
+          'width=${controller.strokeWidth}');
+    }
+    if (pts.length < 2) {
+      // Even a single point should be visible — draw a dot.
+      if (pts.length == 1) {
+        canvas.save();
+        canvas.translate(
+            canvasController.offset.dx, canvasController.offset.dy);
+        canvas.scale(canvasController.scale);
+        canvas.drawCircle(
+          pts[0].position,
+          controller.strokeWidth * 0.5,
+          Paint()..color = controller.color,
+        );
+        canvas.restore();
+      }
+      return;
+    }
     canvas.save();
     canvas.translate(canvasController.offset.dx, canvasController.offset.dy);
     canvas.scale(canvasController.scale);
     final paint =
         Paint()
           ..color = controller.color
+          ..style = PaintingStyle.stroke
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round;
     for (int i = 1; i < pts.length; i++) {

@@ -28,4 +28,5 @@ coverage/
 # Generated
 .flutter-plugins
 .flutter-plugins-dependencies
-.metadata
+# .metadata is intentionally checked in (Flutter migration tracking)
+

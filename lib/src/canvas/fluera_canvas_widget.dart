@@ -1206,10 +1206,19 @@ class FlueraCanvasState extends State<FlueraCanvas>
         Positioned.fill(child: committedLayer),
         Positioned.fill(child: liveLayer),
         if (useNative)
-          NativeStrokeOverlay(
-            canvasController: _controller,
-            controller: _nativeOverlay,
-            fallbackToDart: false,
+          Positioned.fill(
+            // Without this, NativeStrokeOverlay would be a "free"
+            // child of the Stack — its intrinsic size would depend on
+            // whatever it mounts internally (a sized Texture when GPU
+            // is healthy, ZERO when the Dart preview is the only
+            // child). The Dart preview path needs the overlay to fill
+            // the gesture area or its CustomPaint draws into a 0×0
+            // canvas — invisible — even though `paint()` runs.
+            child: NativeStrokeOverlay(
+              canvasController: _controller,
+              controller: _nativeOverlay,
+              fallbackToDart: false,
+            ),
           ),
       ],
     );

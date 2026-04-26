@@ -29,6 +29,16 @@ part of the **semver contract**. Anything inside `src/` without a
 corresponding export line is internal — do not depend on it from
 consumer code.
 
+### Source of truth for canvas-core
+
+`fluera_canvas` is the **canonical home** for canvas, scene graph, rendering
+and drawing primitives across the Fluera monorepo. Its sister package
+`fluera_engine` is private and depends on this one — its older parallel
+implementation in `lib/src/{canvas,drawing,rendering,core/scene_graph}` is
+in **freeze**. Bug-fixes and new features for those concepts land here
+first; engine picks them up via dependency. See the monorepo doc
+`docs/CANVAS_OWNERSHIP.md` for the full rule and the migration tracker.
+
 ## Setup
 
 ```bash

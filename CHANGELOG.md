@@ -1,5 +1,145 @@
 # Changelog
 
+## 0.5.0 (Phase 6 monorepo convergence — 2026-04-26)
+
+**Canvas-core consolidation: ~14 classes absorbed from the private
+`fluera_engine` fork into the public surface.** Fully additive — no
+breaking changes from 0.4.0; all newly exported types are net-new to
+consumers.
+
+This release rolls up the four `0.4.0+1`…`0.4.0+4` internal markers into
+a single semver-bumped publish. The split between free `fluera_canvas`
+and commercial `fluera_canvas_gpu` is now stable: GPU shader brushes
+ship in the latter, vector / Dart-fallback rendering in this package.
+
+**Newly exported (Phase 6.A — canvas painters & filters)**
+- `IncrementalPaintMixin` — `CustomPainter` mixin that uses a
+  `DirtyRegionTracker` to clip canvas paints to dirty bounds (10–100×
+  faster repaints for local mutations).
+- `BackgroundPainter`, `BackgroundImagePainter`,
+  `FullScreenDarkOverlayPainter` — viewport-level infinite-canvas
+  background painters.
+- `PointSimplifier` — Douglas–Peucker stroke point simplifier for LOD
+  rendering.
+- `BallpointBrush`, `HighlighterBrush`, `MarkerBrush` — base brush
+  engines (advanced brushes such as charcoal, watercolor, fountain pen
+  remain in `fluera_engine` / `fluera_canvas_gpu`).
+
+**Newly exported (Phase 6.B — pools, caches, stabilizer)**
+- `PathPool`, `PathPoolStatistics` — reusable `Path` object pool to
+  reduce per-frame allocations during stroke rendering.
+- `StrokePointPool`, `PoolStatistics` — `Offset` pool for stroke points.
+- `StrokeStabilizer` — Procreate / Clip Studio-style 3-stage smoother
+  (string pulling + weighted moving average + corner detection). The
+  `elasticEnabled` constructor parameter lets hosts toggle the
+  velocity-driven string-length and easeInOut catchup curve.
+- `StrokeCacheManager` — vectorial stroke cache with O(1) undo snapshot
+  ring buffer.
+- `LayerPictureCache` — LRU `Picture` cache for per-layer rendering.
+- `SnapshotCacheManager` — incremental scene-graph snapshot cache.
+
+**Newly exported (Phase 6.B finalisation — render interceptors)**
+- `RenderInterceptor` chain (base class + `RenderNext` typedef +
+  `DebugBoundsInterceptor` + `NodeFilterInterceptor`).
+  `RenderProfilingInterceptor` stays in `fluera_engine` because it
+  depends on the engine's telemetry bus.
+
+**Sibling-package change (informational)**
+- The GPU shader pipeline that previously lived inside the private
+  `fluera_engine` has been extracted to the commercial
+  `fluera_canvas_gpu` package. Engine integrators now consume
+  `ShaderBrushService` from
+  `package:fluera_canvas_gpu/fluera_canvas_gpu.dart`. The free
+  `fluera_canvas` continues to render brushes via its Dart fallback
+  path. Apps that want the GPU shader brushes (pencil, fountain pen,
+  watercolor, charcoal, oil paint, marker, spray paint, neon glow, ink
+  wash, brush stamp, texture overlay) need both `fluera_canvas` and
+  `fluera_canvas_gpu`.
+
+**Tests**
+- Test suite grows from 49 to 108 green tests with the addition of
+  `test/drawing/object_pools_test.dart`,
+  `test/rendering/incremental_paint_test.dart`,
+  `test/rendering/layer_picture_cache_test.dart`, and
+  `test/rendering/snapshot_cache_node_test.dart`.
+
+**Breaking** — none. The public API of 0.4.0 is preserved.
+
+## 0.4.0+4 (Phase 6.B/6.A finalisation — 2026-04-25)
+
+**One additional class extracted from `fluera_engine`**: the `RenderInterceptor`
+chain (base class + `RenderNext` typedef + `DebugBoundsInterceptor` +
+`NodeFilterInterceptor`) is now part of canvas. `RenderProfilingInterceptor`
+stays in `fluera_engine` because it depends on the engine's telemetry bus.
+
+This finishes the immediate block of the monorepo convergence (Phase 6.A
+shaders + 6.B optimization + 6.C input/pool). The remaining 9 `LEGACY-FORK`
+files in engine are genuine canvas-core forks that require Enterprise-tier
+extraction (Phase 6.D / engine_pro) before they can move; that work is
+gated on the first Enterprise lead.
+
+## 0.4.0+3 (Phase 6.A monorepo convergence — 2026-04-25)
+
+**No public API change in fluera_canvas itself.** This release is a marker for
+a sibling-package change: the GPU shader pipeline that previously lived inside
+the private `fluera_engine` has been extracted to `fluera_canvas_gpu`
+(commercial). Engine integrators now consume `ShaderBrushService` from
+`package:fluera_canvas_gpu/fluera_canvas_gpu.dart`.
+
+The free `fluera_canvas` continues to render brushes via its Dart fallback
+path. Apps that want the GPU shader brushes (pencil, fountain pen, watercolor,
+charcoal, oil paint, marker, spray paint, neon glow, ink wash, brush stamp,
+texture overlay) need both `fluera_canvas` and `fluera_canvas_gpu`.
+
+## 0.4.0+2 (Phase 6 monorepo convergence — 2026-04-25)
+
+**More canvas-core absorbed from fluera_engine fork.**
+
+Pure additive: 6 new classes from the monorepo's engine fork are now part
+of the public canvas surface. No breaking changes.
+
+Newly exported:
+- `PathPool`, `PathPoolStatistics` — reusable `Path` object pool to reduce
+  per-frame allocations during stroke rendering.
+- `StrokePointPool`, `PoolStatistics` — `Offset` pool for stroke points.
+- `StrokeStabilizer` — Procreate / Clip Studio-style 3-stage smoother
+  (string pulling + weighted moving average + corner detection). The
+  `elasticEnabled` constructor parameter lets hosts toggle the
+  velocity-driven string-length and easeInOut catchup curve.
+- `StrokeCacheManager` — vectorial stroke cache with O(1) undo snapshot
+  ring buffer.
+- `LayerPictureCache` — LRU `Picture` cache for per-layer rendering.
+- `SnapshotCacheManager` — incremental scene-graph snapshot cache.
+
+Internal: continues monorepo convergence (Phase 6 / Blocco Immediato 6.B+6.C).
+Engine `lib/src/{drawing/input, drawing/filters, rendering/optimization}`
+shrank by 6 files. See `fluera_engine/docs/MIGRATION_TRACKER.md`.
+
+## 0.4.0+1 (Phase 2 monorepo convergence — 2026-04-25)
+
+**Canvas-core absorbed from fluera_engine fork.**
+
+Pure additive: 7 canvas-core classes that previously lived in the private
+`fluera_engine` fork are now part of the public canvas surface. No breaking
+changes; all newly exported types are net-new to consumers.
+
+Newly exported:
+- `IncrementalPaintMixin` — `CustomPainter` mixin that uses a
+  `DirtyRegionTracker` to clip canvas paints to dirty bounds (10–100×
+  faster repaints for local mutations).
+- `BackgroundPainter` — viewport-level infinite-canvas background painter.
+- `BackgroundImagePainter`, `FullScreenDarkOverlayPainter` — additional
+  painters previously bundled in the engine `canvas_painters.dart` barrel.
+- `PointSimplifier` — Douglas–Peucker stroke point simplifier for LOD
+  rendering.
+- `BallpointBrush`, `HighlighterBrush`, `MarkerBrush` — base brushes
+  (advanced brushes such as charcoal, watercolor, fountain pen remain
+  engine-side, destined for future `fluera_engine_pro`).
+
+Internal: brings the monorepo one step closer to a single source of truth
+for canvas / scene-graph / rendering / drawing primitives. See
+`docs/CANVAS_OWNERSHIP.md` in the repo root for the routing rule.
+
 ## 0.4.0
 
 **Shape tools, pixel-mode eraser, color picker dialog.**

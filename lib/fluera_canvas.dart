@@ -41,6 +41,8 @@ export 'src/drawing/input/stylus_detector.dart' show StylusDetector;
 export 'src/drawing/input/palm_rejection_policy.dart';
 export 'src/drawing/input/input_predictor.dart';
 export 'src/drawing/input/raw_input_processor_120hz.dart';
+export 'src/drawing/input/path_pool.dart';
+export 'src/drawing/input/stroke_point_pool.dart';
 
 export 'src/drawing/filters/one_euro_filter.dart';
 export 'src/drawing/filters/advanced_one_euro_filter.dart';
@@ -49,6 +51,7 @@ export 'src/drawing/filters/organic_noise.dart';
 export 'src/drawing/filters/physics_ink_simulator.dart';
 export 'src/drawing/filters/post_stroke_optimizer.dart';
 export 'src/drawing/filters/predictive_renderer.dart';
+export 'src/drawing/filters/stroke_stabilizer.dart';
 
 // ─── DRAWING MODELS ────────────────────────────────────────────────────────
 
@@ -58,6 +61,18 @@ export 'src/drawing/models/velocity_curve.dart';
 export 'src/drawing/models/brush_preset.dart';
 export 'src/drawing/models/pro_brush_settings.dart';
 export 'src/drawing/brushes/brush_texture.dart';
+
+// Brush tuning value classes accepted by `GpuStrokeBackend.updateAndRender`
+// (canvas 0.5.0+). Any backend implementation — Dart fallback or the
+// commercial native pipeline in `fluera_canvas_gpu` — receives these
+// instead of the 13 individual optional parameters that lived on the
+// pre-0.5.0 signature.
+export 'src/drawing/brush_config.dart' show PencilConfig, FountainPenConfig;
+
+// Base brushes (canvas-core, free tier).
+export 'src/drawing/brushes/ballpoint_brush.dart';
+export 'src/drawing/brushes/highlighter_brush.dart';
+export 'src/drawing/brushes/marker_brush.dart';
 
 // ─── SCENE GRAPH CORE ──────────────────────────────────────────────────────
 //
@@ -132,12 +147,25 @@ export 'src/rendering/optimization/dirty_region_tracker.dart';
 export 'src/rendering/scene_graph/path_renderer.dart';
 export 'src/rendering/scene_graph/render_batch.dart';
 
+// Optimization stack (Phase 6.B — migrated from engine).
+export 'src/rendering/optimization/stroke_cache_manager.dart';
+export 'src/rendering/optimization/layer_picture_cache.dart';
+export 'src/rendering/optimization/snapshot_cache_manager.dart';
+
+// Render interceptor base + built-ins (Phase 6.B — migrated from engine).
+// `RenderProfilingInterceptor` stays engine-side (uses engine telemetry).
+export 'src/rendering/scene_graph/render_interceptor.dart';
+
 // Leaf painters (no engine-layer dependencies).
 export 'src/rendering/canvas/shape_painter.dart';
 export 'src/rendering/canvas/digital_text_painter.dart';
 export 'src/rendering/canvas/origin_indicator_painter.dart';
 export 'src/rendering/canvas/paper_pattern_painter.dart';
 export 'src/rendering/canvas/paper_grain_painter.dart';
+export 'src/rendering/canvas/incremental_paint_mixin.dart';
+export 'src/rendering/canvas/background_painter.dart';
+export 'src/rendering/canvas/canvas_painters.dart';
+export 'src/rendering/optimization/point_simplifier.dart';
 
 // ─── GPU LIVE-STROKE BRIDGE ────────────────────────────────────────────────
 //
