@@ -19,6 +19,7 @@
 //     export, history) while the GPU path ships as a paid add-on.
 // ════════════════════════════════════════════════════════════════════════════
 
+import 'dart:ui' as ui;
 import 'dart:ui' show Color;
 
 import '../../canvas/infinite_canvas_controller.dart';
@@ -140,4 +141,61 @@ class FlueraCanvasGpu {
     if (b == null) return false;
     return await b.isAvailable;
   }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Committed-stroke renderer
+  // ────────────────────────────────────────────────────────────────────────
+  //
+  // Optional override for `CanvasStroke.picture()`. The free core builds
+  // its committed-stroke pictures with a vector polyline; consumers that
+  // installed the commercial `fluera_canvas_gpu` add-on can register a
+  // shader-backed renderer here so the post-pen-up appearance matches the
+  // GPU live preview byte-for-byte. When unset (the pub.dev default) the
+  // canvas keeps using its built-in vector renderer.
+
+  static CanvasStrokeRenderer? _strokeRenderer;
+
+  /// Register an override for the committed-stroke renderer. Pass `null`
+  /// to revert to the built-in vector renderer.
+  static void setStrokeRenderer(CanvasStrokeRenderer? renderer) {
+    _strokeRenderer = renderer;
+  }
+
+  /// Currently registered committed-stroke renderer, or `null` if none.
+  static CanvasStrokeRenderer? get strokeRenderer => _strokeRenderer;
+}
+
+/// Optional override for the committed-stroke renderer.
+///
+/// The free `fluera_canvas` core paints committed strokes with a flat
+/// vector polyline (single average-pressure width, quadratic-Bézier
+/// smoothing). Consumers that install the commercial `fluera_canvas_gpu`
+/// add-on register an implementation of this interface via
+/// [FlueraCanvasGpu.setStrokeRenderer] so that committed strokes get
+/// the same shader-driven brush appearance as the live preview.
+///
+/// Implementations receive the stroke data as raw fields rather than a
+/// `CanvasStroke` instance to avoid an upward dependency from this file
+/// onto the widget layer where `CanvasStroke` lives.
+abstract class CanvasStrokeRenderer {
+  /// Paint [points] / [pressures] onto [canvas] in canvas-world
+  /// coordinates. The caller has already applied the camera transform —
+  /// implementations draw in the same coordinate space the live preview
+  /// uses (no extra translate / scale needed).
+  ///
+  /// Implementations must be a no-op when [brushType] is the canvas-core
+  /// vector default (typically `0`) — the caller will fall back to its
+  /// built-in vector renderer in that case.
+  void renderStroke(
+    ui.Canvas canvas, {
+    required List<ui.Offset> points,
+    required List<double> pressures,
+    required Color color,
+    required double baseWidth,
+    required bool smooth,
+    required int brushType,
+    PencilConfig pencilConfig,
+    FountainPenConfig fountainConfig,
+    double zoomScale,
+  });
 }

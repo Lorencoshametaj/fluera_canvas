@@ -27,6 +27,7 @@ import './canvas_background.dart';
 import './canvas_serializer.dart';
 import './infinite_canvas_controller.dart';
 import './infinite_canvas_gesture_detector.dart';
+import '../drawing/brush_config.dart';
 import '../rendering/native_stroke_overlay.dart';
 import '../rendering/gpu/gpu_stroke_backend.dart';
 import '../rendering/optimization/spatial_index.dart';
@@ -61,6 +62,9 @@ class CanvasStroke {
     required this.color,
     required this.baseWidth,
     this.smooth = true,
+    this.brushType = 0,
+    this.pencilConfig = PencilConfig.defaults,
+    this.fountainConfig = FountainPenConfig.defaults,
   }) : _cachedBounds = _computeBounds(points, baseWidth);
 
   /// When `true` (default), the rasteriser smooths the polyline with
@@ -71,6 +75,23 @@ class CanvasStroke {
   /// segments instead. Free-form draws and ellipses use `smooth: true`;
   /// lines and rectangles commit with `smooth: false` automatically.
   final bool smooth;
+
+  /// Brush identifier matching the engine convention (0 = canvas-core
+  /// vector default, ≥1 = a specific shader brush such as pencil, fountain
+  /// pen, watercolor, marker, etc.). The free vector renderer ignores this
+  /// — it's consumed only when [FlueraCanvasGpu.strokeRenderer] is
+  /// registered (commercial `fluera_canvas_gpu` consumer), in which case
+  /// the committed stroke is painted with the same shader pipeline as the
+  /// live preview, so what you draw is what you keep.
+  final int brushType;
+
+  /// Pencil-brush tuning forwarded to the shader renderer when
+  /// [brushType] selects the pencil. Ignored otherwise.
+  final PencilConfig pencilConfig;
+
+  /// Fountain-pen tuning forwarded to the shader renderer when
+  /// [brushType] selects the fountain pen. Ignored otherwise.
+  final FountainPenConfig fountainConfig;
 
   final Rect _cachedBounds;
 
@@ -92,14 +113,35 @@ class CanvasStroke {
     if (cached != null) return cached;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
-    _paintStrokeSegments(
-      canvas,
-      points,
-      pressures,
-      color,
-      baseWidth,
-      smooth: smooth,
-    );
+
+    // If the consumer installed `fluera_canvas_gpu` AND this stroke was
+    // committed with a non-default shader brush (pencil, fountain pen,
+    // watercolor, …), route the commit through the same shader pipeline
+    // as the live preview so the post-pen-up appearance matches what
+    // the user just drew. Falls back to the vector renderer otherwise.
+    final renderer = FlueraCanvasGpu.strokeRenderer;
+    if (renderer != null && brushType != 0 && points.length >= 2) {
+      renderer.renderStroke(
+        canvas,
+        points: points,
+        pressures: pressures,
+        color: color,
+        baseWidth: baseWidth,
+        smooth: smooth,
+        brushType: brushType,
+        pencilConfig: pencilConfig,
+        fountainConfig: fountainConfig,
+      );
+    } else {
+      _paintStrokeSegments(
+        canvas,
+        points,
+        pressures,
+        color,
+        baseWidth,
+        smooth: smooth,
+      );
+    }
     return _cachedPicture = recorder.endRecording();
   }
 
@@ -167,6 +209,9 @@ class CanvasStroke {
             color: stroke.color,
             baseWidth: stroke.baseWidth,
             smooth: stroke.smooth,
+            brushType: stroke.brushType,
+            pencilConfig: stroke.pencilConfig,
+            fountainConfig: stroke.fountainConfig,
           ),
         );
       }
@@ -345,6 +390,9 @@ class FlueraCanvas extends StatefulWidget {
     this.onStrokesErased,
     this.enableNativeLiveStroke = true,
     this.initialBytes,
+    this.brushType = 0,
+    this.pencilConfig = PencilConfig.defaults,
+    this.fountainConfig = FountainPenConfig.defaults,
   });
 
   /// Optional external controller. If null, an internal one is created and
@@ -412,6 +460,25 @@ class FlueraCanvas extends StatefulWidget {
   /// can leave the [RepaintBoundary] cached layer stale on
   /// Impeller-Vulkan / Adreno (the second paint is silently coalesced).
   final Uint8List? initialBytes;
+
+  /// Active brush identifier (0 = canvas-core vector default; ≥1 = a
+  /// shader brush such as pencil, fountain pen, watercolor, marker,
+  /// charcoal, oil paint, spray paint, neon glow, ink wash). The
+  /// free `fluera_canvas` core ignores this — the value is forwarded
+  /// to [FlueraCanvasGpu.backend.updateAndRender] (live preview) and
+  /// stamped on the resulting [CanvasStroke] (committed render). When
+  /// the commercial `fluera_canvas_gpu` add-on is installed, the same
+  /// shader brush is used for both phases so what you draw is what
+  /// you keep.
+  final int brushType;
+
+  /// Pencil-brush tuning forwarded to the shader pipeline (live + commit).
+  /// Ignored when [brushType] does not select the pencil.
+  final PencilConfig pencilConfig;
+
+  /// Fountain-pen tuning forwarded to the shader pipeline (live + commit).
+  /// Ignored when [brushType] does not select the fountain pen.
+  final FountainPenConfig fountainConfig;
 
   @override
   State<FlueraCanvas> createState() => FlueraCanvasState();
@@ -723,9 +790,23 @@ class FlueraCanvasState extends State<FlueraCanvas>
       _liveStrokeTicker.start();
     }
     if (_useNative) {
+      // Sync brush tuning from the widget into the overlay controller so
+      // the live preview honours the same values that will be stamped on
+      // the resulting `CanvasStroke` at pen-up — keeps live and committed
+      // visually identical when the GPU renderer is registered.
+      _nativeOverlay.pencilBaseOpacity = widget.pencilConfig.baseOpacity;
+      _nativeOverlay.pencilMaxOpacity = widget.pencilConfig.maxOpacity;
+      _nativeOverlay.pencilMinPressure = widget.pencilConfig.minPressure;
+      _nativeOverlay.pencilMaxPressure = widget.pencilConfig.maxPressure;
+      _nativeOverlay.fountainThinning = widget.fountainConfig.thinning;
+      _nativeOverlay.fountainNibAngleDeg = widget.fountainConfig.nibAngleDeg;
+      _nativeOverlay.fountainNibStrength = widget.fountainConfig.nibStrength;
+      _nativeOverlay.fountainPressureRate = widget.fountainConfig.pressureRate;
+      _nativeOverlay.fountainTaperEntry = widget.fountainConfig.taperEntry;
       _nativeOverlay.beginStroke(
         color: widget.strokeColor,
         width: widget.strokeWidth,
+        brushType: widget.brushType,
       );
       _nativeOverlay.appendPoint(
         world,
@@ -812,6 +893,9 @@ class FlueraCanvasState extends State<FlueraCanvas>
       color: widget.strokeColor,
       baseWidth: widget.strokeWidth,
       smooth: _liveStroke.smooth,
+      brushType: widget.brushType,
+      pencilConfig: widget.pencilConfig,
+      fountainConfig: widget.fountainConfig,
     );
     if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
     _strokes.add(stroke);

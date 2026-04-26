@@ -4,14 +4,14 @@
 >
 > Built for **notes apps, whiteboards and design tools** — not signature pads.
 > Multi-thousand strokes at 60 FPS, drop-in Material toolbar, persistence
-> primitives, optional native GPU bridge.
+> primitives, optional native GPU bridge (separate package).
 >
-> The only Flutter canvas SDK on pub.dev with infinite pan / zoom / rotate
-> physics, RTree-backed viewport culling, and per-stroke GPU `Picture` cache.
-> If you're building Notability / Goodnotes / Miro / Figma-class UX, start
-> here.
+> The only Flutter canvas SDK on pub.dev with infinite pan / zoom / **rotate**
+> camera physics, RTree-backed viewport culling, and per-stroke `ui.Picture`
+> cache. Pure Dart — no platform code in the free core. If you're building
+> Notability / Goodnotes / Miro / Figma-class UX, start here.
 >
-> **Status:** `0.4.0` pre-release. API unstable until `1.0.0`.
+> **Status:** `0.5.0` pre-release. API unstable until `1.0.0`.
 > Marketing site: **[engine.fluera.dev](https://engine.fluera.dev/)**
 
 ## Positioning
@@ -34,8 +34,9 @@ note-taking or design product. That's what this SDK is for.
 - `FlueraCanvas` — drop-in drawing widget. **Pen, stroke-mode eraser,
   pixel-mode eraser, line / rectangle / ellipse shape tools**, undo /
   redo history, pressure-aware input, infinite pan / zoom / rotation,
-  native GPU live-stroke pipeline, PNG export. One
-  `GlobalKey<FlueraCanvasState>` and you have a full canvas in your app.
+  PNG export. One `GlobalKey<FlueraCanvasState>` and you have a full
+  canvas in your app. (Optional commercial `fluera_canvas_gpu` add-on
+  drops in a native GPU live-stroke pipeline.)
 - `FlueraCanvasToolbar` — drop-in Material toolbar that wires the most
   common controls (tool segmented control, color swatches, stroke-width
   slider, undo / redo / clear) into the canvas with zero glue code.
@@ -67,7 +68,7 @@ note-taking or design product. That's what this SDK is for.
 
 ```yaml
 dependencies:
-  fluera_canvas: ^0.4.0
+  fluera_canvas: ^0.5.0
 ```
 
 ## Hello canvas
@@ -192,57 +193,48 @@ persistence and camera animation: **[engine.fluera.dev/quickstart](https://engin
 
 ## Platforms
 
-| Platform | Live-stroke backend | Status |
-| --- | --- | --- |
-| Android | Vulkan              | ✅ Native path ships with this package |
-| iOS     | Metal               | ✅ Native path ships with this package |
-| macOS   | Metal               | ✅ Native path ships with this package |
-| Linux   | OpenGL              | ✅ Native path ships with this package |
-| Windows | Direct3D 11         | ✅ Native path ships with this package |
-| Web     | WebGPU              | ✅ Native path (Chrome 113+, Edge 113+, Safari 18+) |
+`fluera_canvas` is **pure Dart**. No platform-channel code, no native
+plugin, no shaders — runs anywhere Flutter runs.
 
-Consumers can depend on `fluera_canvas` alone — every platform's native
-live-stroke plugin ships with this package. If a specific GPU isn't
-available at runtime (e.g. WebGPU disabled in the browser), the Dart
-fallback inside `NativeStrokeOverlay` takes over automatically.
+| Platform | Status |
+| --- | --- |
+| Android | ✅ |
+| iOS     | ✅ |
+| macOS   | ✅ |
+| Linux   | ✅ |
+| Windows | ✅ |
+| Web (CanvasKit / WASM) | ✅ |
 
-## Native live-stroke plugin
+Only runtime deps: `meta` and `vector_math`. Zero native footprint, no
+AndroidManifest tweaks, no Podfile changes.
 
-**Android**: Vulkan renderer ships in this package — no extra dependency.
-APK footprint on `arm64-v8a + armv7 + x86_64`: ~5 MB multi-arch.
+## Optional native GPU live-stroke (commercial add-on)
 
-> **Required** on Android: your host app must run Flutter itself on the
-> Vulkan backend so it can composite the plugin's Vulkan SurfaceProducer.
-> Add the following inside `<application>` in
-> `android/app/src/main/AndroidManifest.xml`:
->
-> ```xml
-> <meta-data
->     android:name="io.flutter.embedding.android.EnableImpeller"
->     android:value="true" />
-> <meta-data
->     android:name="io.flutter.embedding.android.ImpellerBackend"
->     android:value="vulkan" />
-> ```
->
-> Without this, the Texture widget renders an empty surface — the
-> strokes are drawn on a Vulkan image Flutter's compositor never reads.
+The free `fluera_canvas` widget renders the live stroke through a Dart
+`CustomPainter`. Latency is ~12–16 ms, which is fine for note-taking and
+whiteboards on a flagship device.
 
-**iOS / macOS**: Metal renderer ships in this package — no extra
-dependency. CADisplayLink 120 Hz ProMotion sync (iOS) is also bundled.
+If you need sub-frame latency on a wide range of hardware (Procreate /
+Goodnotes-class UX), the commercial **`fluera_canvas_gpu`** package
+plugs a native renderer into the same widget tree via the public
+`GpuStrokeBackend` interface that ships in this core. Backends:
+Android Vulkan, iOS / macOS Metal, Linux OpenGL, Windows Direct3D 11,
+Web WebGPU. Wire it once at `main()`:
 
-**Linux**: OpenGL/GTK plugin. Requires `libgtk-3-dev`, `libegl1-mesa-dev`,
-`libgl1-mesa-dev` at build time.
+```dart
+import 'package:fluera_canvas_gpu/fluera_canvas_gpu.dart';
 
-**Windows**: Direct3D 11 plugin. Links against `d3d11`, `dxgi`,
-`d3dcompiler` (all shipped with the Windows 10 SDK).
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  FlueraCanvasGpu.setBackend(FlueraCanvasGpuBackend());
+  runApp(const MyApp());
+}
+```
 
-**Web**: WebGPU plugin. Lives alongside the other platforms but is
-gated on `navigator.gpu` availability — falls back to Dart on browsers
-without WebGPU (Firefox stable, Safari < 18).
-
-`MethodChannel` name: `fluera_canvas/native_stroke` on all native
-platforms. Web uses a direct JS interop bridge (no MethodChannel).
+With no backend registered the canvas falls back to the Dart painter
+silently — your app keeps working everywhere `fluera_canvas` works.
+See [engine.fluera.dev/pricing](https://engine.fluera.dev/pricing) for
+the licensing tiers.
 
 ## What's *not* in here
 
@@ -293,10 +285,14 @@ the bytes inside `initState`, before the first paint. Calling
 second paint is silently coalesced and the canvas looks empty).
 Full write-up: [doc/troubleshooting-impeller.md](doc/troubleshooting-impeller.md#symptom-2).
 
-**My live stroke is invisible until I lift my finger.**
-You're on Android profile mode with Impeller-Vulkan, and the canvas is
-not running 0.3.0 yet. Update — `_liveStrokeTicker` works around the
-Flutter pipeline coalescing that drops mid-gesture frames on Adreno.
+**My live stroke is invisible until I lift my finger on Android.**
+This is a Flutter pipeline coalescing quirk on Impeller-Vulkan / Adreno
+in profile mode (mid-gesture `setState` / `markNeedsPaint` calls inside
+pointer-event handlers get folded together until pen-up). `FlueraCanvas`
+ships a vsync `Ticker` workaround that calls `setState({})` from a
+frame callback while a draw / erase / shape gesture is active — the
+live stroke and eraser preview circle track the pointer in real time.
+Zero idle cost. Verified on Xiaomi 2107113SG (Adreno 660).
 
 **My stroke has visible "humps" or "pinches" when I zoom in.**
 Update to 0.3.0+. The renderer now uses a single `drawPath` per stroke
@@ -305,10 +301,13 @@ C¹-continuous regardless of zoom. The 0.2.x pressure-banding renderer
 is gone.
 
 **Can I use `fluera_canvas` without the commercial GPU plugin?**
-Yes — that's the default. The pure-Dart fallback handles the live
-stroke and committed strokes on every platform. The native GPU plugin
-(`fluera_canvas_gpu`, separate package) buys sub-frame latency on the
-live path but is optional.
+Yes — that's the default. The free package is **pure Dart**: no
+platform code ships in it, no MethodChannel, no shaders. The pure-Dart
+pipeline handles the live stroke and committed strokes on every
+platform Flutter supports. The native GPU plugin (`fluera_canvas_gpu`,
+separate commercial package) plugs into the public `GpuStrokeBackend`
+hook to buy sub-frame latency on the live path, but is strictly
+optional.
 
 **Why is the API so big? I see hundreds of exported symbols.**
 Most of them are scene-graph primitives, brush models, filters, and
@@ -332,13 +331,15 @@ That pattern is consumer-side (we don't ship `path_provider` /
 using `path_provider` — copy and adapt.
 
 **Does `fluera_canvas` work on Web?**
-Yes. CanvasKit and WASM compilation both work. WebGPU live-stroke
-requires the commercial `fluera_canvas_gpu`; without it the Dart
-fallback handles the live stroke (works on every browser).
+Yes. CanvasKit and WASM compilation both work out of the box — the
+free package has zero web-specific code, just Dart through Flutter's
+standard web toolchain. The commercial `fluera_canvas_gpu` adds a
+WebGPU live-stroke path for browsers that ship `navigator.gpu`
+(Chrome 113+, Edge 113+, Safari 18+).
 
-**My CI fails with `OnBackInvokedCallback is not enabled`.**
-That's an Android system warning unrelated to `fluera_canvas`. Add
-`android:enableOnBackInvokedCallback="true"` to your
+**My CI logs an `OnBackInvokedCallback is not enabled` warning.**
+That's a generic Android system warning unrelated to `fluera_canvas`.
+Add `android:enableOnBackInvokedCallback="true"` to your
 `<application>` tag in `AndroidManifest.xml`.
 
 More guides: [doc/architecture.md](doc/architecture.md),

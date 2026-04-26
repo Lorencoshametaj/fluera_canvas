@@ -641,17 +641,48 @@ class _DartFallbackPainter extends CustomPainter {
     canvas.save();
     canvas.translate(canvasController.offset.dx, canvasController.offset.dy);
     canvas.scale(canvasController.scale);
-    final paint =
-        Paint()
-          ..color = controller.color
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round;
-    for (int i = 1; i < pts.length; i++) {
-      final avg = (pts[i - 1].pressure + pts[i].pressure) * 0.5;
-      paint.strokeWidth = controller.strokeWidth * (0.3 + avg * 0.9);
-      canvas.drawLine(pts[i - 1].position, pts[i].position, paint);
+
+    // 🎯 Match the committed-stroke renderer (`_paintStrokeSegments` in
+    // `fluera_canvas_widget.dart`) so the live preview looks identical
+    // to what the user gets after pen-up. The committed renderer
+    // intentionally uses a single stroke width derived from the average
+    // pressure (and a quadratic-Bézier smoothed path) — see the comment
+    // in `_paintStrokeSegments` for the rationale (per-segment pressure
+    // bands cause visible "bumps" at the silhouette). Mirror the same
+    // strategy here.
+    double pressureSum = 0;
+    for (int i = 0; i < pts.length; i++) {
+      pressureSum += pts[i].pressure;
     }
+    final avgPressure = pressureSum / pts.length;
+    final strokeWidth = controller.strokeWidth * (0.3 + avgPressure * 0.9);
+
+    final path = Path()..moveTo(pts[0].position.dx, pts[0].position.dy);
+    if (pts.length == 2) {
+      path.lineTo(pts[1].position.dx, pts[1].position.dy);
+    } else {
+      // Quadratic-Bézier smoothing through midpoints (same as commit).
+      for (int i = 1; i < pts.length - 1; i++) {
+        final ctrl = pts[i].position;
+        final end = Offset(
+          (pts[i].position.dx + pts[i + 1].position.dx) * 0.5,
+          (pts[i].position.dy + pts[i + 1].position.dy) * 0.5,
+        );
+        path.quadraticBezierTo(ctrl.dx, ctrl.dy, end.dx, end.dy);
+      }
+      path.lineTo(
+        pts[pts.length - 1].position.dx,
+        pts[pts.length - 1].position.dy,
+      );
+    }
+
+    final paint = Paint()
+      ..color = controller.color
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = strokeWidth;
+    canvas.drawPath(path, paint);
     canvas.restore();
   }
 
