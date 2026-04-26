@@ -414,6 +414,7 @@ class FlueraCanvas extends StatefulWidget {
     this.enableKeyboardShortcuts = true,
     this.onStrokeCommitted,
     this.onStrokesErased,
+    this.onNodesDeleted,
     this.enableNativeLiveStroke = true,
     this.initialBytes,
     this.brushType = 0,
@@ -469,6 +470,15 @@ class FlueraCanvas extends StatefulWidget {
   /// is the unmodifiable list of strokes erased in this gesture (can be
   /// re-ordered if the user erases multiple in a single swipe).
   final void Function(List<CanvasStroke> strokes)? onStrokesErased;
+
+  /// Fires when [FlueraCanvasState.deleteSelection] removes one or more
+  /// nodes (strokes, images, future text-shape additions). 0.7.0+
+  /// addition — generalises [onStrokesErased] which fires only for
+  /// the pen-eraser path. The argument is an unmodifiable list of
+  /// every removed `CanvasNode`. `onStrokesErased` keeps firing in
+  /// parallel with the stroke subset so 0.5.0 / 0.6.0 consumers
+  /// don't need to migrate.
+  final void Function(List<CanvasNode> nodes)? onNodesDeleted;
 
   /// When `true` (default) the live stroke is rendered by the native GPU
   /// pipeline (Vulkan / Metal / OpenGL / Direct3D 11 / WebGPU). Gives
@@ -1593,29 +1603,59 @@ class FlueraCanvasState extends State<FlueraCanvas>
   int deleteSelection() {
     final ids = _selectionController.value.ids;
     if (ids.isEmpty) return 0;
-    final toRemove = <CanvasStroke>[];
-    final indexes = <CanvasStroke, int>{};
-    for (final entry in _strokeToNode.entries) {
-      if (ids.contains(entry.value.id)) {
-        final flatIdx = _strokes.indexOf(entry.key);
-        if (flatIdx >= 0) {
-          toRemove.add(entry.key);
-          indexes[entry.key] = flatIdx;
-        }
+    // Build per-node snapshots BEFORE mutating anything so the undo
+    // op can restore each node at its original layer / Z position.
+    final snapshots = <_DeletedNodeSnapshot>[];
+    final removedNodes = <CanvasNode>[];
+    final erasedStrokes = <CanvasStroke>[];
+    for (final id in ids) {
+      final node = _selectableNodes[id];
+      if (node == null) continue;
+      final parent = node.parent;
+      if (parent is! LayerNode) continue;
+      final childIdx = parent.children.indexOf(node);
+      if (childIdx < 0) continue;
+      int? flatIdx;
+      if (node is CanvasStrokeNode) {
+        flatIdx = _strokes.indexOf(node.stroke);
+        if (flatIdx < 0) flatIdx = null;
+        erasedStrokes.add(node.stroke);
       }
+      snapshots.add(_DeletedNodeSnapshot(
+        node: node,
+        layerId: parent.id,
+        childIndex: childIdx,
+        flatStrokeIndex: flatIdx,
+      ));
+      removedNodes.add(node);
     }
-    if (toRemove.isEmpty) return 0;
-    for (final s in toRemove) {
-      _internalRemoveStroke(s);
-      s.dispose();
+    if (snapshots.isEmpty) return 0;
+    // Apply removals.
+    for (final snap in snapshots) {
+      if (snap.isStroke) {
+        final stroke = (snap.node as CanvasStrokeNode).stroke;
+        _internalRemoveStroke(stroke);
+        // NOTE: stroke.dispose() is intentionally skipped — the
+        // undo op needs the cached `ui.Picture` to redraw the
+        // resurrected node. The history evictor calls dispose
+        // when capacity is exceeded.
+      } else {
+        final parent = snap.node.parent;
+        if (parent is LayerNode) parent.remove(snap.node);
+        _unregisterSelectable(snap.node.id);
+      }
     }
     _selectionController.clear();
     _commitTick.notify();
-    _history?.push(_EraseOp(toRemove, indexes));
-    if (widget.onStrokesErased != null) {
-      widget.onStrokesErased!(toRemove);
+    _history?.push(_DeleteNodesOp(snapshots));
+    // Backwards-compat callback fired with stroke-only subset.
+    if (widget.onStrokesErased != null && erasedStrokes.isNotEmpty) {
+      widget.onStrokesErased!(erasedStrokes);
     }
-    return toRemove.length;
+    if (widget.onNodesDeleted != null) {
+      widget.onNodesDeleted!(List<CanvasNode>.unmodifiable(removedNodes));
+    }
+    return snapshots.length;
   }
 
   // Internal hit-test helpers used by both the public API and the
@@ -4191,6 +4231,99 @@ class _AddLayerChildOp implements _CanvasOp {
       layer.insertAt(index, node);
     }
     s._registerSelectable(node);
+    s._commitTick.notify();
+  }
+}
+
+/// Snapshot of one node deleted by [FlueraCanvasState.deleteSelection].
+/// Stores everything needed to rehydrate the node on undo without
+/// touching `_selectableNodes` from the op itself (the op routes
+/// through state helpers).
+class _DeletedNodeSnapshot {
+  _DeletedNodeSnapshot({
+    required this.node,
+    required this.layerId,
+    required this.childIndex,
+    required this.flatStrokeIndex,
+  });
+
+  /// The node that was removed. For stroke nodes the underlying
+  /// `CanvasStroke` is reachable via `(node as CanvasStrokeNode).stroke`.
+  final CanvasNode node;
+  final NodeId layerId;
+
+  /// Index inside the parent layer's `children` list at remove time.
+  /// Used to restore Z-order on undo.
+  final int childIndex;
+
+  /// For stroke nodes only — index inside the flat `_strokes` mirror.
+  /// `null` for image / future text-shape nodes.
+  final int? flatStrokeIndex;
+
+  bool get isStroke => node is CanvasStrokeNode;
+}
+
+/// Generic multi-node deletion op (Phase 5). Replaces the
+/// stroke-only `_EraseOp` for the public `deleteSelection()` path.
+/// `_EraseOp` lives on for the pen-eraser flow.
+class _DeleteNodesOp implements _CanvasOp {
+  _DeleteNodesOp(this.snapshots);
+  final List<_DeletedNodeSnapshot> snapshots;
+
+  @override
+  void undo(FlueraCanvasState s) {
+    // Restore in ascending child-index order so each `insertAt` lands
+    // at the position it occupied at remove time.
+    final sorted = List<_DeletedNodeSnapshot>.from(snapshots)
+      ..sort((a, b) => a.childIndex.compareTo(b.childIndex));
+    for (final snap in sorted) {
+      final layer = s._findLayer(snap.layerId);
+      if (layer == null) continue;
+      if (snap.isStroke) {
+        // Reattach the SAME CanvasStrokeNode (preserves its id, its
+        // localTransform, and the flat-mirror invariant). We can't
+        // route through `_internalInsertStrokeAt` because that helper
+        // mints a fresh node when `_strokeToNode[stroke]` is empty,
+        // which it always is post-removal — patching the maps + flat
+        // list directly is the only way to round-trip the original id.
+        final node = snap.node as CanvasStrokeNode;
+        final stroke = node.stroke;
+        final flatIdx = (snap.flatStrokeIndex ?? s._strokes.length)
+            .clamp(0, s._strokes.length);
+        s._strokes.insert(flatIdx, stroke);
+        s._spatialIndex.insert(stroke);
+        s._strokeToNode[stroke] = node;
+        if (snap.childIndex >= layer.children.length) {
+          layer.add(node);
+        } else {
+          layer.insertAt(snap.childIndex, node);
+        }
+        s._registerSelectable(node);
+      } else {
+        if (snap.childIndex >= layer.children.length) {
+          layer.add(snap.node);
+        } else {
+          layer.insertAt(snap.childIndex, snap.node);
+        }
+        s._registerSelectable(snap.node);
+      }
+    }
+    s._commitTick.notify();
+  }
+
+  @override
+  void redo(FlueraCanvasState s) {
+    for (final snap in snapshots) {
+      if (snap.isStroke) {
+        final stroke = (snap.node as CanvasStrokeNode).stroke;
+        s._internalRemoveStroke(stroke);
+      } else {
+        final layer = s._findLayer(snap.layerId);
+        layer?.remove(snap.node);
+        s._unregisterSelectable(snap.node.id);
+      }
+    }
+    s._selectionController.clear();
     s._commitTick.notify();
   }
 }
