@@ -1009,7 +1009,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
       // reconstructed from anchor + current point on each update.
       _marqueeAnchorWorld = world;
       _marqueeRectWorld = null;
-      final hit = _hitTestStrokeNode(world);
+      final hit = _hitTestNode(world);
       if (hit != null) {
         _selectionController.set(_selectionFromIds(<NodeId>{hit}));
         // 4. Tap landed on a node — also enter move mode immediately
@@ -1569,7 +1569,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
       _selectionController.clear();
       return true;
     }
-    if (!_strokeToNode.values.any((n) => n.id == id)) return false;
+    if (!_selectableNodes.containsKey(id)) return false;
     _selectionController.set(_selectionFromIds(<NodeId>{id}));
     return true;
   }
@@ -1630,38 +1630,77 @@ class FlueraCanvasState extends State<FlueraCanvas>
     return CanvasSelection(ids: ids, bounds: acc ?? Rect.zero);
   }
 
-  /// Top-most CanvasStrokeNode whose stroke bbox contains [worldPoint],
-  /// or `null` when the tap landed on empty canvas. Front-most wins
-  /// (highest Z-index).
-  NodeId? _hitTestStrokeNode(Offset worldPoint, {double tolerance = 4.0}) {
-    final probe = Rect.fromCircle(center: worldPoint, radius: tolerance);
-    final candidates = _spatialIndex.queryVisible(probe, margin: 0);
-    if (candidates.isEmpty) return null;
+  /// Top-most selectable node whose `worldBounds` contains
+  /// [worldPoint], or `null` when the tap landed on empty canvas.
+  /// Front-most wins via `_zOrderIndex` (DFS-order, last child of the
+  /// last layer = highest Z). Strokes consult the spatial-index RTree
+  /// (O(log n + k)); image / future text-shape nodes are scanned
+  /// linearly from `_selectableNodes` (typically <100, fine).
+  NodeId? _hitTestNode(Offset worldPoint, {double tolerance = 4.0}) {
     NodeId? best;
-    int bestIdx = -1;
-    for (final s in candidates) {
-      // Filter to strokes inside a non-locked, visible layer.
+    int bestZ = -1;
+
+    // Stroke candidates via the RTree (fast path).
+    final probe = Rect.fromCircle(center: worldPoint, radius: tolerance);
+    final strokeCandidates = _spatialIndex.queryVisible(probe, margin: 0);
+    for (final s in strokeCandidates) {
       final node = _strokeToNode[s];
       if (node == null) continue;
-      final layer = node.parent;
-      if (layer is LayerNode && (!layer.isVisible || layer.isLocked)) continue;
-      final idx = _strokes.indexOf(s);
-      if (idx > bestIdx) {
-        bestIdx = idx;
+      final parent = node.parent;
+      if (parent is LayerNode &&
+          (!parent.isVisible || parent.isLocked)) continue;
+      final z = _zOrderIndex[node.id] ?? -1;
+      if (z > bestZ) {
+        bestZ = z;
+        best = node.id;
+      }
+    }
+
+    // Non-stroke candidates: scan the index for nodes whose
+    // `worldBounds` contains the pointer. ImageNodes are the only
+    // non-stroke selectable type today; the predicate stays
+    // type-agnostic so future text / shape nodes hook in for free.
+    for (final entry in _selectableNodes.entries) {
+      final node = entry.value;
+      if (node is CanvasStrokeNode) continue; // handled above.
+      final parent = node.parent;
+      if (parent is LayerNode &&
+          (!parent.isVisible || parent.isLocked)) continue;
+      if (!node.worldBounds.contains(worldPoint)) continue;
+      final z = _zOrderIndex[node.id] ?? -1;
+      if (z > bestZ) {
+        bestZ = z;
         best = node.id;
       }
     }
     return best;
   }
 
+  /// Every selectable node whose `worldBounds` overlaps [worldRect].
+  /// Used by marquee-drag (`tool == select`) and the public
+  /// `selectInRect` API.
   Set<NodeId> _hitTestIdsInRect(Rect worldRect) {
-    final candidates = _spatialIndex.queryVisible(worldRect, margin: 0);
     final out = <NodeId>{};
-    for (final s in candidates) {
+
+    // Strokes via the RTree.
+    final strokeCandidates = _spatialIndex.queryVisible(worldRect, margin: 0);
+    for (final s in strokeCandidates) {
       final node = _strokeToNode[s];
       if (node == null) continue;
-      final layer = node.parent;
-      if (layer is LayerNode && (!layer.isVisible || layer.isLocked)) continue;
+      final parent = node.parent;
+      if (parent is LayerNode &&
+          (!parent.isVisible || parent.isLocked)) continue;
+      out.add(node.id);
+    }
+
+    // Non-stroke nodes: linear scan of the selectable index.
+    for (final entry in _selectableNodes.entries) {
+      final node = entry.value;
+      if (node is CanvasStrokeNode) continue;
+      final parent = node.parent;
+      if (parent is LayerNode &&
+          (!parent.isVisible || parent.isLocked)) continue;
+      if (!node.worldBounds.overlaps(worldRect)) continue;
       out.add(node.id);
     }
     return out;
