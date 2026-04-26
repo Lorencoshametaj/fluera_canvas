@@ -70,15 +70,7 @@ class CanvasStroke {
     this.brushType = 0,
     this.pencilConfig = PencilConfig.defaults,
     this.fountainConfig = FountainPenConfig.defaults,
-    this.layerId = FlueraLayer.defaultLayerId,
   }) : _cachedBounds = _computeBounds(points, baseWidth);
-
-  /// ID of the layer this stroke belongs to. Strokes committed before any
-  /// `addLayer` call go to the implicit default layer (`'default'`); strokes
-  /// committed after an `addLayer` call inherit the active layer at commit
-  /// time. The committed-strokes painter iterates layers in order and clips
-  /// each one with `saveLayer` so per-layer opacity and blend mode apply.
-  final String layerId;
 
   /// When `true` (default), the rasteriser smooths the polyline with
   /// quadratic-bezier curves through the midpoints — eliminates kinks
@@ -328,86 +320,6 @@ class CanvasStroke {
     final pad = baseWidth * 0.6;
     return Rect.fromLTRB(minX - pad, minY - pad, maxX + pad, maxY + pad);
   }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 🧁 LAYER MODEL — multi-layer support for FlueraCanvas (0.6.0+).
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// A single drawing layer inside a [FlueraCanvas].
-///
-/// Layers stack bottom-to-top; the order returned by [FlueraCanvasState.layers]
-/// is the paint order. Each layer carries its own visibility, lock, opacity and
-/// blend-mode settings; strokes committed while the layer is the active one
-/// are stamped with its [id] (see [CanvasStroke.layerId]).
-///
-/// Layers are an additive feature: a fresh canvas starts with one implicit
-/// layer named `Layer 1` (id [defaultLayerId]) that mirrors the pre-0.6.0
-/// "single flat list" behaviour. Consumers that never call [FlueraCanvasState.addLayer]
-/// see no observable difference.
-@immutable
-class FlueraLayer {
-  /// ID of the implicit layer created when [FlueraCanvas] mounts. Strokes
-  /// committed before any explicit layer management land on this layer.
-  static const String defaultLayerId = 'default';
-
-  const FlueraLayer({
-    required this.id,
-    required this.name,
-    this.opacity = 1.0,
-    this.visible = true,
-    this.locked = false,
-    this.blendMode = BlendMode.srcOver,
-  });
-
-  /// Stable identifier used by [CanvasStroke.layerId] to attach a stroke to
-  /// this layer. Pass-through to [FlueraCanvasState.addLayer]'s return value;
-  /// callers should not mutate it.
-  final String id;
-
-  /// Human-readable name shown in layer panels. Default: `Layer N`.
-  final String name;
-
-  /// Per-layer alpha multiplier in `[0, 1]`. Applied via `Canvas.saveLayer`
-  /// at paint time so it composes correctly with [blendMode].
-  final double opacity;
-
-  /// Hidden layers are skipped entirely by the painter. Strokes inside a
-  /// hidden layer are NOT removed — they reappear when [visible] flips back.
-  final bool visible;
-
-  /// Locked layers reject new strokes and hide the eraser hover preview when
-  /// the layer is the active one. The pre-existing strokes still render
-  /// normally.
-  final bool locked;
-
-  /// Per-layer blend mode applied during the painter's `saveLayer` pass.
-  /// The pub.dev free core supports the standard `BlendMode` enum from
-  /// `dart:ui`; the commercial `fluera_canvas_gpu` add-on layers Photoshop
-  /// modes on top via its GPU compositor.
-  final BlendMode blendMode;
-
-  FlueraLayer copyWith({
-    String? name,
-    double? opacity,
-    bool? visible,
-    bool? locked,
-    BlendMode? blendMode,
-  }) {
-    return FlueraLayer(
-      id: id,
-      name: name ?? this.name,
-      opacity: opacity ?? this.opacity,
-      visible: visible ?? this.visible,
-      locked: locked ?? this.locked,
-      blendMode: blendMode ?? this.blendMode,
-    );
-  }
-
-  @override
-  String toString() =>
-      'FlueraLayer(id: $id, name: $name, opacity: $opacity, '
-      'visible: $visible, locked: $locked, blendMode: $blendMode)';
 }
 
 /// Tool mode for user input on [FlueraCanvas].
@@ -875,6 +787,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
 
   void _onDrawStart(Offset world, double pressure, double tiltX, double tiltY) {
     _focusNode?.requestFocus();
+    // Lock check (canvas 0.6.0+): the active layer rejects new strokes
+    // and skips the eraser when locked. Pre-existing strokes still
+    // render — the lock only gates new mutations.
+    if (_activeLayer.isLocked) return;
     if (widget.tool == CanvasTool.erase ||
         widget.tool == CanvasTool.erasePixel) {
       _erasedThisGesture.clear();
@@ -1300,6 +1216,261 @@ class FlueraCanvasState extends State<FlueraCanvas>
     return _spatialIndex.queryVisible(worldRect, margin: 0);
   }
 
+  /// Listenable that fires whenever the canvas commits something the
+  /// committed-strokes painter cares about: new stroke, eraser, clear,
+  /// undo / redo, and any layer mutation (`addLayer`, `removeLayer`,
+  /// `setLayerOpacity`, …). Subscribe from a layer-panel widget to
+  /// rebuild on every layer change without polling. Returned as the
+  /// `Listenable` interface so external callers can only listen — the
+  /// notify is called internally by the canvas.
+  Listenable get layerChanges => _commitTick;
+
+  // ── Layer API (canvas 0.6.0+) ─────────────────────────────────────────────
+  //
+  // These methods expose the multi-layer model that the renderer already
+  // honours via `_CommittedStrokesPainter`'s saveLayer pass. Each method is
+  // a thin wrapper around the underlying [LayerNode] mutators followed by
+  // `_commitTick.notify()` so the painter repaints exactly once per call.
+  //
+  // The state always holds at least one layer ("Layer 1" by default) — the
+  // pre-0.6.0 single-flat-list semantic is preserved for consumers that
+  // never call any of these methods.
+
+  /// Append a new layer above the current top one and return it.
+  ///
+  /// The new layer is NOT marked active automatically — call
+  /// [setActiveLayer] to redirect future strokes to it. Pass [name] to
+  /// override the default `Layer N` autonumbering.
+  LayerNode addLayer({
+    String? name,
+    double opacity = 1.0,
+    BlendMode blendMode = BlendMode.srcOver,
+    bool visible = true,
+    bool locked = false,
+  }) {
+    final n = _rootLayer.children.whereType<LayerNode>().length + 1;
+    final layer = LayerNode(
+      id: NodeId(generateUid()),
+      name: name ?? 'Layer $n',
+      opacity: opacity,
+      blendMode: blendMode,
+      isVisible: visible,
+      isLocked: locked,
+    );
+    _rootLayer.add(layer);
+    final insertedIndex =
+        _rootLayer.children.whereType<LayerNode>().toList().indexOf(layer);
+    _history?.push(_AddLayerOp(layer, insertedIndex));
+    _commitTick.notify();
+    return layer;
+  }
+
+  /// Remove the layer with the given [id]. The last remaining layer is
+  /// preserved (a canvas always has at least one layer); calling this on
+  /// the active layer also moves the active marker to the previous layer.
+  /// Strokes belonging to the removed layer are dropped from both the
+  /// spatial index and the flat mirror so undo / persistence stays
+  /// consistent. Returns `true` if a layer was actually removed.
+  bool removeLayer(NodeId id) {
+    final layers = _rootLayer.children.whereType<LayerNode>().toList();
+    if (layers.length <= 1) return false;
+    LayerNode? target;
+    for (final l in layers) {
+      if (l.id == id) {
+        target = l;
+        break;
+      }
+    }
+    if (target == null) return false;
+    // Capture per-stroke flat-list snapshots BEFORE removal so undo
+    // can re-insert each stroke at its original Z-position.
+    final snapshots = <_LayerStrokeSnapshot>[];
+    for (final c in target.children) {
+      if (c is CanvasStrokeNode) {
+        final flatIdx = _strokes.indexOf(c.stroke);
+        if (flatIdx >= 0) {
+          snapshots.add(_LayerStrokeSnapshot(
+            stroke: c.stroke,
+            node: c,
+            flatIndex: flatIdx,
+          ));
+        }
+      }
+    }
+    final activeWasTarget = _activeLayer == target;
+    final layerIndex = layers.indexOf(target);
+    for (final snap in snapshots) {
+      _spatialIndex.remove(snap.stroke);
+      _strokes.remove(snap.stroke);
+      _strokeToNode.remove(snap.stroke);
+      // NOTE: we do NOT call snap.stroke.dispose() here so undo can
+      // restore the stroke without losing its `ui.Picture` cache. The
+      // history evictor calls dispose on the dropped op when capacity
+      // is exceeded.
+    }
+    _rootLayer.remove(target);
+    if (activeWasTarget) {
+      final remaining = _rootLayer.children.whereType<LayerNode>();
+      _activeLayer = remaining.last;
+    }
+    _history?.push(
+      _RemoveLayerOp(target, layerIndex, snapshots, activeWasTarget),
+    );
+    _commitTick.notify();
+    return true;
+  }
+
+  /// Make [id] the active layer — any subsequent stroke commit lands on it.
+  /// Returns `false` if no layer with that id exists.
+  bool setActiveLayer(NodeId id) {
+    for (final l in _rootLayer.children.whereType<LayerNode>()) {
+      if (l.id == id) {
+        _activeLayer = l;
+        _commitTick.notify();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Set the alpha multiplier of layer [id] in `[0, 1]`. Clamped.
+  bool setLayerOpacity(NodeId id, double opacity) {
+    final layer = _findLayer(id);
+    if (layer == null) return false;
+    final before = layer.opacity;
+    layer.opacity = opacity;
+    if (before != layer.opacity) {
+      _history?.push(_LayerOpacityOp(id, before, layer.opacity));
+    }
+    _commitTick.notify();
+    return true;
+  }
+
+  /// Toggle the visibility of layer [id]. Hidden layers skip rendering
+  /// but their strokes are preserved.
+  bool setLayerVisible(NodeId id, bool visible) {
+    final layer = _findLayer(id);
+    if (layer == null) return false;
+    final before = layer.isVisible;
+    layer.isVisible = visible;
+    if (before != visible) {
+      _history?.push(_LayerVisibleOp(id, before, visible));
+    }
+    _commitTick.notify();
+    return true;
+  }
+
+  /// Toggle the lock flag of layer [id]. Locked layers reject new strokes
+  /// and the eraser is a no-op against them.
+  bool setLayerLocked(NodeId id, bool locked) {
+    final layer = _findLayer(id);
+    if (layer == null) return false;
+    final before = layer.isLocked;
+    layer.isLocked = locked;
+    if (before != locked) {
+      _history?.push(_LayerLockedOp(id, before, locked));
+    }
+    _commitTick.notify();
+    return true;
+  }
+
+  /// Replace the blend mode used when compositing layer [id] over the
+  /// layers below it. The free pub.dev core supports the standard
+  /// `BlendMode` enum from `dart:ui`; the commercial `fluera_canvas_gpu`
+  /// add-on can extend this with Photoshop-grade modes via its GPU
+  /// compositor.
+  bool setLayerBlendMode(NodeId id, BlendMode blendMode) {
+    final layer = _findLayer(id);
+    if (layer == null) return false;
+    final before = layer.blendMode;
+    layer.blendMode = blendMode;
+    if (before != blendMode) {
+      _history?.push(_LayerBlendModeOp(id, before, blendMode));
+    }
+    _commitTick.notify();
+    return true;
+  }
+
+  /// Rename layer [id]. The name is shown by the optional layer panel UI.
+  bool setLayerName(NodeId id, String name) {
+    final layer = _findLayer(id);
+    if (layer == null) return false;
+    final before = layer.name;
+    layer.name = name;
+    if (before != name) {
+      _history?.push(_LayerNameOp(id, before, name));
+    }
+    _commitTick.notify();
+    return true;
+  }
+
+  /// Move layer [id] to position [newIndex] in the back-to-front list
+  /// returned by [layers] (0 = bottom, last = top). Out-of-range indices
+  /// are clamped. Returns `false` if no layer matches the id.
+  bool reorderLayer(NodeId id, int newIndex) {
+    final layers = _rootLayer.children.whereType<LayerNode>().toList();
+    final fromIdx = layers.indexWhere((l) => l.id == id);
+    if (fromIdx < 0) return false;
+    final clamped = newIndex.clamp(0, layers.length - 1);
+    if (clamped == fromIdx) return false;
+    final target = layers[fromIdx];
+    _rootLayer.remove(target);
+    _rootLayer.insertAt(clamped, target);
+    _history?.push(_ReorderLayerOp(id, fromIdx, clamped));
+    _commitTick.notify();
+    return true;
+  }
+
+  /// Clone layer [id], copying name (with `" copy"` suffix) and visual
+  /// settings. The clone goes immediately above the source. Returns the
+  /// new layer or `null` if the source id was not found. Strokes are
+  /// shallow-cloned (same point + pressure data, fresh `CanvasStroke`
+  /// instances so they get their own `Picture` cache).
+  LayerNode? duplicateLayer(NodeId id) {
+    final src = _findLayer(id);
+    if (src == null) return null;
+    final clone = LayerNode(
+      id: NodeId(generateUid()),
+      name: '${src.name} copy',
+      opacity: src.opacity,
+      blendMode: src.blendMode,
+      isVisible: src.isVisible,
+      isLocked: src.isLocked,
+    );
+    final srcIdx = _rootLayer.children.indexOf(src);
+    _rootLayer.insertAt(srcIdx + 1, clone);
+    // Clone the strokes so the duplicate is editable independently.
+    for (final c in src.children) {
+      if (c is CanvasStrokeNode) {
+        final orig = c.stroke;
+        final dup = CanvasStroke(
+          points: orig.points,
+          pressures: orig.pressures,
+          color: orig.color,
+          baseWidth: orig.baseWidth,
+          smooth: orig.smooth,
+          brushType: orig.brushType,
+          pencilConfig: orig.pencilConfig,
+          fountainConfig: orig.fountainConfig,
+        );
+        final node = CanvasStrokeNode(id: NodeId(generateUid()), stroke: dup);
+        clone.add(node);
+        _strokes.add(dup);
+        _spatialIndex.insert(dup);
+        _strokeToNode[dup] = node;
+      }
+    }
+    _commitTick.notify();
+    return clone;
+  }
+
+  LayerNode? _findLayer(NodeId id) {
+    for (final l in _rootLayer.children.whereType<LayerNode>()) {
+      if (l.id == id) return l;
+    }
+    return null;
+  }
+
   // ── Persistence ───────────────────────────────────────────────────────────
 
   /// Serialize the current stroke list to a compact little-endian byte
@@ -1682,12 +1853,66 @@ class _CommittedStrokesPainter extends CustomPainter {
     // the canvas origin.
     background.paint(canvas, viewport, ctrl.scale);
 
-    final visible = canvasState._spatialIndex.queryVisible(
+    // Layer-aware paint pass (canvas 0.6.0+).
+    //
+    // We walk the scene graph back-to-front and, for each `LayerNode`,
+    // wrap the paints of its strokes in a `saveLayer` so per-layer
+    // opacity and blend mode compose correctly. The viewport spatial
+    // index still tells us which strokes are on-screen — the scene
+    // graph just gives us the per-layer membership and ordering.
+    //
+    // Fast path: when there is exactly one layer with default
+    // settings (opacity = 1, srcOver, visible) we skip `saveLayer`
+    // entirely and fall back to the pre-0.6.0 single `drawPicture`
+    // loop — a hot path on simple notes-app workloads.
+    final visibleStrokes = canvasState._spatialIndex.queryVisible(
       viewport,
       margin: 200,
     );
-    for (final s in visible) {
-      canvas.drawPicture(s.picture());
+    final layers = canvasState._rootLayer.children.whereType<LayerNode>().toList();
+    final hasNonTrivialLayer = layers.length != 1 ||
+        !layers.first.isVisible ||
+        layers.first.opacity != 1.0 ||
+        layers.first.blendMode != ui.BlendMode.srcOver;
+    if (!hasNonTrivialLayer) {
+      for (final s in visibleStrokes) {
+        canvas.drawPicture(s.picture());
+      }
+    } else {
+      // Bucket the on-screen strokes by their owning layer so we paint
+      // each layer in one `saveLayer` pass. The bucketing is O(N) on
+      // the visible set and avoids hash lookups during the saveLayer
+      // body.
+      final visibleSet = <CanvasStroke, bool>{};
+      for (final s in visibleStrokes) {
+        visibleSet[s] = true;
+      }
+      // saveLayer wants a target rect; the viewport rect is the
+      // smallest bound that contains every visible stroke under the
+      // current camera, which is exactly what we need.
+      final layerRect = viewport;
+      for (final layer in layers) {
+        if (!layer.isVisible) continue;
+        // Find strokes belonging to this layer by walking its children
+        // (CanvasStrokeNode → underlying CanvasStroke). The strokes are
+        // small, the layers are few — linear scan is fine.
+        final layerStrokes = <CanvasStroke>[];
+        for (final child in layer.children) {
+          if (child is CanvasStrokeNode &&
+              visibleSet[child.stroke] == true) {
+            layerStrokes.add(child.stroke);
+          }
+        }
+        if (layerStrokes.isEmpty) continue;
+        final paint = Paint()
+          ..color = ui.Color.fromRGBO(0, 0, 0, layer.opacity)
+          ..blendMode = layer.blendMode;
+        canvas.saveLayer(layerRect, paint);
+        for (final s in layerStrokes) {
+          canvas.drawPicture(s.picture());
+        }
+        canvas.restore();
+      }
     }
 
     // Eraser hover circle — drawn last so it sits on top of strokes.
@@ -2056,6 +2281,194 @@ class _PixelEraseOp implements _CanvasOp {
       s._internalInsertStrokeAt(s._strokes.length, survivor);
     }
   }
+}
+
+// ─── Layer-aware history ops (canvas 0.6.0+) ────────────────────────────
+
+/// Snapshot of a single stroke that lived in a layer at remove time —
+/// needed by [_RemoveLayerOp] so undo can restore both the
+/// `CanvasStrokeNode` (back into the resurrected layer) AND the flat
+/// `_strokes` mirror at its original Z-position.
+class _LayerStrokeSnapshot {
+  _LayerStrokeSnapshot({
+    required this.stroke,
+    required this.node,
+    required this.flatIndex,
+  });
+  final CanvasStroke stroke;
+  final CanvasStrokeNode node;
+  final int flatIndex;
+}
+
+class _AddLayerOp implements _CanvasOp {
+  _AddLayerOp(this.layer, this.index);
+  final LayerNode layer;
+  final int index;
+
+  @override
+  void undo(FlueraCanvasState s) {
+    s._rootLayer.remove(layer);
+    if (s._activeLayer == layer) {
+      final remaining = s._rootLayer.children.whereType<LayerNode>();
+      s._activeLayer = remaining.last;
+    }
+  }
+
+  @override
+  void redo(FlueraCanvasState s) {
+    s._rootLayer.insertAt(index, layer);
+  }
+}
+
+class _RemoveLayerOp implements _CanvasOp {
+  _RemoveLayerOp(
+    this.layer,
+    this.layerIndex,
+    this.snapshots,
+    this.activeWasTarget,
+  );
+  final LayerNode layer;
+  final int layerIndex;
+  final List<_LayerStrokeSnapshot> snapshots;
+  final bool activeWasTarget;
+
+  @override
+  void undo(FlueraCanvasState s) {
+    // Reattach the layer at its original Z-order. The CanvasStrokeNode
+    // children are still attached to it (we never detached them on
+    // remove — we just unhooked the layer from `_rootLayer` and the
+    // strokes from the flat mirror).
+    s._rootLayer.insertAt(layerIndex, layer);
+    final sorted = List<_LayerStrokeSnapshot>.from(snapshots)
+      ..sort((a, b) => a.flatIndex.compareTo(b.flatIndex));
+    for (final snap in sorted) {
+      final idx = snap.flatIndex.clamp(0, s._strokes.length);
+      s._strokes.insert(idx, snap.stroke);
+      s._spatialIndex.insert(snap.stroke);
+      s._strokeToNode[snap.stroke] = snap.node;
+    }
+    if (activeWasTarget) s._activeLayer = layer;
+  }
+
+  @override
+  void redo(FlueraCanvasState s) {
+    for (final snap in snapshots) {
+      s._spatialIndex.remove(snap.stroke);
+      s._strokes.remove(snap.stroke);
+      s._strokeToNode.remove(snap.stroke);
+    }
+    s._rootLayer.remove(layer);
+    if (activeWasTarget) {
+      final remaining = s._rootLayer.children.whereType<LayerNode>();
+      s._activeLayer = remaining.last;
+    }
+  }
+}
+
+class _ReorderLayerOp implements _CanvasOp {
+  _ReorderLayerOp(this.layerId, this.fromIndex, this.toIndex);
+  final NodeId layerId;
+  final int fromIndex;
+  final int toIndex;
+
+  void _move(FlueraCanvasState s, int from, int to) {
+    final layers = s._rootLayer.children.whereType<LayerNode>().toList();
+    if (from < 0 || from >= layers.length) return;
+    final layer = layers[from];
+    s._rootLayer.remove(layer);
+    s._rootLayer.insertAt(to, layer);
+  }
+
+  @override
+  void undo(FlueraCanvasState s) => _move(s, toIndex, fromIndex);
+
+  @override
+  void redo(FlueraCanvasState s) => _move(s, fromIndex, toIndex);
+}
+
+class _LayerVisibleOp implements _CanvasOp {
+  _LayerVisibleOp(this.layerId, this.before, this.after);
+  final NodeId layerId;
+  final bool before;
+  final bool after;
+
+  void _set(FlueraCanvasState s, bool value) {
+    final layer = s._findLayer(layerId);
+    if (layer != null) layer.isVisible = value;
+  }
+
+  @override
+  void undo(FlueraCanvasState s) => _set(s, before);
+  @override
+  void redo(FlueraCanvasState s) => _set(s, after);
+}
+
+class _LayerLockedOp implements _CanvasOp {
+  _LayerLockedOp(this.layerId, this.before, this.after);
+  final NodeId layerId;
+  final bool before;
+  final bool after;
+
+  void _set(FlueraCanvasState s, bool value) {
+    final layer = s._findLayer(layerId);
+    if (layer != null) layer.isLocked = value;
+  }
+
+  @override
+  void undo(FlueraCanvasState s) => _set(s, before);
+  @override
+  void redo(FlueraCanvasState s) => _set(s, after);
+}
+
+class _LayerOpacityOp implements _CanvasOp {
+  _LayerOpacityOp(this.layerId, this.before, this.after);
+  final NodeId layerId;
+  final double before;
+  final double after;
+
+  void _set(FlueraCanvasState s, double value) {
+    final layer = s._findLayer(layerId);
+    if (layer != null) layer.opacity = value;
+  }
+
+  @override
+  void undo(FlueraCanvasState s) => _set(s, before);
+  @override
+  void redo(FlueraCanvasState s) => _set(s, after);
+}
+
+class _LayerBlendModeOp implements _CanvasOp {
+  _LayerBlendModeOp(this.layerId, this.before, this.after);
+  final NodeId layerId;
+  final BlendMode before;
+  final BlendMode after;
+
+  void _set(FlueraCanvasState s, BlendMode value) {
+    final layer = s._findLayer(layerId);
+    if (layer != null) layer.blendMode = value;
+  }
+
+  @override
+  void undo(FlueraCanvasState s) => _set(s, before);
+  @override
+  void redo(FlueraCanvasState s) => _set(s, after);
+}
+
+class _LayerNameOp implements _CanvasOp {
+  _LayerNameOp(this.layerId, this.before, this.after);
+  final NodeId layerId;
+  final String before;
+  final String after;
+
+  void _set(FlueraCanvasState s, String value) {
+    final layer = s._findLayer(layerId);
+    if (layer != null) layer.name = value;
+  }
+
+  @override
+  void undo(FlueraCanvasState s) => _set(s, before);
+  @override
+  void redo(FlueraCanvasState s) => _set(s, after);
 }
 
 class _CanvasHistory {
