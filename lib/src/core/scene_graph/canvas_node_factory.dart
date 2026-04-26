@@ -1,5 +1,6 @@
 import './canvas_node.dart';
 import './node_id.dart';
+import '../nodes/canvas_stroke_node.dart';
 import '../nodes/group_node.dart';
 import '../nodes/layer_node.dart';
 import '../nodes/stroke_node.dart';
@@ -38,6 +39,9 @@ class CanvasNodeFactory {
     switch (nodeType) {
       case 'stroke':
         return StrokeNode.fromJson(json);
+
+      case 'canvas_stroke':
+        return CanvasStrokeNode.fromJson(json);
 
       case 'shape':
         return ShapeNode.fromJson(json);

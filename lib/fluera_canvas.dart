@@ -95,6 +95,7 @@ export 'src/core/scene_graph/node_id.dart';
 
 // ─── BASE NODES ────────────────────────────────────────────────────────────
 
+export 'src/core/nodes/canvas_stroke_node.dart';
 export 'src/core/nodes/group_node.dart';
 export 'src/core/nodes/layer_node.dart';
 export 'src/core/nodes/shape_node.dart';
@@ -178,7 +179,7 @@ export 'src/rendering/optimization/point_simplifier.dart';
 // latency on the live path.
 
 export 'src/rendering/gpu/gpu_stroke_backend.dart'
-    show GpuStrokeBackend, FlueraCanvasGpu;
+    show GpuStrokeBackend, FlueraCanvasGpu, CanvasStrokeRenderer;
 export 'src/rendering/native_stroke_overlay.dart'
     show NativeStrokeOverlay, NativeStrokeOverlayController;
 
