@@ -28,6 +28,7 @@ import './canvas_serializer.dart';
 import './infinite_canvas_controller.dart';
 import './infinite_canvas_gesture_detector.dart';
 import '../core/nodes/canvas_stroke_node.dart';
+import '../core/nodes/group_node.dart';
 import '../core/nodes/image_node.dart';
 import '../core/nodes/layer_node.dart';
 import '../core/scene_graph/canvas_node.dart';
@@ -39,6 +40,7 @@ import '../rendering/gpu/gpu_stroke_backend.dart';
 import 'fluera_blend_mode.dart';
 import '../rendering/optimization/spatial_index.dart';
 import '../utils/uid.dart' show generateUid;
+import 'edge_pan_controller.dart';
 import 'selection/canvas_selection.dart';
 import 'selection/selection_painter.dart';
 import 'selection/transform_handles.dart';
@@ -509,7 +511,7 @@ class FlueraCanvas extends StatefulWidget {
 }
 
 class FlueraCanvasState extends State<FlueraCanvas>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final InfiniteCanvasController _controller;
   late final bool _ownsController;
   late final NativeStrokeOverlayController _nativeOverlay;
@@ -546,6 +548,24 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// matches `_strokes.length`.
   final Map<CanvasStroke, CanvasStrokeNode> _strokeToNode =
       Map<CanvasStroke, CanvasStrokeNode>.identity();
+
+  /// O(1) index from a node's [NodeId] to the [CanvasNode] itself.
+  /// Source-of-truth for selection / transform / hit-test on any
+  /// selectable scene-graph node — strokes today, images now (0.7.0),
+  /// future text / shape additions land here without touching the
+  /// rest of the pipeline. Kept in sync with [_strokeToNode] +
+  /// [_rootLayer]'s image children via the same insertion / removal
+  /// helpers (`_internalInsertStrokeAt`, `_internalRemoveStroke`,
+  /// `addImageNode`, `_AddLayerChildOp`, `_RemoveLayerOp`,
+  /// `_rebuildStrokesFromLayers`).
+  final Map<NodeId, CanvasNode> _selectableNodes = <NodeId, CanvasNode>{};
+
+  /// Pre-computed Z-order index (DFS order across [_rootLayer]). Used
+  /// by `_hitTestNode` to break ties when multiple nodes contain the
+  /// pen-down point — front-most wins (max value). Recomputed every
+  /// time the selectable index is mutated; O(N) walk during a full
+  /// rebuild, O(1) lookup at query time.
+  final Map<NodeId, int> _zOrderIndex = <NodeId, int>{};
 
   /// Undo / redo stacks. `null` when [widget.historyCapacity] <= 0.
   _CanvasHistory? _history;
@@ -587,6 +607,63 @@ class FlueraCanvasState extends State<FlueraCanvas>
   Rect? _transformOriginalBounds;
   Offset? _transformAnchorWorld;
   Map<NodeId, Matrix4>? _transformBeforeMatrices;
+
+  /// Cached list of nodes the active transform applies to. Computed
+  /// once at `_beginTransform` so the per-frame `_applyTransform`
+  /// inner loop is O(S) on the selected set (typically 1–10) instead
+  /// of O(N) on every stroke in the canvas. Cleared on transform end /
+  /// cancel along with the rest of the snapshot.
+  List<CanvasStrokeNode>? _transformTargets;
+
+  /// Last gesture-area size measured by the build's `LayoutBuilder`
+  /// — used by [_edgePan] to know where the edges are.
+  Size _gestureViewportSize = Size.zero;
+
+  /// Edge-pan auto-scroll while dragging selection / future image
+  /// drag / lasso completion. Lazy-initialised on first need so the
+  /// host widget pays no ticker / vsync cost when no edge-pan-aware
+  /// gesture is running.
+  EdgePanController? _edgePan;
+
+  /// Last screen-space pointer position fed to [_edgePan]. The
+  /// edge-pan ticker fires every vsync while the pointer is in the
+  /// edge band — but the screen pointer doesn't move during that
+  /// time, only the camera does. We re-derive the world-space
+  /// pointer from this saved screen value on every tick so the
+  /// in-flight transform keeps tracking the new viewport.
+  Offset? _lastSelectPointerScreen;
+
+  /// Whether the modifier (shift) was held when the current select
+  /// transform began. Recomputing the transform on every edge-pan
+  /// tick must honour the same semantics as the originating drag.
+  /// 0.6.0 ships without keyboard-modifier wiring; the field stays
+  /// `false` and tracks the public default (uniform corner scale,
+  /// no axis-lock move). A future keyboard-aware build can promote
+  /// this to a mutable field without touching the call sites.
+  final bool _transformModifierActive = false;
+
+  /// Lazily build (and reuse) the edge-pan controller.
+  EdgePanController _ensureEdgePan() {
+    return _edgePan ??= EdgePanController(
+      controller: _controller,
+      vsync: this,
+      onTick: (_) {
+        // Camera moved this frame. The screen pointer is unchanged
+        // (the user isn't moving) but the world coord under it has
+        // shifted — re-derive the world coord, then re-run whichever
+        // gesture is active so it keeps tracking the new viewport.
+        final screen = _lastSelectPointerScreen;
+        if (screen == null) return;
+        final world = _controller.screenToCanvas(screen);
+        if (_transformMode != null) {
+          _applyTransform(world, modifierActive: _transformModifierActive);
+        } else if (_marqueeAnchorWorld != null) {
+          _marqueeRectWorld = Rect.fromPoints(_marqueeAnchorWorld!, world);
+          _marqueeTick.notify();
+        }
+      },
+    );
+  }
 
   /// Live-stroke state holder. Owns points, pressures, color and width
   /// for the in-progress stroke. `super(repaint: _liveStroke)` on
@@ -693,10 +770,22 @@ class FlueraCanvasState extends State<FlueraCanvas>
       ]),
     );
     _liveStrokeTicker = createTicker((_) {
-      // Tick while either a draw gesture or an erase gesture is in
-      // progress — the erase preview circle relies on the ticker to
-      // track the pointer in real time on Impeller-Vulkan / Adreno.
-      if (mounted) setState(() {});
+      // Tick while a draw / erase / select gesture is in progress —
+      // works around the Impeller-Vulkan / Adreno coalescing of
+      // `setState` / `markNeedsPaint` calls inside pointer-event
+      // handlers.
+      //
+      // For `tool == select` we ONLY need the selection painter to
+      // tick — strokes are painted by the committed painter (driven by
+      // `_commitTick`), and a full `setState({})` would also trigger
+      // every `ListenableBuilder` ancestor (e.g. `FlueraLayerPanel`).
+      // A targeted `_marqueeTick.notify()` is enough and ~10× cheaper.
+      if (!mounted) return;
+      if (widget.tool == CanvasTool.select) {
+        _marqueeTick.notify();
+      } else {
+        setState(() {});
+      }
     });
     if (widget.historyCapacity > 0) {
       _history = _CanvasHistory(capacity: widget.historyCapacity);
@@ -707,10 +796,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
     final initial = widget.initialBytes;
     if (initial != null && initial.isNotEmpty) {
       try {
-        final loaded = CanvasSerializer.decodeBytes(initial);
-        for (final s in loaded) {
-          _internalInsertStrokeAt(_strokes.length, s);
-        }
+        // Layer-aware decode (0.6.1+): restore the full hierarchy and
+        // the extended-blend-mode side-table from FCV0 v2 / v3. v1
+        // files surface as a single synthetic layer.
+        final result = CanvasSerializer.decodeBytesFull(initial);
+        _replaceWithLayers(result.root, result.extendedCodes);
       } catch (_) {
         // Corrupt bytes — start with empty canvas.
       }
@@ -746,23 +836,41 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _commitTick.dispose();
     _selectionController.dispose();
     _marqueeTick.dispose();
+    _edgePan?.dispose();
     for (final s in _strokes) {
       s.dispose();
     }
+    _disposeAllMasks();
     super.dispose();
+  }
+
+  /// Free every image in [_layerMasks] and clear the map. Used by
+  /// [_replaceWithLayers] (load) and [dispose] (state teardown). The
+  /// state owns the mask images per the [setLayerMask] contract — no
+  /// other holder is allowed to dispose them.
+  void _disposeAllMasks() {
+    for (final img in _layerMasks.values) {
+      img.dispose();
+    }
+    _layerMasks.clear();
   }
 
   @override
   void didUpdateWidget(covariant FlueraCanvas oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Tool switched mid-gesture: cancel any in-flight draw / erase.
+    // `_commitTick` has subscribers (e.g. `FlueraLayerPanel`'s
+    // `ListenableBuilder` on `layerChanges`) that schedule rebuilds.
+    // Firing it synchronously from `didUpdateWidget` violates the
+    // "no markNeedsBuild during build" invariant, so we defer every
+    // notify to the post-frame callback.
+    var notifyAfterFrame = false;
     if (oldWidget.tool != widget.tool) {
       _onDrawCancel();
       _eraserPreviewWorld = null;
-      _commitTick.notify();
+      notifyAfterFrame = true;
     }
     if (oldWidget.background != widget.background) {
-      _commitTick.notify();
+      notifyAfterFrame = true;
     }
     // The eraser preview circle is rendered by the committed painter,
     // which only repaints when `_commitTick` notifies. If the consumer
@@ -770,7 +878,12 @@ class FlueraCanvasState extends State<FlueraCanvas>
     // circle redraws in real time at the new radius.
     if (oldWidget.eraserRadius != widget.eraserRadius ||
         oldWidget.showEraserPreview != widget.showEraserPreview) {
-      _commitTick.notify();
+      notifyAfterFrame = true;
+    }
+    if (notifyAfterFrame) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _commitTick.notify();
+      });
     }
     if (oldWidget.historyCapacity != widget.historyCapacity) {
       if (widget.historyCapacity > 0) {
@@ -868,6 +981,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
             anchor: world,
             bounds: sel.bounds,
           );
+          // Vsync ticker forces real-time repaints during the drag —
+          // without it Impeller-Vulkan / Adreno coalesces the
+          // `_selectionController.set` notify into a single frame at
+          // pen-up, freezing the bounding rect + handles mid-gesture.
+          if (!_liveStrokeTicker.isActive) _liveStrokeTicker.start();
           return;
         }
         // 2. Pen-down inside the bounding box → start a body-drag move
@@ -879,6 +997,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
             anchor: world,
             bounds: sel.bounds,
           );
+          if (!_liveStrokeTicker.isActive) _liveStrokeTicker.start();
           return;
         }
       }
@@ -905,6 +1024,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
         _selectionController.clear();
       }
       _marqueeTick.notify();
+      // Start the vsync ticker so marquee outline + handle drag update
+      // in real time on Impeller-Vulkan / Adreno (same workaround the
+      // draw / erase tools use — pointer-event `notify()` calls are
+      // otherwise coalesced into a single paint at pen-up). Idempotent.
+      if (!_liveStrokeTicker.isActive) _liveStrokeTicker.start();
       return;
     }
     // Lock check (canvas 0.6.0+): the active layer rejects new strokes
@@ -987,7 +1111,18 @@ class FlueraCanvasState extends State<FlueraCanvas>
       // 1. If a transform gesture is in flight, every update extends
       // the transform — never falls through to marquee.
       if (_transformMode != null) {
-        _applyTransform(world);
+        _applyTransform(world, modifierActive: _transformModifierActive);
+        // Feed the edge-pan controller the screen-space pointer so it
+        // can scroll the canvas when the user drags toward an edge.
+        // The screen pos is stable until pen-up; we save it for the
+        // controller's onTick to re-derive the world coord after
+        // each camera move.
+        final screen = _controller.canvasToScreen(world);
+        _lastSelectPointerScreen = screen;
+        _ensureEdgePan().update(
+          pointerScreen: screen,
+          viewportSize: _gestureViewportSize,
+        );
         return;
       }
       // 2. Otherwise the user is dragging out a marquee rect (no
@@ -996,6 +1131,15 @@ class FlueraCanvasState extends State<FlueraCanvas>
       if (anchor == null) return;
       _marqueeRectWorld = Rect.fromPoints(anchor, world);
       _marqueeTick.notify();
+      // Marquee drags also benefit from edge-pan — the user dragging
+      // a selection rect toward an edge expects the canvas to scroll
+      // so they can include strokes outside the current viewport.
+      final screen = _controller.canvasToScreen(world);
+      _lastSelectPointerScreen = screen;
+      _ensureEdgePan().update(
+        pointerScreen: screen,
+        viewportSize: _gestureViewportSize,
+      );
       return;
     }
     if (widget.tool == CanvasTool.erase ||
@@ -1031,6 +1175,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
 
   void _onDrawEnd(Offset _) {
     if (widget.tool == CanvasTool.select) {
+      // Gesture is over — stop the vsync ticker that was kicked on
+      // pen-down. No more forced frames needed.
+      if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
+      _edgePan?.stop();
+      _lastSelectPointerScreen = null;
       // 1. End an in-flight transform first (drag of a handle / body).
       if (_transformMode != null) {
         _endTransform();
@@ -1109,6 +1258,8 @@ class FlueraCanvasState extends State<FlueraCanvas>
   void _onDrawCancel() {
     if (widget.enableNativeLiveStroke) _nativeOverlay.cancelStroke();
     if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
+    _edgePan?.stop();
+    _lastSelectPointerScreen = null;
     _livePoints = null;
     _livePressures = null;
     _liveStroke.clear();
@@ -1123,11 +1274,13 @@ class FlueraCanvasState extends State<FlueraCanvas>
       // Roll back to the snapshot taken at pen-down — a cancelled
       // gesture must not leave the scene with a half-applied transform.
       final before = _transformBeforeMatrices;
-      if (before != null) {
-        for (final entry in _strokeToNode.entries) {
-          final m = before[entry.value.id];
+      final targets = _transformTargets;
+      if (before != null && targets != null) {
+        for (final node in targets) {
+          final m = before[node.id];
           if (m == null) continue;
-          entry.value.localTransform = m.clone();
+          node.localTransform = m.clone();
+          node.invalidateTransformCache();
         }
         _refreshSelectionBoundsAfterTransform();
         _commitTick.notify();
@@ -1524,15 +1677,18 @@ class FlueraCanvasState extends State<FlueraCanvas>
   }) {
     final ids = _selectionController.value.ids;
     final before = <NodeId, Matrix4>{};
+    final targets = <CanvasStrokeNode>[];
     for (final entry in _strokeToNode.entries) {
       if (!ids.contains(entry.value.id)) continue;
       before[entry.value.id] = entry.value.localTransform.clone();
+      targets.add(entry.value);
     }
     _transformMode = mode;
     _transformHandle = handle;
     _transformAnchorWorld = anchor;
     _transformOriginalBounds = bounds;
     _transformBeforeMatrices = before;
+    _transformTargets = targets;
   }
 
   void _applyTransform(Offset pointer, {bool modifierActive = false}) {
@@ -1579,10 +1735,20 @@ class FlueraCanvasState extends State<FlueraCanvas>
         delta = TransformMath.rotationAroundPivot(theta, bounds.center);
         break;
     }
-    for (final entry in _strokeToNode.entries) {
-      final m0 = before[entry.value.id];
-      if (m0 == null) continue;
-      entry.value.localTransform = delta.clone()..multiply(m0);
+    // Iterate the cached selection set (S items, typically 1-10)
+    // rather than the entire scene's stroke map (N items). Big perf
+    // win on canvases with thousands of strokes.
+    final targets = _transformTargets;
+    if (targets != null) {
+      for (final node in targets) {
+        final m0 = before[node.id];
+        if (m0 == null) continue;
+        node.localTransform = delta.clone()..multiply(m0);
+        // Direct field write bypasses the cached worldTransform /
+        // worldBounds; explicit invalidation ensures the selection
+        // painter sees the up-to-date geometry on the very next paint.
+        node.invalidateTransformCache();
+      }
     }
     _refreshSelectionBoundsAfterTransform();
     _commitTick.notify();
@@ -1592,10 +1758,21 @@ class FlueraCanvasState extends State<FlueraCanvas>
     final ids = _selectionController.value.ids;
     if (ids.isEmpty) return;
     Rect? acc;
-    for (final entry in _strokeToNode.entries) {
-      if (!ids.contains(entry.value.id)) continue;
-      final b = entry.value.worldBounds;
-      acc = acc == null ? b : acc.expandToInclude(b);
+    // Prefer the cached transform-target list when a gesture is in
+    // flight (O(S)); fall back to the full map only when called from
+    // a non-gesture context (e.g. mirrorSelection invoked via toolbar).
+    final targets = _transformTargets;
+    if (targets != null) {
+      for (final node in targets) {
+        final b = node.worldBounds;
+        acc = acc == null ? b : acc.expandToInclude(b);
+      }
+    } else {
+      for (final entry in _strokeToNode.entries) {
+        if (!ids.contains(entry.value.id)) continue;
+        final b = entry.value.worldBounds;
+        acc = acc == null ? b : acc.expandToInclude(b);
+      }
     }
     _selectionController.set(
       _selectionController.value.copyWith(bounds: acc ?? Rect.zero),
@@ -1604,19 +1781,22 @@ class FlueraCanvasState extends State<FlueraCanvas>
 
   void _endTransform() {
     final before = _transformBeforeMatrices;
-    if (before == null || before.isEmpty) {
+    final targets = _transformTargets;
+    if (before == null || before.isEmpty || targets == null) {
       _resetTransformState();
       return;
     }
+    // Build `after` snapshot from the cached target list — O(S), not
+    // O(N). Same for the change-detection loop below.
     final after = <NodeId, Matrix4>{};
-    for (final entry in _strokeToNode.entries) {
-      if (!before.containsKey(entry.value.id)) continue;
-      after[entry.value.id] = entry.value.localTransform.clone();
+    for (final node in targets) {
+      after[node.id] = node.localTransform.clone();
     }
     var changed = false;
     for (final id in before.keys) {
       final a = before[id]!;
-      final b = after[id]!;
+      final b = after[id];
+      if (b == null) continue;
       for (var i = 0; i < 16; i++) {
         if (a.storage[i] != b.storage[i]) {
           changed = true;
@@ -1637,6 +1817,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _transformAnchorWorld = null;
     _transformOriginalBounds = null;
     _transformBeforeMatrices = null;
+    _transformTargets = null;
   }
 
   /// Mirror every selected node around the selection bounds' [axis].
@@ -1659,6 +1840,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
       before[entry.value.id] = entry.value.localTransform.clone();
       final newM = delta.clone()..multiply(entry.value.localTransform);
       entry.value.localTransform = newM;
+      entry.value.invalidateTransformCache();
       after[entry.value.id] = newM.clone();
       count++;
     }
@@ -1680,10 +1862,24 @@ class FlueraCanvasState extends State<FlueraCanvas>
   ImageNode addImageNode(ImageNode node) {
     final index = _activeLayer.children.length;
     _activeLayer.add(node);
+    _registerSelectable(node);
     _history?.push(_AddLayerChildOp(node, _activeLayer.id, index));
     _commitTick.notify();
     return node;
   }
+
+  /// Test-only view of the selectable-node index. Mirrors the
+  /// internal map; mutating the returned set has no effect on the
+  /// canvas. Used by `selectable_nodes_index_test.dart` to assert
+  /// invariants after mutations.
+  @visibleForTesting
+  Set<NodeId> get debugSelectableIds => _selectableNodes.keys.toSet();
+
+  /// Test-only Z-order snapshot. Higher value = front-most. Holes are
+  /// allowed (single-insert paths bump the max; rebuilds compact).
+  @visibleForTesting
+  Map<NodeId, int> get debugZOrderIndex =>
+      Map<NodeId, int>.unmodifiable(_zOrderIndex);
 
   /// Listenable that fires whenever the canvas commits something the
   /// committed-strokes painter cares about: new stroke, eraser, clear,
@@ -1707,6 +1903,39 @@ class FlueraCanvasState extends State<FlueraCanvas>
 
   final Map<NodeId, FlueraBlendMode> _extendedBlendModes = <NodeId, FlueraBlendMode>{};
 
+  /// Per-layer mask images (`ui.Image` in straight-alpha space, R-channel
+  /// is read as the canonical alpha by the GPU compositor and as
+  /// `BlendMode.dstIn` source by the canvas-core fallback). Keyed by
+  /// the owning [LayerNode]'s id; absent entry === no mask.
+  ///
+  /// The state OWNS the images — calling [setLayerMask] with a fresh
+  /// image disposes the previous one; `dispose()` on this state also
+  /// frees every entry. Consumers must NOT dispose images they passed
+  /// in once they're handed over.
+  final Map<NodeId, ui.Image> _layerMasks = <NodeId, ui.Image>{};
+
+  /// Per-layer color tags for the layer panel UI. Optional metadata —
+  /// the renderer ignores it. Use [setLayerColorTag] to assign a tag
+  /// (typically a small palette color: red / orange / green / blue
+  /// / purple / no tag). Wired into the premium layer panel UX.
+  final Map<NodeId, Color> _layerColorTags = <NodeId, Color>{};
+
+  /// Lookup the color tag for layer [id], or `null` if none.
+  Color? layerColorTagFor(NodeId id) => _layerColorTags[id];
+
+  /// Set or clear the color tag of layer [id]. Pass `null` to clear.
+  /// Returns `true` when a layer with [id] existed.
+  bool setLayerColorTag(NodeId id, Color? color) {
+    if (_findLayer(id) == null) return false;
+    if (color == null) {
+      _layerColorTags.remove(id);
+    } else {
+      _layerColorTags[id] = color;
+    }
+    _commitTick.notify();
+    return true;
+  }
+
   /// Lookup the active [FlueraBlendMode] for [layerId]. When the table
   /// has no entry, returns the [FlueraBlendMode] that maps to the
   /// layer's current `ui.BlendMode` so the result is always meaningful.
@@ -1721,6 +1950,36 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// (no GPU compositor) keeps working unchanged. Extended modes record
   /// the choice in the side-table and set `LayerNode.blendMode` to the
   /// closest standard mode as graceful degradation.
+  /// Lookup the mask image for [id], or `null` if the layer has none.
+  /// The image lives until [setLayerMask]`(id, null)` is called or the
+  /// canvas state is disposed. Do not dispose the returned image — the
+  /// state owns its lifetime.
+  ui.Image? layerMaskFor(NodeId id) => _layerMasks[id];
+
+  /// Attach (or replace) the alpha mask of layer [id]. Pass `null` to
+  /// remove an existing mask. Returns `true` when a layer with [id]
+  /// existed (mask attached / cleared), `false` when [id] is unknown.
+  ///
+  /// The previous mask image is disposed by this method — callers
+  /// must hand over ownership of [mask]. To pre-create a mask in
+  /// memory, render a layer thumbnail at full layer-rect size with
+  /// [renderLayerThumbnail], then transform the resulting image
+  /// (e.g. via `Picture.toImageSync`) before passing it here.
+  bool setLayerMask(NodeId id, ui.Image? mask) {
+    if (_findLayer(id) == null) return false;
+    final previous = _layerMasks[id];
+    if (mask == null) {
+      _layerMasks.remove(id);
+    } else {
+      _layerMasks[id] = mask;
+    }
+    if (previous != null && previous != mask) {
+      previous.dispose();
+    }
+    _commitTick.notify();
+    return true;
+  }
+
   bool setLayerFlueraBlendMode(NodeId id, FlueraBlendMode mode) {
     final layer = _findLayer(id);
     if (layer == null) return false;
@@ -1795,20 +2054,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
     }
     if (target == null) return false;
     // Capture per-stroke flat-list snapshots BEFORE removal so undo
-    // can re-insert each stroke at its original Z-position.
-    final snapshots = <_LayerStrokeSnapshot>[];
-    for (final c in target.children) {
-      if (c is CanvasStrokeNode) {
-        final flatIdx = _strokes.indexOf(c.stroke);
-        if (flatIdx >= 0) {
-          snapshots.add(_LayerStrokeSnapshot(
-            stroke: c.stroke,
-            node: c,
-            flatIndex: flatIdx,
-          ));
-        }
-      }
-    }
+    // can re-insert each stroke at its original Z-position. Build a
+    // single index map up front so the snapshot loop is O(K) instead
+    // of O(K × N).
+    final indexByStroke = _flatStrokeIndexMap();
+    final snapshots = _snapshotLayerStrokes(target, indexByStroke);
     final activeWasTarget = _activeLayer == target;
     final layerIndex = layers.indexOf(target);
     for (final snap in snapshots) {
@@ -1825,6 +2075,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
       final remaining = _rootLayer.children.whereType<LayerNode>();
       _activeLayer = remaining.last;
     }
+    // Drop every selectable node that lived on the removed layer
+    // (strokes, images, future text/shape) — `_RemoveLayerOp` will
+    // re-register them on undo via `_rebuildSelectableIndex`.
+    _rebuildSelectableIndex();
     _history?.push(
       _RemoveLayerOp(target, layerIndex, snapshots, activeWasTarget),
     );
@@ -1976,6 +2230,261 @@ class FlueraCanvasState extends State<FlueraCanvas>
     return clone;
   }
 
+  /// Merge the layer with [id] into the layer immediately below it
+  /// (lower in the children list, i.e. painted earlier). The strokes
+  /// of the upper layer are appended to the children of the lower
+  /// layer in their existing Z-order; the upper layer is removed.
+  ///
+  /// Returns `true` on success. `false` when:
+  ///   • [id] does not match any layer, or
+  ///   • [id] is already at the bottom (no layer below to merge into),
+  ///   • the bottom layer is locked (would silently mutate locked
+  ///     content — refused so the user can unlock first).
+  ///
+  /// Trade-off note: a Photoshop-grade extended blend mode on the
+  /// upper layer is **not preserved** by the merge — after the merge
+  /// every stroke paints with `srcOver` into the destination layer.
+  /// Consumers that need to lock in the visual blend should rasterize
+  /// the layer first (via [renderLayerThumbnail] at viewport size) and
+  /// commit the result as a future ImageNode. This MVP keeps strokes
+  /// vector for further editing.
+  bool mergeDown(NodeId id) {
+    final layers = _rootLayer.children.whereType<LayerNode>().toList();
+    if (layers.length <= 1) return false;
+    int upperIdx = -1;
+    for (int i = 0; i < layers.length; i++) {
+      if (layers[i].id == id) {
+        upperIdx = i;
+        break;
+      }
+    }
+    // The bottom layer (index 0) has nothing under it.
+    if (upperIdx <= 0) return false;
+    final upper = layers[upperIdx];
+    final lower = layers[upperIdx - 1];
+    if (lower.isLocked) return false;
+
+    // Snapshot stroke nodes + their flat-list positions BEFORE moving
+    // them so undo can rebuild both the upper layer header and the
+    // exact Z-order. We move stroke-nodes wholesale (no clone) so
+    // pictures stay cached and the ui.Picture instances aren't
+    // re-recorded on undo.
+    final indexByStroke = _flatStrokeIndexMap();
+    final flatSnapshots = _snapshotLayerStrokes(upper, indexByStroke);
+    final movedNodes = flatSnapshots.map((s) => s.node).toList(growable: false);
+
+    // Detach from upper, append to lower in the same relative order.
+    for (final node in movedNodes) {
+      upper.remove(node);
+      lower.add(node);
+    }
+    // Refresh the flat-list ordering: after merge the moved strokes
+    // sit at the back of `lower`'s children, which is the correct Z
+    // for "painted on top of lower's existing strokes". The flat
+    // _strokes list is rebuilt from scratch by walking layers in
+    // paint order — keeps the spatial index untouched (entries are
+    // already valid; only the iteration order changes).
+    _rebuildFlatStrokesFromLayers();
+
+    final activeWasUpper = _activeLayer == upper;
+    _rootLayer.remove(upper);
+    if (activeWasUpper) {
+      _activeLayer = lower;
+    }
+    // Drop side-table entry — extended blend mode no longer applies
+    // (upper is gone; lower keeps its own mode unchanged).
+    _extendedBlendModes.remove(upper.id);
+
+    _history?.push(_MergeDownOp(upper, upperIdx, flatSnapshots, activeWasUpper));
+    _commitTick.notify();
+    return true;
+  }
+
+  /// Collapse every visible layer into the bottom one. Hidden layers
+  /// are dropped (matches Photoshop's `Image > Flatten Image`
+  /// behaviour). The bottom layer keeps its name / opacity / blend
+  /// mode; every stroke from the layers above is appended to it in
+  /// paint order. Returns `true` if anything actually changed.
+  bool flatten() {
+    final layers = _rootLayer.children.whereType<LayerNode>().toList();
+    if (layers.length <= 1) {
+      // Even a single layer can have hidden state to drop, but with
+      // exactly one layer there is nothing to flatten *into* — the
+      // hidden case is handled by [setLayerVisible] elsewhere.
+      return false;
+    }
+
+    final bottom = layers.first;
+    if (bottom.isLocked) return false;
+
+    // Build a per-source-layer snapshot pack so undo can put every
+    // stroke back on its original layer at its original Z-order.
+    final snapshots = <_FlattenLayerSnapshot>[];
+    final flueraOnDrop = <NodeId, FlueraBlendMode>{};
+
+    // Single index map shared across every source layer — all reads
+    // happen before any list mutation, so the indices stay valid.
+    final indexByStroke = _flatStrokeIndexMap();
+
+    // Iterate top-to-bottom in paint order; for each non-bottom
+    // layer collect its strokes + drop the layer.
+    for (int i = 1; i < layers.length; i++) {
+      final src = layers[i];
+      final srcSnaps = _snapshotLayerStrokes(src, indexByStroke);
+      // Visible layers contribute strokes to the bottom; hidden
+      // layers are tracked for undo but their strokes are also
+      // dropped from the live scene during flatten.
+      if (src.isVisible) {
+        for (final snap in srcSnaps) {
+          src.remove(snap.node);
+          bottom.add(snap.node);
+        }
+      } else {
+        for (final snap in srcSnaps) {
+          src.remove(snap.node);
+          _spatialIndex.remove(snap.stroke);
+          _strokeToNode.remove(snap.stroke);
+        }
+      }
+      snapshots.add(_FlattenLayerSnapshot(
+        layer: src,
+        originalIndex: i,
+        strokes: srcSnaps,
+      ));
+      // Track extended-mode entry so undo can re-register it.
+      final extOnSrc = _extendedBlendModes.remove(src.id);
+      if (extOnSrc != null) flueraOnDrop[src.id] = extOnSrc;
+      _rootLayer.remove(src);
+    }
+
+    final activeWasNonBottom = _activeLayer != bottom;
+    _activeLayer = bottom;
+    _rebuildFlatStrokesFromLayers();
+    _history?.push(_FlattenOp(snapshots, flueraOnDrop, activeWasNonBottom));
+    _commitTick.notify();
+    return true;
+  }
+
+  /// Rasterize a single [layer] (or layer ID) into a small `ui.Image`
+  /// suitable for a layer-panel thumbnail. The render covers the
+  /// bounding box of every stroke on the layer; an empty layer
+  /// returns an empty transparent image of the requested [size].
+  ///
+  /// Synchronous (uses `Picture.toImageSync`) — safe to call from a
+  /// `build()` method but avoid running it on every frame; cache the
+  /// returned image alongside a `Listenable` (e.g. `layerChanges`).
+  ///
+  /// Caller owns the returned image — call `.dispose()` when the
+  /// thumbnail is replaced.
+  ui.Image renderLayerThumbnail(NodeId id, ui.Size size) {
+    final layer = _findLayer(id);
+    final w = size.width.ceil();
+    final h = size.height.ceil();
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(
+      recorder,
+      ui.Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+    );
+    if (layer == null || layer.children.isEmpty) {
+      return recorder.endRecording().toImageSync(w, h);
+    }
+
+    // Compute the bounding box of every stroke so the thumbnail
+    // shows the layer's content "fit-to-bounds" rather than a
+    // potentially-empty viewport crop.
+    Rect? bounds;
+    for (final c in layer.children) {
+      if (c is CanvasStrokeNode) {
+        for (final p in c.stroke.points) {
+          if (bounds == null) {
+            bounds = Rect.fromLTRB(p.dx, p.dy, p.dx, p.dy);
+          } else {
+            bounds = Rect.fromLTRB(
+              math.min(bounds.left, p.dx),
+              math.min(bounds.top, p.dy),
+              math.max(bounds.right, p.dx),
+              math.max(bounds.bottom, p.dy),
+            );
+          }
+        }
+      }
+    }
+    if (bounds == null || bounds.width == 0 || bounds.height == 0) {
+      return recorder.endRecording().toImageSync(w, h);
+    }
+    // Inflate slightly to leave room for stroke widths.
+    bounds = bounds.inflate(8);
+
+    // Fit-uniform: pick the smaller scale so the whole layer fits.
+    final scaleX = w / bounds.width;
+    final scaleY = h / bounds.height;
+    final scale = math.min(scaleX, scaleY);
+    final tx = (w - bounds.width * scale) / 2 - bounds.left * scale;
+    final ty = (h - bounds.height * scale) / 2 - bounds.top * scale;
+    canvas.translate(tx, ty);
+    canvas.scale(scale);
+
+    for (final c in layer.children) {
+      if (c is CanvasStrokeNode) {
+        canvas.drawPicture(c.stroke.picture());
+      }
+    }
+    return recorder.endRecording().toImageSync(w, h);
+  }
+
+  /// Internal: rebuild the flat `_strokes` mirror from the current
+  /// layer-tree paint order. Used by [mergeDown] / [flatten] which
+  /// move stroke-nodes between layers without touching the spatial
+  /// index. The spatial index entries stay valid (each stroke still
+  /// keys itself); only the linear iteration order is refreshed.
+  void _rebuildFlatStrokesFromLayers() {
+    _strokes.clear();
+    for (final layer in _rootLayer.children.whereType<LayerNode>()) {
+      for (final node in layer.children.whereType<CanvasStrokeNode>()) {
+        _strokes.add(node.stroke);
+      }
+    }
+  }
+
+  /// O(N) reverse index of every stroke's position in the flat mirror.
+  /// Used by the layer-op snapshot loops in [removeLayer] / [mergeDown]
+  /// / [flatten] so collecting per-layer snapshots is O(K) per layer
+  /// instead of O(K × N) — without this map every `_strokes.indexOf`
+  /// call inside the loop was an O(N) scan, making bulk-merge of a
+  /// large scene quadratic.
+  Map<CanvasStroke, int> _flatStrokeIndexMap() {
+    final map = <CanvasStroke, int>{};
+    for (int i = 0; i < _strokes.length; i++) {
+      map[_strokes[i]] = i;
+    }
+    return map;
+  }
+
+  /// Build a [_LayerStrokeSnapshot] list for every `CanvasStrokeNode`
+  /// child of [layer], pulling positions from [indexByStroke]. Strokes
+  /// not present in the flat mirror are skipped (defensive — should
+  /// never happen for a healthy state, but matches the pre-helper
+  /// behaviour of the snapshot loops).
+  List<_LayerStrokeSnapshot> _snapshotLayerStrokes(
+    LayerNode layer,
+    Map<CanvasStroke, int> indexByStroke,
+  ) {
+    final out = <_LayerStrokeSnapshot>[];
+    for (final c in layer.children) {
+      if (c is CanvasStrokeNode) {
+        final flatIdx = indexByStroke[c.stroke] ?? -1;
+        if (flatIdx >= 0) {
+          out.add(_LayerStrokeSnapshot(
+            stroke: c.stroke,
+            node: c,
+            flatIndex: flatIdx,
+          ));
+        }
+      }
+    }
+    return out;
+  }
+
   LayerNode? _findLayer(NodeId id) {
     for (final l in _rootLayer.children.whereType<LayerNode>()) {
       if (l.id == id) return l;
@@ -1985,19 +2494,30 @@ class FlueraCanvasState extends State<FlueraCanvas>
 
   // ── Persistence ───────────────────────────────────────────────────────────
 
-  /// Serialize the current stroke list to a compact little-endian byte
-  /// array. Persist this with the storage of your choice (files, Hive,
-  /// SQLite blob, REST upload, …). Restore later via [loadFromBytes].
+  /// Serialize the canvas to a compact little-endian byte array. Persist
+  /// this with the storage of your choice (files, Hive, SQLite blob,
+  /// REST upload, …). Restore later via [loadFromBytes].
   ///
-  /// Only the flat stroke list is serialized — camera, history and the
-  /// background pattern are runtime state and are NOT included.
-  Uint8List toBytes() => CanvasSerializer.encodeBytes(_strokes);
+  /// 0.6.1+: writes FCV0 v3 — the full layer hierarchy (id, name,
+  /// opacity, blend mode, visibility, lock state) round-trips, plus
+  /// the canvas-state side-table for Photoshop-grade extended blend
+  /// modes (`FlueraBlendMode` codes 100..108). Camera state, undo
+  /// history, the background pattern and the live stroke are runtime
+  /// state and are NOT included.
+  Uint8List toBytes() => CanvasSerializer.encodeBytesFromLayers(
+        _rootLayer,
+        extendedCodes: _extendedBlendModes,
+      );
 
-  /// Replace the current scene with the strokes decoded from [bytes].
+  /// Replace the current scene with the layers decoded from [bytes].
   /// The undo history is cleared. Throws [FormatException] on bad input.
+  ///
+  /// Layer-aware: V2 / V3 files restore the full hierarchy; V1 files
+  /// surface as a single synthetic "Layer 1". V3 files also restore
+  /// the extended-blend-mode side-table.
   void loadFromBytes(Uint8List bytes) {
-    final loaded = CanvasSerializer.decodeBytes(bytes);
-    _replaceStrokes(loaded);
+    final result = CanvasSerializer.decodeBytesFull(bytes);
+    _replaceWithLayers(result.root, result.extendedCodes);
   }
 
   /// Serialize the current stroke list to a JSON string. Larger than
@@ -2026,6 +2546,98 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _history?.clear();
   }
 
+  /// Replace the current scene with [loadedRoot] (full layer hierarchy)
+  /// and restore the [codes] side-table. Used by [loadFromBytes] and the
+  /// `initialBytes` constructor parameter to honour FCV0 v2 / v3 files
+  /// without flattening into a single layer.
+  void _replaceWithLayers(
+    LayerNode loadedRoot,
+    Map<NodeId, FlueraBlendMode> codes,
+  ) {
+    // Tear down current scene. Dispose old stroke pictures; we drop the
+    // old layer tree wholesale and build a fresh one from `loadedRoot`.
+    final disposeList = List<CanvasStroke>.from(_strokes);
+    _internalClear();
+    for (final s in disposeList) {
+      s.dispose();
+    }
+    // Drop side-tables keyed by the layer ids we are about to discard.
+    // Mask images are state-owned (see [setLayerMask]) so dispose them
+    // here — otherwise each `loadFromBytes` would leak GPU textures
+    // for the masks of the layers that are being replaced.
+    _extendedBlendModes.clear();
+    _disposeAllMasks();
+    _layerColorTags.clear();
+
+    // Detach loaded layers from `loadedRoot` (which itself is a freshly
+    // synthesized container) and attach them to our own _rootLayer so
+    // every existing reference to `_rootLayer` keeps pointing at a live
+    // node. The serializer doesn't preserve the root's NodeId — only
+    // the per-layer hierarchy below it — so adopting children is safe.
+    final loadedLayers =
+        loadedRoot.children.whereType<LayerNode>().toList(growable: false);
+    // Drop our existing default layer(s) but keep `_rootLayer` itself.
+    final existing =
+        _rootLayer.children.whereType<LayerNode>().toList(growable: false);
+    for (final l in existing) {
+      _rootLayer.remove(l);
+    }
+    // Adopt each loaded layer (detach from synthetic root, attach here).
+    for (final l in loadedLayers) {
+      // Detach from synthetic loadedRoot first.
+      loadedRoot.remove(l);
+      // Re-strip any stroke children: we own the flat-mirror invariant
+      // and rebuild it via _internalInsertStrokeAt below, so the layer
+      // arrives empty and we re-insert each stroke-node onto it.
+      final preloadedStrokes = l.children
+          .whereType<CanvasStrokeNode>()
+          .toList(growable: false);
+      for (final n in preloadedStrokes) {
+        l.remove(n);
+      }
+      _rootLayer.add(l);
+      // Re-insert the strokes onto this layer via the canonical path so
+      // _strokes / _spatialIndex / _strokeToNode stay in sync. We do it
+      // here instead of via `_internalInsertStrokeAt` (which targets
+      // `_activeLayer`) because we want strokes to land back on their
+      // original layer.
+      _activeLayer = l;
+      for (final n in preloadedStrokes) {
+        _strokeToNode[n.stroke] = n;
+        _strokes.add(n.stroke);
+        _spatialIndex.insert(n.stroke);
+        l.add(n);
+      }
+    }
+
+    // Pick the topmost (last inserted) layer as active — matches user
+    // expectation when re-opening a saved file: drawing continues on
+    // the layer that was on top.
+    final layers = _rootLayer.children.whereType<LayerNode>().toList();
+    if (layers.isEmpty) {
+      // Pathological: file had no layers. Re-create the default one so
+      // subsequent draws have a target.
+      final blank = LayerNode(id: NodeId(generateUid()), name: 'Layer 1');
+      _rootLayer.add(blank);
+      _activeLayer = blank;
+    } else {
+      _activeLayer = layers.last;
+    }
+
+    _extendedBlendModes.addAll(codes);
+
+    // Walk the freshly-adopted tree to (re)populate the selection /
+    // Z-order index in one O(N) pass. Patching incrementally inside
+    // the layer-adoption loop above would be brittle — a global
+    // rebuild after structural mutations is the cleanest invariant.
+    _rebuildSelectableIndex();
+
+    _livePoints = null;
+    _livePressures = null;
+    _commitTick.notify();
+    _history?.clear();
+  }
+
   /// Rasterize the current canvas (all strokes) into a PNG byte array sized
   /// [width]×[height] pixels. Respects the current camera for WYSIWYG export.
   Future<ui.Image> renderToImage({
@@ -2046,11 +2658,28 @@ class FlueraCanvasState extends State<FlueraCanvas>
     canvas.scale(_controller.scale);
     widget.background.paint(canvas, Rect.largest, _controller.scale);
     for (final s in _strokes) {
-      canvas.drawPicture(s.picture());
+      _drawStrokeWithTransform(canvas, s);
     }
     canvas.restore();
     final picture = recorder.endRecording();
     return picture.toImage(width, height);
+  }
+
+  /// Paint [s] into [canvas], honouring its scene-graph node's
+  /// `localTransform` if non-identity. Hot path for the committed
+  /// painter — the identity check spares a `save/transform/restore`
+  /// triple for the >99% common case where strokes haven't been
+  /// transformed yet.
+  void _drawStrokeWithTransform(Canvas canvas, CanvasStroke s) {
+    final node = _strokeToNode[s];
+    if (node == null || node.isIdentityTransform) {
+      canvas.drawPicture(s.picture());
+      return;
+    }
+    canvas.save();
+    canvas.transform(node.localTransform.storage);
+    canvas.drawPicture(s.picture());
+    canvas.restore();
   }
 
   Rect _viewportFromSize(Size size) {
@@ -2131,13 +2760,23 @@ class FlueraCanvasState extends State<FlueraCanvas>
       ],
     );
 
-    Widget detector = InfiniteCanvasGestureDetector(
-      controller: _controller,
-      onDrawStart: _onDrawStart,
-      onDrawUpdate: _onDrawUpdate,
-      onDrawEnd: _onDrawEnd,
-      onDrawCancel: _onDrawCancel,
-      child: gestureChild,
+    // Wrap the gesture detector in a LayoutBuilder so we always know
+    // the gesture-area size — the edge-pan controller needs it to
+    // figure out where the viewport edges are. Cheap (a single
+    // build per resize event); the constraints rebuild propagates
+    // ONLY into the small builder return, not the whole tree.
+    Widget detector = LayoutBuilder(
+      builder: (ctx, constraints) {
+        _gestureViewportSize = Size(constraints.maxWidth, constraints.maxHeight);
+        return InfiniteCanvasGestureDetector(
+          controller: _controller,
+          onDrawStart: _onDrawStart,
+          onDrawUpdate: _onDrawUpdate,
+          onDrawEnd: _onDrawEnd,
+          onDrawCancel: _onDrawCancel,
+          child: gestureChild,
+        );
+      },
     );
 
     // Desktop cursor + eraser-hover preview. On mobile (Android / iOS) we
@@ -2211,6 +2850,49 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// `CanvasStrokeNode` appended to [_activeLayer] at the equivalent
   /// position. Keeps the spatial index, the flat mirror and the scene
   /// graph atomically consistent.
+  /// Walks `_rootLayer` DFS and rebuilds [_selectableNodes] +
+  /// [_zOrderIndex] from scratch. Used after any operation that
+  /// mutates the layer tree at a non-trivial scale (clear, load,
+  /// remove layer, undo / redo of a multi-node op). For single-node
+  /// inserts / removes the helpers below patch the index in place
+  /// to avoid the O(N) walk.
+  void _rebuildSelectableIndex() {
+    _selectableNodes.clear();
+    _zOrderIndex.clear();
+    var z = 0;
+    void visit(CanvasNode node) {
+      // Layers themselves aren't selectable (they're containers); only
+      // their concrete children are. We still walk into them so the
+      // Z counter increments DFS-style.
+      if (node is! GroupNode) {
+        _selectableNodes[node.id] = node;
+        _zOrderIndex[node.id] = z++;
+      }
+      if (node is GroupNode) {
+        for (final c in node.children) {
+          visit(c);
+        }
+      }
+    }
+    visit(_rootLayer);
+  }
+
+  /// Cheap incremental: register [node] as selectable and stamp its
+  /// Z-order at the current top of the index. Used by single-insert
+  /// paths; for batched ops or undo of multi-node ops, prefer
+  /// [_rebuildSelectableIndex] which gets the Z-order globally
+  /// consistent.
+  void _registerSelectable(CanvasNode node) {
+    _selectableNodes[node.id] = node;
+    final maxZ = _zOrderIndex.values.fold<int>(-1, (a, b) => a > b ? a : b);
+    _zOrderIndex[node.id] = maxZ + 1;
+  }
+
+  void _unregisterSelectable(NodeId id) {
+    _selectableNodes.remove(id);
+    _zOrderIndex.remove(id);
+  }
+
   void _internalInsertStrokeAt(int index, CanvasStroke s) {
     if (index < 0) index = 0;
     if (index > _strokes.length) index = _strokes.length;
@@ -2219,6 +2901,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
     final node = _strokeToNode[s] ??
         CanvasStrokeNode(id: NodeId(generateUid()), stroke: s);
     _strokeToNode[s] = node;
+    _registerSelectable(node);
     // For now (Phase A) every stroke lives in the active layer at the
     // same Z-index as in the flat list. Future multi-layer work will
     // route this through a `Map<CanvasStroke, LayerNode>` to support
@@ -2243,8 +2926,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _strokes.remove(s);
     _spatialIndex.remove(s);
     final node = _strokeToNode.remove(s);
-    if (node != null && node.parent is LayerNode) {
-      (node.parent! as LayerNode).remove(node);
+    if (node != null) {
+      _unregisterSelectable(node.id);
+      if (node.parent is LayerNode) {
+        (node.parent! as LayerNode).remove(node);
+      }
     }
   }
 
@@ -2255,13 +2941,17 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _strokes.clear();
     _strokeToNode.clear();
     // Preserve layer structure (ids + visibility / opacity) — only
-    // detach the stroke nodes. Phase B (layer ops) will revisit this
-    // to also handle non-stroke children (text / image) once those
-    // can land in the canvas.
+    // detach the stroke nodes. Image / text / shape children stay so
+    // a partial "clear strokes" is a meaningful 0.7.0 op (the public
+    // `clear()` invokes the historical _ClearOp which only snapshots
+    // the flat strokes list anyway).
     for (final layer in _rootLayer.children.whereType<LayerNode>()) {
       final children = List<CanvasNode>.from(layer.children);
       for (final c in children) {
-        if (c is CanvasStrokeNode) layer.remove(c);
+        if (c is CanvasStrokeNode) {
+          layer.remove(c);
+          _unregisterSelectable(c.id);
+        }
       }
     }
   }
@@ -2396,7 +3086,7 @@ class _CommittedStrokesPainter extends CustomPainter {
         layers.first.blendMode != ui.BlendMode.srcOver;
     if (!hasNonTrivialLayer) {
       for (final s in visibleStrokes) {
-        canvas.drawPicture(s.picture());
+        canvasState._drawStrokeWithTransform(canvas, s);
       }
       // ImageNodes (and future non-stroke node types) live on the
       // active layer too; render them after strokes so images appear
@@ -2473,11 +3163,38 @@ class _CommittedStrokesPainter extends CustomPainter {
         if (layerStrokes.isEmpty && layerImages.isEmpty) continue;
         void paintLayer(ui.Canvas c) {
           for (final s in layerStrokes) {
-            c.drawPicture(s.picture());
+            canvasState._drawStrokeWithTransform(c, s);
           }
           for (final n in layerImages) {
             ImageNodePainter.paint(c, n);
           }
+        }
+        // Resolve the optional alpha mask. The compositor takes mask
+        // in the GPU shader path; for the canvas-core fallback we
+        // wrap `paintLayer` in a saveLayer + `BlendMode.dstIn` blit
+        // of the mask image so the same visual rule (foreground
+        // alpha multiplied by mask alpha) holds without any shader.
+        final layerMask = canvasState._layerMasks[layer.id];
+        void paintLayerWithMaskFallback(ui.Canvas c) {
+          if (layerMask == null) {
+            paintLayer(c);
+            return;
+          }
+          c.saveLayer(layerRect, Paint());
+          paintLayer(c);
+          // dstIn keeps fg pixels only where mask alpha > 0.
+          c.drawImageRect(
+            layerMask,
+            Rect.fromLTWH(
+              0,
+              0,
+              layerMask.width.toDouble(),
+              layerMask.height.toDouble(),
+            ),
+            layerRect,
+            Paint()..blendMode = BlendMode.dstIn,
+          );
+          c.restore();
         }
         // Resolve the FlueraBlendMode from the canvas-state side-table.
         // When the layer is on a standard mode the side-table is empty
@@ -2494,57 +3211,88 @@ class _CommittedStrokesPainter extends CustomPainter {
           // composited result so subsequent layers see it as their
           // own backdrop.
           final bgPicture = bgRecorder!.endRecording();
+          final pxW = (layerRect.width * ctrl.scale * dpr).ceil();
+          final pxH = (layerRect.height * ctrl.scale * dpr).ceil();
           // toImageSync rasterises in-thread, on the GPU surface — no
           // event-loop bounce, so it is safe to call from a paint pass.
-          final bgImage = bgPicture.toImageSync(
-            (layerRect.width * ctrl.scale * dpr).ceil(),
-            (layerRect.height * ctrl.scale * dpr).ceil(),
-          );
-          // Draw to the user-visible canvas using the shader.
-          compositor.compositeLayerExtended(
-            canvas,
+          final bgImage = bgPicture.toImageSync(pxW, pxH);
+          final fgPxSize = ui.Size(pxW.toDouble(), pxH.toDouble());
+
+          // Prefer `blendExtendedToImage` so the result image can be
+          // reused as the running backdrop for any subsequent extended
+          // layer — that's what keeps a chain of extended modes
+          // pixel-accurate instead of drifting onto the closest-
+          // standard substitute at every chain step.
+          final resultImage = compositor.blendExtendedToImage(
             opacity: layer.opacity,
             layerRect: layerRect,
             paintStrokes: paintLayer,
             extendedBlendModeCode: extCode,
             backdrop: bgImage,
-            foregroundImageSize: ui.Size(
-              (layerRect.width * ctrl.scale * dpr).ceilToDouble(),
-              (layerRect.height * ctrl.scale * dpr).ceilToDouble(),
-            ),
+            foregroundImageSize: fgPxSize,
             devicePixelRatio: dpr,
+            mask: layerMask,
           );
-          // Update the running backdrop: re-open a fresh recorder and
-          // replay the composited pixels into it. Since we already drew
-          // them onto `canvas`, we mirror the same op onto bgCanvas
-          // through the same compositor call. The simplest correct
-          // approach is to draw the bgImage we already have, then over
-          // it draw the layer foreground via the standard saveLayer
-          // path with the closestStandard fallback — this keeps the
-          // backdrop "good enough" for any subsequent extended layer.
-          // For perfect chaining of multiple extended layers, the
-          // commercial compositor would re-run the shader; that
-          // refinement lives in Stage 2B+.
-          bgRecorder = ui.PictureRecorder();
-          bgCanvas = ui.Canvas(bgRecorder, layerRect);
-          bgCanvas.translate(ctrl.offset.dx, ctrl.offset.dy);
-          bgCanvas.scale(ctrl.scale);
-          // Re-draw prior backdrop:
-          bgCanvas.save();
-          bgCanvas.scale(1.0 / (ctrl.scale * dpr));
-          // Backdrop image is already in screen-space pixels — undo the
-          // earlier transforms before drawing.
-          bgCanvas.translate(-ctrl.offset.dx * dpr, -ctrl.offset.dy * dpr);
-          bgCanvas.drawImage(bgImage, ui.Offset.zero, Paint());
-          bgCanvas.restore();
-          // Now overlay the foreground via closestStandard so a chain
-          // of extended layers stays approximately correct.
-          final fallbackPaint = Paint()
-            ..color = ui.Color.fromRGBO(0, 0, 0, layer.opacity)
-            ..blendMode = flueraMode.closestStandard;
-          bgCanvas.saveLayer(layerRect, fallbackPaint);
-          paintLayer(bgCanvas);
-          bgCanvas.restore();
+
+          if (resultImage != null) {
+            // ── Pixel-accurate chaining path ──────────────────────────
+            // 1. Blit the shader output onto the user canvas.
+            canvas.save();
+            canvas.translate(layerRect.left, layerRect.top);
+            canvas.scale(layerRect.width / pxW);
+            canvas.drawImage(
+              resultImage,
+              Offset.zero,
+              _alphaPaint(layer.opacity),
+            );
+            canvas.restore();
+            // 2. Replace the running backdrop with the SAME result
+            //    image (no closestStandard mirror). Subsequent
+            //    extended layers now see the exact pixels the user
+            //    sees, so the chain stays pixel-accurate.
+            bgRecorder = ui.PictureRecorder();
+            bgCanvas = ui.Canvas(bgRecorder, layerRect);
+            bgCanvas.translate(ctrl.offset.dx, ctrl.offset.dy);
+            bgCanvas.scale(ctrl.scale);
+            bgCanvas.save();
+            bgCanvas.scale(1.0 / (ctrl.scale * dpr));
+            bgCanvas.translate(-ctrl.offset.dx * dpr, -ctrl.offset.dy * dpr);
+            bgCanvas.drawImage(resultImage, Offset.zero, Paint());
+            bgCanvas.restore();
+            resultImage.dispose();
+          } else {
+            // Fallback path — compositor declined to return an image.
+            // Unreachable when `supportsBackdropAwareBlend` is true,
+            // but stays here as a safety net so a future compositor
+            // can opt out of returning the image without breaking
+            // rendering.
+            compositor.compositeLayerExtended(
+              canvas,
+              opacity: layer.opacity,
+              layerRect: layerRect,
+              paintStrokes: paintLayer,
+              extendedBlendModeCode: extCode,
+              backdrop: bgImage,
+              foregroundImageSize: fgPxSize,
+              devicePixelRatio: dpr,
+              mask: layerMask,
+            );
+            bgRecorder = ui.PictureRecorder();
+            bgCanvas = ui.Canvas(bgRecorder, layerRect);
+            bgCanvas.translate(ctrl.offset.dx, ctrl.offset.dy);
+            bgCanvas.scale(ctrl.scale);
+            bgCanvas.save();
+            bgCanvas.scale(1.0 / (ctrl.scale * dpr));
+            bgCanvas.translate(-ctrl.offset.dx * dpr, -ctrl.offset.dy * dpr);
+            bgCanvas.drawImage(bgImage, Offset.zero, Paint());
+            bgCanvas.restore();
+            bgCanvas.saveLayer(
+              layerRect,
+              _alphaPaint(layer.opacity, flueraMode.closestStandard),
+            );
+            paintLayer(bgCanvas);
+            bgCanvas.restore();
+          }
           bgImage.dispose();
         } else if (compositor != null) {
           // Standard path through the compositor. Layer is either on
@@ -2558,23 +3306,26 @@ class _CommittedStrokesPainter extends CustomPainter {
             layerRect: layerRect,
             paintStrokes: paintLayer,
             extendedBlendModeCode: extCode,
+            mask: layerMask,
           );
           if (useBackdropPath) {
             // Mirror the paint into the running backdrop so the next
-            // extended layer sees this layer's contribution.
-            final paint = Paint()
-              ..color = ui.Color.fromRGBO(0, 0, 0, layer.opacity)
-              ..blendMode = layer.blendMode;
-            bgCanvas!.saveLayer(layerRect, paint);
-            paintLayer(bgCanvas);
+            // extended layer sees this layer's contribution. The
+            // mask (if any) is applied via the dstIn fallback so
+            // the running backdrop reflects the masked foreground.
+            bgCanvas!.saveLayer(
+              layerRect,
+              _alphaPaint(layer.opacity, layer.blendMode),
+            );
+            paintLayerWithMaskFallback(bgCanvas);
             bgCanvas.restore();
           }
         } else {
-          final paint = Paint()
-            ..color = ui.Color.fromRGBO(0, 0, 0, layer.opacity)
-            ..blendMode = layer.blendMode;
-          canvas.saveLayer(layerRect, paint);
-          paintLayer(canvas);
+          canvas.saveLayer(
+            layerRect,
+            _alphaPaint(layer.opacity, layer.blendMode),
+          );
+          paintLayerWithMaskFallback(canvas);
           canvas.restore();
         }
       }
@@ -2627,15 +3378,28 @@ class _CommittedStrokesPainter extends CustomPainter {
   bool shouldRepaint(covariant _CommittedStrokesPainter old) => false;
 
   /// True iff at least one of [layers] is on an extended (Photoshop-grade)
-  /// blend mode in the canvas-state side-table. We cache nothing — the
-  /// `_extendedBlendModes` map is small (≤ N layers) and this scan is
-  /// O(N) which is dwarfed by anything else in the paint pass.
+  /// blend mode in the canvas-state side-table. Short-circuits when the
+  /// side-table is empty so the common case (no extended modes) avoids
+  /// touching the per-layer blend lookup at all.
   bool _anyExtendedLayer(List<LayerNode> layers, FlueraCanvasState state) {
+    if (state._extendedBlendModes.isEmpty) return false;
     for (final l in layers) {
       if (state.flueraBlendModeFor(l).isExtended) return true;
     }
     return false;
   }
+}
+
+/// Helper for the painter: build a `Paint` whose only effect is an alpha
+/// multiplier. Used as the wrapping paint for `saveLayer` calls and for
+/// the post-shader image blit — both forms repeat the same idiom enough
+/// times that the inlined `Paint()..color = Color.fromRGBO(0, 0, 0, a)`
+/// became noisy. Optional [blendMode] for the saveLayer-with-blend
+/// variant.
+ui.Paint _alphaPaint(double opacity, [ui.BlendMode? blendMode]) {
+  final p = ui.Paint()..color = ui.Color.fromRGBO(0, 0, 0, opacity);
+  if (blendMode != null) p.blendMode = blendMode;
+  return p;
 }
 
 /// Paints ONLY the live stroke. Permanently mounted in the widget tree
@@ -2988,11 +3752,13 @@ class _AddLayerOp implements _CanvasOp {
       final remaining = s._rootLayer.children.whereType<LayerNode>();
       s._activeLayer = remaining.last;
     }
+    s._rebuildSelectableIndex();
   }
 
   @override
   void redo(FlueraCanvasState s) {
     s._rootLayer.insertAt(index, layer);
+    s._rebuildSelectableIndex();
   }
 }
 
@@ -3024,6 +3790,7 @@ class _RemoveLayerOp implements _CanvasOp {
       s._strokeToNode[snap.stroke] = snap.node;
     }
     if (activeWasTarget) s._activeLayer = layer;
+    s._rebuildSelectableIndex();
   }
 
   @override
@@ -3038,6 +3805,160 @@ class _RemoveLayerOp implements _CanvasOp {
       final remaining = s._rootLayer.children.whereType<LayerNode>();
       s._activeLayer = remaining.last;
     }
+    s._rebuildSelectableIndex();
+  }
+}
+
+class _MergeDownOp implements _CanvasOp {
+  _MergeDownOp(
+    this.upper,
+    this.upperIndex,
+    this.snapshots,
+    this.activeWasUpper,
+  );
+
+  /// The layer that was merged DOWN — at the time of `mergeDown` we
+  /// detached its stroke-nodes and removed the empty header. Undo
+  /// re-inserts the layer header and re-parents every stroke-node
+  /// onto it.
+  final LayerNode upper;
+  final int upperIndex;
+  final List<_LayerStrokeSnapshot> snapshots;
+  final bool activeWasUpper;
+
+  @override
+  void undo(FlueraCanvasState s) {
+    // Re-insert the upper layer at its original Z-order.
+    s._rootLayer.insertAt(upperIndex, upper);
+    // Move each stroke-node back from the lower layer to the upper.
+    // Walk in reverse so the same Z-order is restored.
+    final sorted = List<_LayerStrokeSnapshot>.from(snapshots);
+    for (final snap in sorted) {
+      final lower = snap.node.parent as LayerNode?;
+      lower?.remove(snap.node);
+      upper.add(snap.node);
+    }
+    s._rebuildFlatStrokesFromLayers();
+    if (activeWasUpper) s._activeLayer = upper;
+  }
+
+  @override
+  void redo(FlueraCanvasState s) {
+    final layers = s._rootLayer.children.whereType<LayerNode>().toList();
+    if (upperIndex <= 0 || upperIndex >= layers.length) return;
+    final lower = layers[upperIndex - 1];
+    final movedNodes = upper.children
+        .whereType<CanvasStrokeNode>()
+        .toList(growable: false);
+    for (final node in movedNodes) {
+      upper.remove(node);
+      lower.add(node);
+    }
+    s._rootLayer.remove(upper);
+    s._rebuildFlatStrokesFromLayers();
+    if (activeWasUpper) s._activeLayer = lower;
+  }
+}
+
+class _FlattenLayerSnapshot {
+  _FlattenLayerSnapshot({
+    required this.layer,
+    required this.originalIndex,
+    required this.strokes,
+  });
+
+  /// The layer header that was dropped during flatten.
+  final LayerNode layer;
+
+  /// Z-position the layer occupied in `_rootLayer.children` before
+  /// flatten — undo re-inserts the layer at the same index.
+  final int originalIndex;
+
+  /// Per-stroke flat-list snapshots at the moment of flatten. Visible
+  /// layers had their strokes appended to `bottom`; hidden layers had
+  /// their strokes removed from the spatial index entirely. Undo
+  /// reverses both branches by re-attaching the stroke-nodes to
+  /// [layer] and re-inserting them into the spatial index.
+  final List<_LayerStrokeSnapshot> strokes;
+}
+
+class _FlattenOp implements _CanvasOp {
+  _FlattenOp(this.snapshots, this.extendedOnDrop, this.activeWasNonBottom);
+  final List<_FlattenLayerSnapshot> snapshots;
+  final Map<NodeId, FlueraBlendMode> extendedOnDrop;
+  final bool activeWasNonBottom;
+
+  @override
+  void undo(FlueraCanvasState s) {
+    // Re-attach every dropped layer at its original Z-order, then
+    // move each snapshotted stroke-node back onto its layer. After
+    // all moves the bottom layer regains its original (pre-flatten)
+    // child set. The flat-list mirror is rebuilt from the tree.
+    final layersInOrder = List<_FlattenLayerSnapshot>.from(snapshots)
+      ..sort((a, b) => a.originalIndex.compareTo(b.originalIndex));
+    for (final pack in layersInOrder) {
+      // Re-insert at original index — children are positions among
+      // LayerNode siblings; insertAt operates on raw children, but
+      // since LayerNodes are the only children of `_rootLayer` the
+      // index is equivalent.
+      s._rootLayer.insertAt(pack.originalIndex, pack.layer);
+      for (final snap in pack.strokes) {
+        // If the node was previously moved onto the bottom layer
+        // (visible-flatten branch), detach it from there before
+        // re-attaching.
+        final currentParent = snap.node.parent;
+        if (currentParent is LayerNode && currentParent != pack.layer) {
+          currentParent.remove(snap.node);
+        }
+        if (snap.node.parent != pack.layer) {
+          pack.layer.add(snap.node);
+        }
+        // Re-insert into spatial index for layers that were hidden
+        // (their strokes were removed during flatten).
+        if (!s._strokeToNode.containsKey(snap.stroke)) {
+          s._spatialIndex.insert(snap.stroke);
+          s._strokeToNode[snap.stroke] = snap.node;
+        }
+      }
+    }
+    s._extendedBlendModes.addAll(extendedOnDrop);
+    s._rebuildFlatStrokesFromLayers();
+    if (activeWasNonBottom) {
+      // Best-effort: restore active to the topmost re-attached layer.
+      final layers = s._rootLayer.children.whereType<LayerNode>().toList();
+      if (layers.isNotEmpty) s._activeLayer = layers.last;
+    }
+  }
+
+  @override
+  void redo(FlueraCanvasState s) {
+    final layers = s._rootLayer.children.whereType<LayerNode>().toList();
+    if (layers.length <= 1) return;
+    final bottom = layers.first;
+    // Re-apply: drop every non-bottom layer, transferring visible
+    // strokes to the bottom and removing hidden ones from the
+    // spatial index.
+    for (int i = 1; i < layers.length; i++) {
+      final src = layers[i];
+      final movedNodes =
+          src.children.whereType<CanvasStrokeNode>().toList(growable: false);
+      if (src.isVisible) {
+        for (final node in movedNodes) {
+          src.remove(node);
+          bottom.add(node);
+        }
+      } else {
+        for (final node in movedNodes) {
+          src.remove(node);
+          s._spatialIndex.remove(node.stroke);
+          s._strokeToNode.remove(node.stroke);
+        }
+      }
+      s._extendedBlendModes.remove(src.id);
+      s._rootLayer.remove(src);
+    }
+    s._activeLayer = bottom;
+    s._rebuildFlatStrokesFromLayers();
   }
 }
 
@@ -3163,6 +4084,7 @@ class _TransformNodesOp implements _CanvasOp {
       final m = snapshots[entry.value.id];
       if (m == null) continue;
       entry.value.localTransform = m.clone();
+      entry.value.invalidateTransformCache();
     }
     s._refreshSelectionBoundsAfterTransform();
   }
@@ -3191,6 +4113,7 @@ class _AddLayerChildOp implements _CanvasOp {
     final layer = s._findLayer(layerId);
     if (layer == null) return;
     layer.remove(node);
+    s._unregisterSelectable(node.id);
     s._commitTick.notify();
   }
 
@@ -3203,6 +4126,7 @@ class _AddLayerChildOp implements _CanvasOp {
     } else {
       layer.insertAt(index, node);
     }
+    s._registerSelectable(node);
     s._commitTick.notify();
   }
 }
