@@ -526,6 +526,13 @@ class FlueraCanvasState extends State<FlueraCanvas>
   late final bool _ownsController;
   late final NativeStrokeOverlayController _nativeOverlay;
 
+  /// Read-only access to the camera controller. Exposed so multi-page
+  /// export pickers (and any consumer overlay that needs to follow
+  /// the camera) can subscribe without reaching into the private
+  /// `_controller` field. Mutating the controller from outside the
+  /// canvas is supported — it already exposes its own setters.
+  InfiniteCanvasController get controller => _controller;
+
   /// Committed strokes, in draw order (back-to-front).
   ///
   /// This flat list is the **hot-path mirror** of the scene graph:
@@ -800,7 +807,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
       }
     });
     if (widget.historyCapacity > 0) {
-      _history = _CanvasHistory(capacity: widget.historyCapacity);
+      _history = _CanvasHistory(
+        capacity: widget.historyCapacity,
+        state: this,
+      );
     }
     if (widget.enableKeyboardShortcuts) {
       _focusNode = FocusNode(debugLabel: 'FlueraCanvas');
@@ -899,9 +909,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
     }
     if (oldWidget.historyCapacity != widget.historyCapacity) {
       if (widget.historyCapacity > 0) {
-        _history =
-            (_history ?? _CanvasHistory(capacity: widget.historyCapacity))
-              ..capacity = widget.historyCapacity;
+        _history = (_history ??
+            _CanvasHistory(capacity: widget.historyCapacity, state: this))
+          ..capacity = widget.historyCapacity
+          ..state = this;
       } else {
         _history = null;
       }
@@ -3709,9 +3720,18 @@ class _KeyboardShortcuts extends StatelessWidget {
 abstract class _CanvasOp {
   void undo(FlueraCanvasState s);
   void redo(FlueraCanvasState s);
+
+  /// Called by [_CanvasHistory] when this op falls off the ring buffer
+  /// (history capacity exceeded). The op no longer reachable via undo
+  /// owns whatever GPU resources its snapshot retains — `ui.Picture`
+  /// caches on stroke nodes that won't be redrawn, decoded `ui.Image`
+  /// handles on image nodes that aren't referenced elsewhere — and is
+  /// the right place to release them. Default no-op so existing ops
+  /// don't have to opt in.
+  void onEvicted(FlueraCanvasState s) {}
 }
 
-class _AddOp implements _CanvasOp {
+class _AddOp extends _CanvasOp {
   _AddOp(this.stroke, this.index);
   final CanvasStroke stroke;
   final int index;
@@ -3723,7 +3743,7 @@ class _AddOp implements _CanvasOp {
   void redo(FlueraCanvasState s) => s._internalInsertStrokeAt(index, stroke);
 }
 
-class _AddBatchOp implements _CanvasOp {
+class _AddBatchOp extends _CanvasOp {
   _AddBatchOp(this.strokes, this.indexes);
   final List<CanvasStroke> strokes;
   final List<int> indexes;
@@ -3743,7 +3763,7 @@ class _AddBatchOp implements _CanvasOp {
   }
 }
 
-class _EraseOp implements _CanvasOp {
+class _EraseOp extends _CanvasOp {
   _EraseOp(this.strokes, Map<CanvasStroke, int> indexes)
     : indexes = Map.of(indexes);
   final List<CanvasStroke> strokes;
@@ -3768,7 +3788,7 @@ class _EraseOp implements _CanvasOp {
   }
 }
 
-class _ClearOp implements _CanvasOp {
+class _ClearOp extends _CanvasOp {
   _ClearOp(this.snapshot);
   final List<CanvasStroke> snapshot;
 
@@ -3797,7 +3817,7 @@ class _PixelEraseRecord {
   final List<CanvasStroke> survivors;
 }
 
-class _PixelEraseOp implements _CanvasOp {
+class _PixelEraseOp extends _CanvasOp {
   _PixelEraseOp(List<_PixelEraseRecord> records, List<CanvasStroke> survivors)
     : _records = List<_PixelEraseRecord>.from(records),
       _survivors = List<CanvasStroke>.from(survivors);
@@ -3848,7 +3868,7 @@ class _LayerStrokeSnapshot {
   final int flatIndex;
 }
 
-class _AddLayerOp implements _CanvasOp {
+class _AddLayerOp extends _CanvasOp {
   _AddLayerOp(this.layer, this.index);
   final LayerNode layer;
   final int index;
@@ -3870,7 +3890,7 @@ class _AddLayerOp implements _CanvasOp {
   }
 }
 
-class _RemoveLayerOp implements _CanvasOp {
+class _RemoveLayerOp extends _CanvasOp {
   _RemoveLayerOp(
     this.layer,
     this.layerIndex,
@@ -3917,7 +3937,7 @@ class _RemoveLayerOp implements _CanvasOp {
   }
 }
 
-class _MergeDownOp implements _CanvasOp {
+class _MergeDownOp extends _CanvasOp {
   _MergeDownOp(
     this.upper,
     this.upperIndex,
@@ -3990,7 +4010,7 @@ class _FlattenLayerSnapshot {
   final List<_LayerStrokeSnapshot> strokes;
 }
 
-class _FlattenOp implements _CanvasOp {
+class _FlattenOp extends _CanvasOp {
   _FlattenOp(this.snapshots, this.extendedOnDrop, this.activeWasNonBottom);
   final List<_FlattenLayerSnapshot> snapshots;
   final Map<NodeId, FlueraBlendMode> extendedOnDrop;
@@ -4070,7 +4090,7 @@ class _FlattenOp implements _CanvasOp {
   }
 }
 
-class _ReorderLayerOp implements _CanvasOp {
+class _ReorderLayerOp extends _CanvasOp {
   _ReorderLayerOp(this.layerId, this.fromIndex, this.toIndex);
   final NodeId layerId;
   final int fromIndex;
@@ -4091,7 +4111,7 @@ class _ReorderLayerOp implements _CanvasOp {
   void redo(FlueraCanvasState s) => _move(s, fromIndex, toIndex);
 }
 
-class _LayerVisibleOp implements _CanvasOp {
+class _LayerVisibleOp extends _CanvasOp {
   _LayerVisibleOp(this.layerId, this.before, this.after);
   final NodeId layerId;
   final bool before;
@@ -4108,7 +4128,7 @@ class _LayerVisibleOp implements _CanvasOp {
   void redo(FlueraCanvasState s) => _set(s, after);
 }
 
-class _LayerLockedOp implements _CanvasOp {
+class _LayerLockedOp extends _CanvasOp {
   _LayerLockedOp(this.layerId, this.before, this.after);
   final NodeId layerId;
   final bool before;
@@ -4125,7 +4145,7 @@ class _LayerLockedOp implements _CanvasOp {
   void redo(FlueraCanvasState s) => _set(s, after);
 }
 
-class _LayerOpacityOp implements _CanvasOp {
+class _LayerOpacityOp extends _CanvasOp {
   _LayerOpacityOp(this.layerId, this.before, this.after);
   final NodeId layerId;
   final double before;
@@ -4142,7 +4162,7 @@ class _LayerOpacityOp implements _CanvasOp {
   void redo(FlueraCanvasState s) => _set(s, after);
 }
 
-class _LayerBlendModeOp implements _CanvasOp {
+class _LayerBlendModeOp extends _CanvasOp {
   _LayerBlendModeOp(this.layerId, this.before, this.after);
   final NodeId layerId;
   final BlendMode before;
@@ -4159,7 +4179,7 @@ class _LayerBlendModeOp implements _CanvasOp {
   void redo(FlueraCanvasState s) => _set(s, after);
 }
 
-class _LayerNameOp implements _CanvasOp {
+class _LayerNameOp extends _CanvasOp {
   _LayerNameOp(this.layerId, this.before, this.after);
   final NodeId layerId;
   final String before;
@@ -4179,7 +4199,7 @@ class _LayerNameOp implements _CanvasOp {
 /// Coalesced transform op (Phase C2). One drag of a handle, a body
 /// move, a rotate, or a `mirrorSelection` call collapses every per-node
 /// `localTransform` write into a single undoable step.
-class _TransformNodesOp implements _CanvasOp {
+class _TransformNodesOp extends _CanvasOp {
   _TransformNodesOp(Map<NodeId, Matrix4> before, Map<NodeId, Matrix4> after)
       : _before = Map<NodeId, Matrix4>.from(before),
         _after = Map<NodeId, Matrix4>.from(after);
@@ -4213,7 +4233,7 @@ class _TransformNodesOp implements _CanvasOp {
 /// `ui.Image` for an [ImageNode] is NOT evicted on undo — it stays
 /// in [ImageNodePainter] so a redo is instant; the cache is dropped
 /// only when the op falls off the history capacity ring buffer.
-class _AddLayerChildOp implements _CanvasOp {
+class _AddLayerChildOp extends _CanvasOp {
   _AddLayerChildOp(this.node, this.layerId, this.index);
   final CanvasNode node;
   final NodeId layerId;
@@ -4239,6 +4259,29 @@ class _AddLayerChildOp implements _CanvasOp {
     }
     s._registerSelectable(node);
     s._commitTick.notify();
+  }
+
+  @override
+  void onEvicted(FlueraCanvasState s) {
+    // The op held the only reachable handle to `node` while it sat
+    // on the redo stack (post-undo, awaiting a possible redo). Now
+    // that the op's been dropped, the node will never be redrawn.
+    // Release its GPU resources.
+    final n = node;
+    if (n is CanvasStrokeNode) {
+      n.stroke.dispose();
+    } else if (n is ImageNode) {
+      // Only evict if no LIVE ImageNode references the same path.
+      final path = n.imageElement.imagePath;
+      var stillReferenced = false;
+      for (final live in s._selectableNodes.values) {
+        if (live is ImageNode && live.imageElement.imagePath == path) {
+          stillReferenced = true;
+          break;
+        }
+      }
+      if (!stillReferenced) ImageNodePainter.evict(path);
+    }
   }
 }
 
@@ -4273,7 +4316,7 @@ class _DeletedNodeSnapshot {
 /// Generic multi-node deletion op (Phase 5). Replaces the
 /// stroke-only `_EraseOp` for the public `deleteSelection()` path.
 /// `_EraseOp` lives on for the pen-eraser flow.
-class _DeleteNodesOp implements _CanvasOp {
+class _DeleteNodesOp extends _CanvasOp {
   _DeleteNodesOp(this.snapshots);
   final List<_DeletedNodeSnapshot> snapshots;
 
@@ -4333,11 +4376,54 @@ class _DeleteNodesOp implements _CanvasOp {
     s._selectionController.clear();
     s._commitTick.notify();
   }
+
+  /// History evictor reached this op — undo / redo can no longer
+  /// resurrect the snapshot, so any GPU resources the snapshot
+  /// retained are dead weight. Strokes carry a cached `ui.Picture`
+  /// (released via `CanvasStroke.dispose`); images carry a decoded
+  /// `ui.Image` in [ImageNodePainter]'s process-wide cache, but ONLY
+  /// if no other live ImageNode references the same `imagePath`.
+  /// We check the live `_selectableNodes` to make that call.
+  @override
+  void onEvicted(FlueraCanvasState s) {
+    // Collect every imagePath still referenced by a live ImageNode
+    // somewhere in the canvas. Compared against once per snapshot —
+    // O(N + K) rather than O(K × N).
+    final livePaths = <String>{};
+    for (final node in s._selectableNodes.values) {
+      if (node is ImageNode) {
+        livePaths.add(node.imageElement.imagePath);
+      }
+    }
+    for (final snap in snapshots) {
+      if (snap.isStroke) {
+        // Release the cached `ui.Picture` — `picture()` rebuilds
+        // lazily, so this is safe even if some other code path
+        // surfaces the stroke later (unlikely after eviction).
+        (snap.node as CanvasStrokeNode).stroke.dispose();
+      } else if (snap.node is ImageNode) {
+        final path = (snap.node as ImageNode).imageElement.imagePath;
+        if (!livePaths.contains(path)) {
+          ImageNodePainter.evict(path);
+        }
+      }
+    }
+  }
 }
 
 class _CanvasHistory {
-  _CanvasHistory({required this.capacity});
+  _CanvasHistory({required this.capacity, this.state});
   int capacity;
+
+  /// Owning state. When non-null, [push] calls `op.onEvicted(state)`
+  /// on every op that falls off the ring buffer (capacity exceeded)
+  /// — that's where ops with disposable GPU resources (decoded
+  /// `ui.Image` handles in `_DeleteNodesOp`, picture caches in
+  /// `_PixelEraseOp`) get to release them. `null` keeps the field
+  /// optional so the legacy 2-arg `_CanvasHistory(capacity: ...)`
+  /// constructor still works in tests / one-off use.
+  FlueraCanvasState? state;
+
   final List<_CanvasOp> _undo = <_CanvasOp>[];
   final List<_CanvasOp> _redo = <_CanvasOp>[];
 
@@ -4347,9 +4433,20 @@ class _CanvasHistory {
 
   void push(_CanvasOp op) {
     _undo.add(op);
+    // The redo stack is becoming unreachable — release whatever
+    // resources the abandoned ops held. Doing it before clearing the
+    // list lets the ops see live `_selectableNodes` while deciding
+    // what to evict.
+    final s = state;
+    if (s != null) {
+      for (final dropped in _redo) {
+        dropped.onEvicted(s);
+      }
+    }
     _redo.clear();
     while (_undo.length > capacity) {
-      _undo.removeAt(0);
+      final dropped = _undo.removeAt(0);
+      if (s != null) dropped.onEvicted(s);
     }
   }
 
