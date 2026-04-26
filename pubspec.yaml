@@ -21,6 +21,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Cross-platform native file picker (Verified Publisher Flutter).
+  # Pulled only by `CanvasTool.image` / `showImageTool`. The free
+  # widget tree never touches it unless the consumer wires the image
+  # tool in.
+  file_selector: ^1.1.0
   meta: ^1.11.0
   vector_math: ^2.1.4
 

@@ -33,9 +33,14 @@ export 'src/canvas/fluera_canvas_widget.dart';
 export 'src/canvas/fluera_canvas_toolbar.dart';
 export 'src/canvas/fluera_color_picker_dialog.dart';
 export 'src/canvas/fluera_layer_panel.dart';
+export 'src/canvas/fluera_blend_mode.dart';
 export 'src/canvas/canvas_background.dart';
 export 'src/canvas/canvas_serializer.dart';
 export 'src/canvas/selection/canvas_selection.dart';
+export 'src/canvas/selection/transform_handles.dart'
+    show SelectionHandle, TransformMode, TransformMath;
+export 'src/canvas/tools/image_tool.dart';
+export 'src/rendering/canvas/image_node_painter.dart';
 
 // ─── DRAWING INPUT + FILTERS ───────────────────────────────────────────────
 

@@ -28,9 +28,11 @@ import './canvas_serializer.dart';
 import './infinite_canvas_controller.dart';
 import './infinite_canvas_gesture_detector.dart';
 import '../core/nodes/canvas_stroke_node.dart';
+import '../core/nodes/image_node.dart';
 import '../core/nodes/layer_node.dart';
 import '../core/scene_graph/canvas_node.dart';
 import '../core/scene_graph/node_id.dart';
+import '../rendering/canvas/image_node_painter.dart';
 import '../drawing/brush_config.dart';
 import '../rendering/native_stroke_overlay.dart';
 import '../rendering/gpu/gpu_stroke_backend.dart';
@@ -359,6 +361,13 @@ enum CanvasTool {
   /// [FlueraCanvasState.selectionListenable]. Future C2 work plugs the
   /// transform handles (move / rotate / scale / mirror) into this tool.
   select,
+
+  /// Imperative tool — the gesture pipeline is a no-op for this value.
+  /// The image entry point is `FlueraImageTool.pickAndCommit(context,
+  /// state)` which opens the platform-native picker and commits an
+  /// [ImageNode] on the active layer. The enum value exists so the
+  /// toolbar can show a dedicated segment / button for it.
+  image,
 }
 
 /// A ready-to-use infinite canvas widget.
@@ -836,6 +845,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
       case CanvasTool.erase:
       case CanvasTool.erasePixel:
       case CanvasTool.select:
+      case CanvasTool.image:
         return <Offset>[anchor, current];
     }
   }
@@ -1660,6 +1670,21 @@ class FlueraCanvasState extends State<FlueraCanvas>
     return count;
   }
 
+  // ── Image API (Phase D) ───────────────────────────────────────────────────
+
+  /// Append [node] to the active layer as a single undoable step.
+  /// Use `FlueraImageTool.pickAndCommit(...)` for the typical
+  /// "open file picker → decode → commit" flow; this method is the
+  /// imperative seam underneath it, also useful for paste / drag-drop /
+  /// network-image workflows.
+  ImageNode addImageNode(ImageNode node) {
+    final index = _activeLayer.children.length;
+    _activeLayer.add(node);
+    _history?.push(_AddLayerChildOp(node, _activeLayer.id, index));
+    _commitTick.notify();
+    return node;
+  }
+
   /// Listenable that fires whenever the canvas commits something the
   /// committed-strokes painter cares about: new stroke, eraser, clear,
   /// undo / redo, and any layer mutation (`addLayer`, `removeLayer`,
@@ -2175,6 +2200,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
       case CanvasTool.erasePixel:
         return SystemMouseCursors.none; // preview circle *is* the cursor
       case CanvasTool.select:
+      case CanvasTool.image:
         return SystemMouseCursors.basic;
     }
   }
@@ -2372,6 +2398,15 @@ class _CommittedStrokesPainter extends CustomPainter {
       for (final s in visibleStrokes) {
         canvas.drawPicture(s.picture());
       }
+      // ImageNodes (and future non-stroke node types) live on the
+      // active layer too; render them after strokes so images appear
+      // on top of strokes inside the same layer (matches the layer
+      // children Z-order — stroke commits append, image commits
+      // append, so the relative order in `layer.children` is the
+      // chronological commit order).
+      for (final child in layers.first.children) {
+        if (child is ImageNode) ImageNodePainter.paint(canvas, child);
+      }
     } else {
       // Bucket the on-screen strokes by their owning layer so we paint
       // each layer in one `saveLayer` pass. The bucketing is O(N) on
@@ -2393,22 +2428,55 @@ class _CommittedStrokesPainter extends CustomPainter {
       // the built-in `Canvas.saveLayer` path when no compositor is
       // registered.
       final compositor = FlueraCanvasGpu.layerCompositor;
+
+      // Detect if any visible layer is on an extended (Photoshop-grade)
+      // blend mode AND the compositor opted into the backdrop-aware
+      // path. Only then do we pay for the parallel "running backdrop"
+      // recorder — otherwise stay on the cheap single-canvas path.
+      final useBackdropPath = compositor != null &&
+          compositor.supportsBackdropAwareBlend &&
+          _anyExtendedLayer(layers, canvasState);
+
+      // Parallel recorder used to keep a running backdrop image. We
+      // mirror every layer paint into this recorder; when an extended
+      // layer is reached the compositor consumes a snapshot of it.
+      ui.PictureRecorder? bgRecorder;
+      ui.Canvas? bgCanvas;
+      if (useBackdropPath) {
+        bgRecorder = ui.PictureRecorder();
+        bgCanvas = ui.Canvas(bgRecorder, layerRect);
+        // Match the camera transform of the main canvas so backdrop
+        // pixels line up with foreground pixels in the shader.
+        bgCanvas.translate(ctrl.offset.dx, ctrl.offset.dy);
+        bgCanvas.scale(ctrl.scale);
+      }
+
+      // Output pixel size of every backdrop snapshot we hand to the
+      // shader: the layerRect under the current camera, scaled by DPR.
+      final dpr = ui.PlatformDispatcher.instance.views.first.devicePixelRatio;
+
       for (final layer in layers) {
         if (!layer.isVisible) continue;
         // Find strokes belonging to this layer by walking its children
         // (CanvasStrokeNode → underlying CanvasStroke). The strokes are
         // small, the layers are few — linear scan is fine.
         final layerStrokes = <CanvasStroke>[];
+        final layerImages = <ImageNode>[];
         for (final child in layer.children) {
           if (child is CanvasStrokeNode &&
               visibleSet[child.stroke] == true) {
             layerStrokes.add(child.stroke);
+          } else if (child is ImageNode) {
+            layerImages.add(child);
           }
         }
-        if (layerStrokes.isEmpty) continue;
+        if (layerStrokes.isEmpty && layerImages.isEmpty) continue;
         void paintLayer(ui.Canvas c) {
           for (final s in layerStrokes) {
             c.drawPicture(s.picture());
+          }
+          for (final n in layerImages) {
+            ImageNodePainter.paint(c, n);
           }
         }
         // Resolve the FlueraBlendMode from the canvas-state side-table.
@@ -2418,7 +2486,71 @@ class _CommittedStrokesPainter extends CustomPainter {
         // compositor can dispatch to a custom shader.
         final flueraMode = canvasState.flueraBlendModeFor(layer);
         final extCode = flueraMode.isExtended ? flueraMode.code : null;
-        if (compositor != null) {
+
+        if (useBackdropPath && extCode != null) {
+          // Backdrop-aware extended-blend path. Snapshot the running
+          // backdrop, hand both backdrop + paintStrokes to the
+          // compositor, then update the running backdrop with the
+          // composited result so subsequent layers see it as their
+          // own backdrop.
+          final bgPicture = bgRecorder!.endRecording();
+          // toImageSync rasterises in-thread, on the GPU surface — no
+          // event-loop bounce, so it is safe to call from a paint pass.
+          final bgImage = bgPicture.toImageSync(
+            (layerRect.width * ctrl.scale * dpr).ceil(),
+            (layerRect.height * ctrl.scale * dpr).ceil(),
+          );
+          // Draw to the user-visible canvas using the shader.
+          compositor.compositeLayerExtended(
+            canvas,
+            opacity: layer.opacity,
+            layerRect: layerRect,
+            paintStrokes: paintLayer,
+            extendedBlendModeCode: extCode,
+            backdrop: bgImage,
+            foregroundImageSize: ui.Size(
+              (layerRect.width * ctrl.scale * dpr).ceilToDouble(),
+              (layerRect.height * ctrl.scale * dpr).ceilToDouble(),
+            ),
+            devicePixelRatio: dpr,
+          );
+          // Update the running backdrop: re-open a fresh recorder and
+          // replay the composited pixels into it. Since we already drew
+          // them onto `canvas`, we mirror the same op onto bgCanvas
+          // through the same compositor call. The simplest correct
+          // approach is to draw the bgImage we already have, then over
+          // it draw the layer foreground via the standard saveLayer
+          // path with the closestStandard fallback — this keeps the
+          // backdrop "good enough" for any subsequent extended layer.
+          // For perfect chaining of multiple extended layers, the
+          // commercial compositor would re-run the shader; that
+          // refinement lives in Stage 2B+.
+          bgRecorder = ui.PictureRecorder();
+          bgCanvas = ui.Canvas(bgRecorder, layerRect);
+          bgCanvas.translate(ctrl.offset.dx, ctrl.offset.dy);
+          bgCanvas.scale(ctrl.scale);
+          // Re-draw prior backdrop:
+          bgCanvas.save();
+          bgCanvas.scale(1.0 / (ctrl.scale * dpr));
+          // Backdrop image is already in screen-space pixels — undo the
+          // earlier transforms before drawing.
+          bgCanvas.translate(-ctrl.offset.dx * dpr, -ctrl.offset.dy * dpr);
+          bgCanvas.drawImage(bgImage, ui.Offset.zero, Paint());
+          bgCanvas.restore();
+          // Now overlay the foreground via closestStandard so a chain
+          // of extended layers stays approximately correct.
+          final fallbackPaint = Paint()
+            ..color = ui.Color.fromRGBO(0, 0, 0, layer.opacity)
+            ..blendMode = flueraMode.closestStandard;
+          bgCanvas.saveLayer(layerRect, fallbackPaint);
+          paintLayer(bgCanvas);
+          bgCanvas.restore();
+          bgImage.dispose();
+        } else if (compositor != null) {
+          // Standard path through the compositor. Layer is either on
+          // a `ui.BlendMode` (extCode == null) or the compositor did
+          // not opt into the backdrop-aware path — in both cases the
+          // canvas-core fallback (closestStandard) is acceptable.
           compositor.compositeLayer(
             canvas,
             opacity: layer.opacity,
@@ -2427,6 +2559,16 @@ class _CommittedStrokesPainter extends CustomPainter {
             paintStrokes: paintLayer,
             extendedBlendModeCode: extCode,
           );
+          if (useBackdropPath) {
+            // Mirror the paint into the running backdrop so the next
+            // extended layer sees this layer's contribution.
+            final paint = Paint()
+              ..color = ui.Color.fromRGBO(0, 0, 0, layer.opacity)
+              ..blendMode = layer.blendMode;
+            bgCanvas!.saveLayer(layerRect, paint);
+            paintLayer(bgCanvas);
+            bgCanvas.restore();
+          }
         } else {
           final paint = Paint()
             ..color = ui.Color.fromRGBO(0, 0, 0, layer.opacity)
@@ -2483,6 +2625,17 @@ class _CommittedStrokesPainter extends CustomPainter {
   // driven via the repaint listenable.
   @override
   bool shouldRepaint(covariant _CommittedStrokesPainter old) => false;
+
+  /// True iff at least one of [layers] is on an extended (Photoshop-grade)
+  /// blend mode in the canvas-state side-table. We cache nothing — the
+  /// `_extendedBlendModes` map is small (≤ N layers) and this scan is
+  /// O(N) which is dwarfed by anything else in the paint pass.
+  bool _anyExtendedLayer(List<LayerNode> layers, FlueraCanvasState state) {
+    for (final l in layers) {
+      if (state.flueraBlendModeFor(l).isExtended) return true;
+    }
+    return false;
+  }
 }
 
 /// Paints ONLY the live stroke. Permanently mounted in the widget tree
@@ -3019,6 +3172,39 @@ class _TransformNodesOp implements _CanvasOp {
 
   @override
   void redo(FlueraCanvasState s) => _apply(s, _after);
+}
+
+/// Generic add/remove op for a non-stroke node (image, future text /
+/// shape) inside a specific layer. Skips the flat `_strokes` mirror
+/// because non-stroke nodes don't ride that hot path. The cached
+/// `ui.Image` for an [ImageNode] is NOT evicted on undo — it stays
+/// in [ImageNodePainter] so a redo is instant; the cache is dropped
+/// only when the op falls off the history capacity ring buffer.
+class _AddLayerChildOp implements _CanvasOp {
+  _AddLayerChildOp(this.node, this.layerId, this.index);
+  final CanvasNode node;
+  final NodeId layerId;
+  final int index;
+
+  @override
+  void undo(FlueraCanvasState s) {
+    final layer = s._findLayer(layerId);
+    if (layer == null) return;
+    layer.remove(node);
+    s._commitTick.notify();
+  }
+
+  @override
+  void redo(FlueraCanvasState s) {
+    final layer = s._findLayer(layerId);
+    if (layer == null) return;
+    if (index >= layer.children.length) {
+      layer.add(node);
+    } else {
+      layer.insertAt(index, node);
+    }
+    s._commitTick.notify();
+  }
 }
 
 class _CanvasHistory {

@@ -6,8 +6,9 @@ import 'package:fluera_canvas/fluera_canvas.dart';
 
 void main() {
   group('CanvasTool enum (0.4.0 additions)', () {
-    test('contains the documented tool variants in order (incl. 0.6.0 select)',
-        () {
+    test(
+        'contains the documented tool variants in order '
+        '(incl. 0.6.0 select + image)', () {
       expect(CanvasTool.values, [
         CanvasTool.draw,
         CanvasTool.erase,
@@ -16,6 +17,7 @@ void main() {
         CanvasTool.rectangle,
         CanvasTool.ellipse,
         CanvasTool.select,
+        CanvasTool.image,
       ]);
     });
   });
