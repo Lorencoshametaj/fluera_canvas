@@ -1060,6 +1060,13 @@ class FlueraCanvasState extends State<FlueraCanvas>
       }
       return;
     }
+    // Auto-clear selection when starting any draw / shape gesture
+    // (Notability / Goodnotes-style modal UX). Eraser tools are
+    // exempt — they don't visually overlap the selection frame.
+    if (_selectionController.value.isNotEmpty) {
+      _selectionController.clear();
+      _marqueeTick.notify();
+    }
     // Lines and rectangles need sharp corners (no quadratic-bezier
     // smoothing). Ellipses and free-form draws stay smoothed.
     final smooth =
