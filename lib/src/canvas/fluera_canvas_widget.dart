@@ -1622,9 +1622,16 @@ class FlueraCanvasState extends State<FlueraCanvas>
   CanvasSelection _selectionFromIds(Set<NodeId> ids) {
     if (ids.isEmpty) return CanvasSelection.empty;
     Rect? acc;
-    for (final entry in _strokeToNode.entries) {
-      if (!ids.contains(entry.value.id)) continue;
-      final b = entry.key.bounds;
+    for (final id in ids) {
+      final node = _selectableNodes[id];
+      if (node == null) continue;
+      // `worldBounds` is transform-aware: for stroke nodes whose
+      // `localTransform` is non-identity (e.g. after `mirrorSelection`)
+      // the cached `stroke.bounds` would be the pre-transform geometry.
+      // The selectable index entry is the source of truth, hand its
+      // worldBounds to the bounding-rect accumulator so the painted
+      // selection frame is always pixel-correct.
+      final b = node.worldBounds;
       acc = acc == null ? b : acc.expandToInclude(b);
     }
     return CanvasSelection(ids: ids, bounds: acc ?? Rect.zero);
@@ -1807,9 +1814,14 @@ class FlueraCanvasState extends State<FlueraCanvas>
         acc = acc == null ? b : acc.expandToInclude(b);
       }
     } else {
-      for (final entry in _strokeToNode.entries) {
-        if (!ids.contains(entry.value.id)) continue;
-        final b = entry.value.worldBounds;
+      // Non-gesture context (e.g. `mirrorSelection` invoked via the
+      // toolbar). Walk the full selectable index — type-agnostic, so
+      // image / future text-shape nodes contribute to the bounding
+      // rect just like strokes do.
+      for (final id in ids) {
+        final node = _selectableNodes[id];
+        if (node == null) continue;
+        final b = node.worldBounds;
         acc = acc == null ? b : acc.expandToInclude(b);
       }
     }
