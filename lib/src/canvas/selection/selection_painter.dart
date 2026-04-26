@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../infinite_canvas_controller.dart';
 import 'canvas_selection.dart';
+import 'transform_handles.dart';
 
 /// Custom painter that overlays the selection visual on top of the
 /// committed-strokes layer.
@@ -105,6 +106,24 @@ class SelectionPainter extends CustomPainter {
       canvas.drawRect(r, handleFill);
       canvas.drawRect(r, handleStroke);
     }
+
+    // Rotate handle: a small circle 24 px above the top-mid edge with
+    // a 1-px tether so users see what it controls. Drawn as the last
+    // overlay so the tether sits under the handle's white fill.
+    final rotatePos =
+        TransformMath.handlePosition(bounds, SelectionHandle.rotate, scale);
+    final tether = Paint()
+      ..color = const Color(0xFF1565C0)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0 / scale;
+    canvas.drawLine(
+      Offset(bounds.center.dx, bounds.top),
+      rotatePos,
+      tether,
+    );
+    final rotateRadius = (handlePxSize * 0.65) / scale;
+    canvas.drawCircle(rotatePos, rotateRadius, handleFill);
+    canvas.drawCircle(rotatePos, rotateRadius, handleStroke);
   }
 
   void _paintMarquee(Canvas canvas, Rect rect, double scale) {

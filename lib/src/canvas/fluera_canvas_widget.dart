@@ -34,10 +34,12 @@ import '../core/scene_graph/node_id.dart';
 import '../drawing/brush_config.dart';
 import '../rendering/native_stroke_overlay.dart';
 import '../rendering/gpu/gpu_stroke_backend.dart';
+import 'fluera_blend_mode.dart';
 import '../rendering/optimization/spatial_index.dart';
 import '../utils/uid.dart' show generateUid;
 import 'selection/canvas_selection.dart';
 import 'selection/selection_painter.dart';
+import 'selection/transform_handles.dart';
 
 /// A single committed stroke — an opaque list of pressure-aware samples in
 /// world coordinates plus render metadata.
@@ -564,6 +566,19 @@ class FlueraCanvasState extends State<FlueraCanvas>
   Rect? _marqueeRectWorld;
   final _CommitNotifier _marqueeTick = _CommitNotifier();
 
+  // ── Transform gesture state (canvas 0.6.0+ Phase C2) ───────────────
+  //
+  // Populated by `_onDrawStart` when the user grabs a handle (or the
+  // body of the bounding rect) while `tool == CanvasTool.select`, then
+  // applied incrementally on every `_onDrawUpdate`, and committed to
+  // history as a single `_TransformNodesOp` on `_onDrawEnd`.
+
+  TransformMode? _transformMode;
+  SelectionHandle? _transformHandle;
+  Rect? _transformOriginalBounds;
+  Offset? _transformAnchorWorld;
+  Map<NodeId, Matrix4>? _transformBeforeMatrices;
+
   /// Live-stroke state holder. Owns points, pressures, color and width
   /// for the in-progress stroke. `super(repaint: _liveStroke)` on
   /// [_liveStrokePainter] routes every `forceRepaint()` call straight to
@@ -828,16 +843,54 @@ class FlueraCanvasState extends State<FlueraCanvas>
   void _onDrawStart(Offset world, double pressure, double tiltX, double tiltY) {
     _focusNode?.requestFocus();
     if (widget.tool == CanvasTool.select) {
-      // Tap-select on pen-down. The marquee will be activated by the
-      // first `_onDrawUpdate` if the user actually drags — until then
-      // a release-without-move counts as a tap. We also remember the
-      // anchor world position so the marquee rect can be reconstructed
-      // from anchor + current point on each update.
+      final sel = _selectionController.value;
+
+      // 1. If a selection exists, see if pen-down landed on one of its
+      // 8 handles or the rotate handle. Take that as the highest
+      // priority — handle gestures supersede tap-select / marquee.
+      if (sel.isNotEmpty) {
+        final handle =
+            TransformMath.hitTestHandle(sel.bounds, world, _controller.scale);
+        if (handle != null) {
+          _beginTransform(
+            mode: TransformMath.modeForHandle(handle),
+            handle: handle,
+            anchor: world,
+            bounds: sel.bounds,
+          );
+          return;
+        }
+        // 2. Pen-down inside the bounding box → start a body-drag move
+        // on the existing selection (Figma-style drag).
+        if (sel.bounds.contains(world)) {
+          _beginTransform(
+            mode: TransformMode.move,
+            handle: null,
+            anchor: world,
+            bounds: sel.bounds,
+          );
+          return;
+        }
+      }
+
+      // 3. Tap-select on pen-down. The marquee will be activated by
+      // the first `_onDrawUpdate` if the user actually drags — until
+      // then a release-without-move counts as a tap. We also remember
+      // the anchor world position so the marquee rect can be
+      // reconstructed from anchor + current point on each update.
       _marqueeAnchorWorld = world;
       _marqueeRectWorld = null;
       final hit = _hitTestStrokeNode(world);
       if (hit != null) {
         _selectionController.set(_selectionFromIds(<NodeId>{hit}));
+        // 4. Tap landed on a node — also enter move mode immediately
+        // so the very same gesture can drag it (no second tap needed).
+        _beginTransform(
+          mode: TransformMode.move,
+          handle: null,
+          anchor: world,
+          bounds: _selectionController.value.bounds,
+        );
       } else {
         _selectionController.clear();
       }
@@ -921,6 +974,14 @@ class FlueraCanvasState extends State<FlueraCanvas>
     double tiltY,
   ) {
     if (widget.tool == CanvasTool.select) {
+      // 1. If a transform gesture is in flight, every update extends
+      // the transform — never falls through to marquee.
+      if (_transformMode != null) {
+        _applyTransform(world);
+        return;
+      }
+      // 2. Otherwise the user is dragging out a marquee rect (no
+      // selection at pen-down OR tapped on empty canvas).
       final anchor = _marqueeAnchorWorld;
       if (anchor == null) return;
       _marqueeRectWorld = Rect.fromPoints(anchor, world);
@@ -960,6 +1021,15 @@ class FlueraCanvasState extends State<FlueraCanvas>
 
   void _onDrawEnd(Offset _) {
     if (widget.tool == CanvasTool.select) {
+      // 1. End an in-flight transform first (drag of a handle / body).
+      if (_transformMode != null) {
+        _endTransform();
+        _marqueeAnchorWorld = null;
+        _marqueeRectWorld = null;
+        _marqueeTick.notify();
+        return;
+      }
+      // 2. Otherwise commit the marquee (if the drag exceeded a few px).
       final marquee = _marqueeRectWorld;
       if (marquee != null && marquee.shortestSide > 1.0) {
         // Marquee committed: replace the (tap-only) selection with
@@ -1038,6 +1108,21 @@ class FlueraCanvasState extends State<FlueraCanvas>
       _marqueeAnchorWorld = null;
       _marqueeRectWorld = null;
       _marqueeTick.notify();
+    }
+    if (_transformMode != null) {
+      // Roll back to the snapshot taken at pen-down — a cancelled
+      // gesture must not leave the scene with a half-applied transform.
+      final before = _transformBeforeMatrices;
+      if (before != null) {
+        for (final entry in _strokeToNode.entries) {
+          final m = before[entry.value.id];
+          if (m == null) continue;
+          entry.value.localTransform = m.clone();
+        }
+        _refreshSelectionBoundsAfterTransform();
+        _commitTick.notify();
+      }
+      _resetTransformState();
     }
   }
 
@@ -1419,6 +1504,162 @@ class FlueraCanvasState extends State<FlueraCanvas>
     return out;
   }
 
+  // ── Transform gesture helpers (Phase C2) ──────────────────────────────────
+
+  void _beginTransform({
+    required TransformMode mode,
+    required SelectionHandle? handle,
+    required Offset anchor,
+    required Rect bounds,
+  }) {
+    final ids = _selectionController.value.ids;
+    final before = <NodeId, Matrix4>{};
+    for (final entry in _strokeToNode.entries) {
+      if (!ids.contains(entry.value.id)) continue;
+      before[entry.value.id] = entry.value.localTransform.clone();
+    }
+    _transformMode = mode;
+    _transformHandle = handle;
+    _transformAnchorWorld = anchor;
+    _transformOriginalBounds = bounds;
+    _transformBeforeMatrices = before;
+  }
+
+  void _applyTransform(Offset pointer, {bool modifierActive = false}) {
+    final mode = _transformMode;
+    final before = _transformBeforeMatrices;
+    final anchor = _transformAnchorWorld;
+    final bounds = _transformOriginalBounds;
+    if (mode == null || before == null || anchor == null || bounds == null) {
+      return;
+    }
+    Matrix4 delta;
+    switch (mode) {
+      case TransformMode.move:
+        delta = TransformMath.translation(
+          pointer.dx - anchor.dx,
+          pointer.dy - anchor.dy,
+          axisLock: modifierActive,
+        );
+        break;
+      case TransformMode.scaleCorner:
+        final r = TransformMath.cornerScale(
+          originalBounds: bounds,
+          grabbed: _transformHandle!,
+          pointer: pointer,
+          uniform: !modifierActive,
+        );
+        delta = TransformMath.scaleAroundAnchor(r.sx, r.sy, r.anchor);
+        break;
+      case TransformMode.scaleEdge:
+        final r = TransformMath.edgeScale(
+          originalBounds: bounds,
+          grabbed: _transformHandle!,
+          pointer: pointer,
+        );
+        delta = TransformMath.scaleAroundAnchor(r.sx, r.sy, r.anchor);
+        break;
+      case TransformMode.rotate:
+        final theta = TransformMath.rotationDelta(
+          center: bounds.center,
+          anchor: anchor,
+          pointer: pointer,
+          snap15: modifierActive,
+        );
+        delta = TransformMath.rotationAroundPivot(theta, bounds.center);
+        break;
+    }
+    for (final entry in _strokeToNode.entries) {
+      final m0 = before[entry.value.id];
+      if (m0 == null) continue;
+      entry.value.localTransform = delta.clone()..multiply(m0);
+    }
+    _refreshSelectionBoundsAfterTransform();
+    _commitTick.notify();
+  }
+
+  void _refreshSelectionBoundsAfterTransform() {
+    final ids = _selectionController.value.ids;
+    if (ids.isEmpty) return;
+    Rect? acc;
+    for (final entry in _strokeToNode.entries) {
+      if (!ids.contains(entry.value.id)) continue;
+      final b = entry.value.worldBounds;
+      acc = acc == null ? b : acc.expandToInclude(b);
+    }
+    _selectionController.set(
+      _selectionController.value.copyWith(bounds: acc ?? Rect.zero),
+    );
+  }
+
+  void _endTransform() {
+    final before = _transformBeforeMatrices;
+    if (before == null || before.isEmpty) {
+      _resetTransformState();
+      return;
+    }
+    final after = <NodeId, Matrix4>{};
+    for (final entry in _strokeToNode.entries) {
+      if (!before.containsKey(entry.value.id)) continue;
+      after[entry.value.id] = entry.value.localTransform.clone();
+    }
+    var changed = false;
+    for (final id in before.keys) {
+      final a = before[id]!;
+      final b = after[id]!;
+      for (var i = 0; i < 16; i++) {
+        if (a.storage[i] != b.storage[i]) {
+          changed = true;
+          break;
+        }
+      }
+      if (changed) break;
+    }
+    if (changed) {
+      _history?.push(_TransformNodesOp(before, after));
+    }
+    _resetTransformState();
+  }
+
+  void _resetTransformState() {
+    _transformMode = null;
+    _transformHandle = null;
+    _transformAnchorWorld = null;
+    _transformOriginalBounds = null;
+    _transformBeforeMatrices = null;
+  }
+
+  /// Mirror every selected node around the selection bounds' [axis].
+  /// Pushes a single undo step. Returns the count of affected nodes
+  /// (0 when the selection is empty).
+  int mirrorSelection(Axis axis) {
+    final sel = _selectionController.value;
+    if (sel.isEmpty) return 0;
+    final ids = sel.ids;
+    final before = <NodeId, Matrix4>{};
+    final after = <NodeId, Matrix4>{};
+    final pivot =
+        axis == Axis.horizontal ? sel.bounds.center.dx : sel.bounds.center.dy;
+    final delta = axis == Axis.horizontal
+        ? TransformMath.mirrorH(pivot)
+        : TransformMath.mirrorV(pivot);
+    var count = 0;
+    for (final entry in _strokeToNode.entries) {
+      if (!ids.contains(entry.value.id)) continue;
+      before[entry.value.id] = entry.value.localTransform.clone();
+      final newM = delta.clone()..multiply(entry.value.localTransform);
+      entry.value.localTransform = newM;
+      after[entry.value.id] = newM.clone();
+      count++;
+    }
+    if (count > 0) {
+      _refreshSelectionBoundsAfterTransform();
+      _commitTick.notify();
+      _history?.push(_TransformNodesOp(before, after));
+    }
+    return count;
+  }
+
   /// Listenable that fires whenever the canvas commits something the
   /// committed-strokes painter cares about: new stroke, eraser, clear,
   /// undo / redo, and any layer mutation (`addLayer`, `removeLayer`,
@@ -1427,6 +1668,49 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// `Listenable` interface so external callers can only listen — the
   /// notify is called internally by the canvas.
   Listenable get layerChanges => _commitTick;
+
+  // ── FlueraBlendMode side-table (canvas 0.6.0+) ────────────────────────────
+  //
+  // `LayerNode.blendMode` is typed as `ui.BlendMode` and so can only carry
+  // the 17 modes Flutter exposes natively. The Photoshop-grade extended set
+  // (LinearBurn, VividLight, …) lives in `FlueraBlendMode` instead — we
+  // remember which extended mode a layer is on via this side-table, keyed
+  // by the layer's NodeId. The committed-strokes painter consults the
+  // table on every paint and forwards the extended `code` to the
+  // registered `LayerCompositor`. Free core falls back to
+  // `flueraMode.closestStandard` when no compositor is registered.
+
+  final Map<NodeId, FlueraBlendMode> _extendedBlendModes = <NodeId, FlueraBlendMode>{};
+
+  /// Lookup the active [FlueraBlendMode] for [layerId]. When the table
+  /// has no entry, returns the [FlueraBlendMode] that maps to the
+  /// layer's current `ui.BlendMode` so the result is always meaningful.
+  FlueraBlendMode flueraBlendModeFor(LayerNode layer) {
+    final ext = _extendedBlendModes[layer.id];
+    if (ext != null) return ext;
+    return FlueraBlendMode.fromFlutterBlendMode(layer.blendMode);
+  }
+
+  /// Set the [FlueraBlendMode] of layer [id]. Standard modes also update
+  /// the underlying `LayerNode.blendMode` so the free fallback path
+  /// (no GPU compositor) keeps working unchanged. Extended modes record
+  /// the choice in the side-table and set `LayerNode.blendMode` to the
+  /// closest standard mode as graceful degradation.
+  bool setLayerFlueraBlendMode(NodeId id, FlueraBlendMode mode) {
+    final layer = _findLayer(id);
+    if (layer == null) return false;
+    if (mode.isExtended) {
+      _extendedBlendModes[id] = mode;
+      // Free core fallback uses the closest standard mode if no GPU
+      // compositor is registered.
+      layer.blendMode = mode.closestStandard;
+    } else {
+      _extendedBlendModes.remove(id);
+      layer.blendMode = mode.flutterBlendMode!;
+    }
+    _commitTick.notify();
+    return true;
+  }
 
   // ── Layer API (canvas 0.6.0+) ─────────────────────────────────────────────
   //
@@ -2127,6 +2411,13 @@ class _CommittedStrokesPainter extends CustomPainter {
             c.drawPicture(s.picture());
           }
         }
+        // Resolve the FlueraBlendMode from the canvas-state side-table.
+        // When the layer is on a standard mode the side-table is empty
+        // and we forward `null` for `extendedBlendModeCode`; when it is
+        // on an extended mode we pass the stable code so the commercial
+        // compositor can dispatch to a custom shader.
+        final flueraMode = canvasState.flueraBlendModeFor(layer);
+        final extCode = flueraMode.isExtended ? flueraMode.code : null;
         if (compositor != null) {
           compositor.compositeLayer(
             canvas,
@@ -2134,6 +2425,7 @@ class _CommittedStrokesPainter extends CustomPainter {
             blendMode: layer.blendMode,
             layerRect: layerRect,
             paintStrokes: paintLayer,
+            extendedBlendModeCode: extCode,
           );
         } else {
           final paint = Paint()
@@ -2700,6 +2992,33 @@ class _LayerNameOp implements _CanvasOp {
   void undo(FlueraCanvasState s) => _set(s, before);
   @override
   void redo(FlueraCanvasState s) => _set(s, after);
+}
+
+/// Coalesced transform op (Phase C2). One drag of a handle, a body
+/// move, a rotate, or a `mirrorSelection` call collapses every per-node
+/// `localTransform` write into a single undoable step.
+class _TransformNodesOp implements _CanvasOp {
+  _TransformNodesOp(Map<NodeId, Matrix4> before, Map<NodeId, Matrix4> after)
+      : _before = Map<NodeId, Matrix4>.from(before),
+        _after = Map<NodeId, Matrix4>.from(after);
+
+  final Map<NodeId, Matrix4> _before;
+  final Map<NodeId, Matrix4> _after;
+
+  void _apply(FlueraCanvasState s, Map<NodeId, Matrix4> snapshots) {
+    for (final entry in s._strokeToNode.entries) {
+      final m = snapshots[entry.value.id];
+      if (m == null) continue;
+      entry.value.localTransform = m.clone();
+    }
+    s._refreshSelectionBoundsAfterTransform();
+  }
+
+  @override
+  void undo(FlueraCanvasState s) => _apply(s, _before);
+
+  @override
+  void redo(FlueraCanvasState s) => _apply(s, _after);
 }
 
 class _CanvasHistory {
