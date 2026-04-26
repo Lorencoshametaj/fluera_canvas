@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 
 import 'fluera_canvas_widget.dart';
 import 'fluera_color_picker_dialog.dart';
+import 'fluera_layer_panel.dart';
 
 /// Default 6-color preset used by [FlueraCanvasToolbar] when no
 /// `palette` is provided. Black + 5 saturated hues, consistent with the
@@ -82,6 +83,8 @@ class FlueraCanvasToolbar extends StatelessWidget {
     this.showShapeTools = false,
     this.showPixelEraser = false,
     this.showColorPickerButton = false,
+    this.showLayers = false,
+    this.layersBottomSheetTitle,
     this.eraserRadius,
     this.onEraserRadiusChanged,
     this.minEraserRadius = 8.0,
@@ -147,6 +150,17 @@ class FlueraCanvasToolbar extends StatelessWidget {
   /// pops up [FlueraColorPickerDialog] for arbitrary HSV / hex picks
   /// beyond the 6-swatch preset. Default `false`.
   final bool showColorPickerButton;
+
+  /// When `true`, a layers (stack-of-paper) IconButton in the trailing
+  /// row opens [FlueraLayerPanel] as a bottom sheet — drop-in layer
+  /// management without the consumer having to mount the panel
+  /// themselves. Default `false` to keep the toolbar minimal for
+  /// notes-app workloads that don't need multi-layer support.
+  final bool showLayers;
+
+  /// Optional title shown above the layer panel inside the bottom
+  /// sheet. Defaults to "Layers".
+  final String? layersBottomSheetTitle;
 
   /// Current eraser radius in screen pixels. When non-null AND
   /// [onEraserRadiusChanged] is also provided, the toolbar's slider
@@ -220,6 +234,7 @@ class FlueraCanvasToolbar extends StatelessWidget {
     return Container(
       padding: padding,
       color: background ?? scheme.surfaceContainerHighest,
+
       child: SafeArea(
         top: false,
         child: Column(
@@ -237,6 +252,12 @@ class FlueraCanvasToolbar extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (showLayers)
+                  IconButton(
+                    icon: const Icon(Icons.layers_rounded),
+                    tooltip: 'Layers',
+                    onPressed: () => _openLayersSheet(context),
+                  ),
                 _HistoryButtons(
                   canvasKey: canvasKey,
                   showUndo: showUndo,
@@ -286,6 +307,49 @@ class FlueraCanvasToolbar extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  /// Open the [FlueraLayerPanel] in a Material bottom sheet. Wired
+  /// from the trailing layers IconButton when [showLayers] is `true`.
+  /// Half-screen by default, draggable up to full height — the panel
+  /// itself is scrollable.
+  void _openLayersSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetCtx) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.55,
+          minChildSize: 0.35,
+          maxChildSize: 0.95,
+          builder: (_, scrollController) {
+            return SingleChildScrollView(
+              controller: scrollController,
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    child: Text(
+                      layersBottomSheetTitle ?? 'Layers',
+                      style: Theme.of(sheetCtx).textTheme.titleMedium,
+                    ),
+                  ),
+                  FlueraLayerPanel(canvasKey: canvasKey),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
