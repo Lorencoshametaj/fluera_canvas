@@ -3,7 +3,7 @@ description: >
   Document-grade infinite-canvas SDK for Flutter. Built for notes apps,
   whiteboards and design tools — not signature pads. Multi-thousand
   strokes at 60 FPS, drop-in toolbar, native GPU bridge.
-version: 0.5.0
+version: 0.7.0
 homepage: https://engine.fluera.dev
 repository: https://github.com/Lorencoshametaj/fluera_canvas
 issue_tracker: https://github.com/Lorencoshametaj/fluera_canvas/issues
