@@ -36,6 +36,8 @@ import '../rendering/native_stroke_overlay.dart';
 import '../rendering/gpu/gpu_stroke_backend.dart';
 import '../rendering/optimization/spatial_index.dart';
 import '../utils/uid.dart' show generateUid;
+import 'selection/canvas_selection.dart';
+import 'selection/selection_painter.dart';
 
 /// A single committed stroke — an opaque list of pressure-aware samples in
 /// world coordinates plus render metadata.
@@ -349,6 +351,12 @@ enum CanvasTool {
   /// an ellipse outline. The ellipse is committed as a polyline
   /// approximation (32 segments).
   ellipse,
+
+  /// Tap a node to select it; drag on empty space to marquee-select.
+  /// Active selection is exposed via [FlueraCanvasState.selection] /
+  /// [FlueraCanvasState.selectionListenable]. Future C2 work plugs the
+  /// transform handles (move / rotate / scale / mirror) into this tool.
+  select,
 }
 
 /// A ready-to-use infinite canvas widget.
@@ -543,6 +551,19 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// `null` when the eraser shouldn't be rendered (hover-off, other tool).
   Offset? _eraserPreviewWorld;
 
+  /// Active selection (canvas 0.6.0+). Mutated through [select] /
+  /// [selectInRect] / [clearSelection] / [deleteSelection] and observed
+  /// by [selectionListenable].
+  final CanvasSelectionController _selectionController =
+      CanvasSelectionController();
+
+  /// World-space rectangle being marquee-dragged. `null` when the user
+  /// is not actively dragging out a marquee. Drives the dashed outline
+  /// in [_selectionPainter].
+  Offset? _marqueeAnchorWorld;
+  Rect? _marqueeRectWorld;
+  final _CommitNotifier _marqueeTick = _CommitNotifier();
+
   /// Live-stroke state holder. Owns points, pressures, color and width
   /// for the in-progress stroke. `super(repaint: _liveStroke)` on
   /// [_liveStrokePainter] routes every `forceRepaint()` call straight to
@@ -590,6 +611,12 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// subscription is registered once and stays active forever.
   late final _LiveStrokePainter _liveStrokePainter;
 
+  /// Stable selection-overlay painter. Created once in [initState] for
+  /// the same listener-stability reasons as [_committedPainter] and
+  /// [_liveStrokePainter]. Reads selection / camera / marquee state at
+  /// paint time.
+  late final SelectionPainter _selectionPainter;
+
   /// Focus node that owns keyboard shortcuts. Created lazily only when
   /// [widget.enableKeyboardShortcuts] is true.
   FocusNode? _focusNode;
@@ -630,6 +657,16 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _committedPainter = _CommittedStrokesPainter(
       canvasState: this,
       repaintTrigger: Listenable.merge(<Listenable>[_commitTick, _controller]),
+    );
+    _selectionPainter = SelectionPainter(
+      selection: () => _selectionController.value,
+      controller: _controller,
+      marqueeRect: () => _marqueeRectWorld,
+      repaintTrigger: Listenable.merge(<Listenable>[
+        _selectionController,
+        _controller,
+        _marqueeTick,
+      ]),
     );
     _liveStrokeTicker = createTicker((_) {
       // Tick while either a draw gesture or an erase gesture is in
@@ -683,6 +720,8 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _liveStroke.dispose();
     _liveStrokeTicker.dispose();
     _commitTick.dispose();
+    _selectionController.dispose();
+    _marqueeTick.dispose();
     for (final s in _strokes) {
       s.dispose();
     }
@@ -781,12 +820,30 @@ class FlueraCanvasState extends State<FlueraCanvas>
       case CanvasTool.draw:
       case CanvasTool.erase:
       case CanvasTool.erasePixel:
+      case CanvasTool.select:
         return <Offset>[anchor, current];
     }
   }
 
   void _onDrawStart(Offset world, double pressure, double tiltX, double tiltY) {
     _focusNode?.requestFocus();
+    if (widget.tool == CanvasTool.select) {
+      // Tap-select on pen-down. The marquee will be activated by the
+      // first `_onDrawUpdate` if the user actually drags — until then
+      // a release-without-move counts as a tap. We also remember the
+      // anchor world position so the marquee rect can be reconstructed
+      // from anchor + current point on each update.
+      _marqueeAnchorWorld = world;
+      _marqueeRectWorld = null;
+      final hit = _hitTestStrokeNode(world);
+      if (hit != null) {
+        _selectionController.set(_selectionFromIds(<NodeId>{hit}));
+      } else {
+        _selectionController.clear();
+      }
+      _marqueeTick.notify();
+      return;
+    }
     // Lock check (canvas 0.6.0+): the active layer rejects new strokes
     // and skips the eraser when locked. Pre-existing strokes still
     // render — the lock only gates new mutations.
@@ -863,6 +920,13 @@ class FlueraCanvasState extends State<FlueraCanvas>
     double tiltX,
     double tiltY,
   ) {
+    if (widget.tool == CanvasTool.select) {
+      final anchor = _marqueeAnchorWorld;
+      if (anchor == null) return;
+      _marqueeRectWorld = Rect.fromPoints(anchor, world);
+      _marqueeTick.notify();
+      return;
+    }
     if (widget.tool == CanvasTool.erase ||
         widget.tool == CanvasTool.erasePixel) {
       _eraserPreviewWorld = world;
@@ -895,6 +959,21 @@ class FlueraCanvasState extends State<FlueraCanvas>
   }
 
   void _onDrawEnd(Offset _) {
+    if (widget.tool == CanvasTool.select) {
+      final marquee = _marqueeRectWorld;
+      if (marquee != null && marquee.shortestSide > 1.0) {
+        // Marquee committed: replace the (tap-only) selection with
+        // every node whose bbox intersects the dragged rect. Width <= 1
+        // means a degenerate drag — treat as a tap (already handled in
+        // _onDrawStart).
+        final ids = _hitTestIdsInRect(marquee);
+        _selectionController.set(_selectionFromIds(ids));
+      }
+      _marqueeAnchorWorld = null;
+      _marqueeRectWorld = null;
+      _marqueeTick.notify();
+      return;
+    }
     if (widget.tool == CanvasTool.erase ||
         widget.tool == CanvasTool.erasePixel) {
       if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
@@ -955,6 +1034,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _liveStroke.clear();
     _erasedThisGesture.clear();
     _lastEraseIndexes.clear();
+    if (_marqueeAnchorWorld != null || _marqueeRectWorld != null) {
+      _marqueeAnchorWorld = null;
+      _marqueeRectWorld = null;
+      _marqueeTick.notify();
+    }
   }
 
   // ── Erase logic ──────────────────────────────────────────────────────────
@@ -1214,6 +1298,125 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// All strokes whose bounding rect intersects [worldRect]. O(log n + k).
   List<CanvasStroke> strokesInRect(Rect worldRect) {
     return _spatialIndex.queryVisible(worldRect, margin: 0);
+  }
+
+  // ── Selection API (canvas 0.6.0+) ─────────────────────────────────────────
+
+  /// Active selection snapshot. Always non-null; defaults to
+  /// [CanvasSelection.empty]. Mutated through [select] / [selectInRect] /
+  /// [clearSelection] / [deleteSelection] and via the built-in
+  /// `CanvasTool.select` tap + marquee gestures.
+  CanvasSelection get selection => _selectionController.value;
+
+  /// Listenable that fires every time [selection] changes. Subscribe
+  /// from a transform-handles overlay or a contextual toolbar to react
+  /// without `setState` plumbing.
+  Listenable get selectionListenable => _selectionController;
+
+  /// Replace the active selection with the node identified by [id]. Pass
+  /// `null` (or call [clearSelection]) to deselect everything. Returns
+  /// `true` if [id] resolved to a known stroke node, `false` otherwise.
+  bool select(NodeId? id) {
+    if (id == null) {
+      _selectionController.clear();
+      return true;
+    }
+    if (!_strokeToNode.values.any((n) => n.id == id)) return false;
+    _selectionController.set(_selectionFromIds(<NodeId>{id}));
+    return true;
+  }
+
+  /// Select every committed stroke whose bbox intersects [worldRect].
+  /// Returns the size of the resulting selection.
+  int selectInRect(Rect worldRect) {
+    final ids = _hitTestIdsInRect(worldRect);
+    _selectionController.set(_selectionFromIds(ids));
+    return ids.length;
+  }
+
+  /// Clear the selection.
+  void clearSelection() => _selectionController.clear();
+
+  /// Remove every selected stroke from the canvas as a single undoable
+  /// op. Returns the number of strokes deleted (0 if the selection was
+  /// empty).
+  int deleteSelection() {
+    final ids = _selectionController.value.ids;
+    if (ids.isEmpty) return 0;
+    final toRemove = <CanvasStroke>[];
+    final indexes = <CanvasStroke, int>{};
+    for (final entry in _strokeToNode.entries) {
+      if (ids.contains(entry.value.id)) {
+        final flatIdx = _strokes.indexOf(entry.key);
+        if (flatIdx >= 0) {
+          toRemove.add(entry.key);
+          indexes[entry.key] = flatIdx;
+        }
+      }
+    }
+    if (toRemove.isEmpty) return 0;
+    for (final s in toRemove) {
+      _internalRemoveStroke(s);
+      s.dispose();
+    }
+    _selectionController.clear();
+    _commitTick.notify();
+    _history?.push(_EraseOp(toRemove, indexes));
+    if (widget.onStrokesErased != null) {
+      widget.onStrokesErased!(toRemove);
+    }
+    return toRemove.length;
+  }
+
+  // Internal hit-test helpers used by both the public API and the
+  // CanvasTool.select gesture handlers.
+
+  CanvasSelection _selectionFromIds(Set<NodeId> ids) {
+    if (ids.isEmpty) return CanvasSelection.empty;
+    Rect? acc;
+    for (final entry in _strokeToNode.entries) {
+      if (!ids.contains(entry.value.id)) continue;
+      final b = entry.key.bounds;
+      acc = acc == null ? b : acc.expandToInclude(b);
+    }
+    return CanvasSelection(ids: ids, bounds: acc ?? Rect.zero);
+  }
+
+  /// Top-most CanvasStrokeNode whose stroke bbox contains [worldPoint],
+  /// or `null` when the tap landed on empty canvas. Front-most wins
+  /// (highest Z-index).
+  NodeId? _hitTestStrokeNode(Offset worldPoint, {double tolerance = 4.0}) {
+    final probe = Rect.fromCircle(center: worldPoint, radius: tolerance);
+    final candidates = _spatialIndex.queryVisible(probe, margin: 0);
+    if (candidates.isEmpty) return null;
+    NodeId? best;
+    int bestIdx = -1;
+    for (final s in candidates) {
+      // Filter to strokes inside a non-locked, visible layer.
+      final node = _strokeToNode[s];
+      if (node == null) continue;
+      final layer = node.parent;
+      if (layer is LayerNode && (!layer.isVisible || layer.isLocked)) continue;
+      final idx = _strokes.indexOf(s);
+      if (idx > bestIdx) {
+        bestIdx = idx;
+        best = node.id;
+      }
+    }
+    return best;
+  }
+
+  Set<NodeId> _hitTestIdsInRect(Rect worldRect) {
+    final candidates = _spatialIndex.queryVisible(worldRect, margin: 0);
+    final out = <NodeId>{};
+    for (final s in candidates) {
+      final node = _strokeToNode[s];
+      if (node == null) continue;
+      final layer = node.parent;
+      if (layer is LayerNode && (!layer.isVisible || layer.isLocked)) continue;
+      out.add(node.id);
+    }
+    return out;
   }
 
   /// Listenable that fires whenever the canvas commits something the
@@ -1592,9 +1795,14 @@ class FlueraCanvasState extends State<FlueraCanvas>
             ? const SizedBox.shrink()
             : CustomPaint(painter: _liveStrokePainter, size: Size.infinite);
 
+    final Widget selectionLayer = RepaintBoundary(
+      child: CustomPaint(painter: _selectionPainter, size: Size.infinite),
+    );
+
     final Widget gestureChild = Stack(
       children: [
         Positioned.fill(child: committedLayer),
+        Positioned.fill(child: selectionLayer),
         Positioned.fill(child: liveLayer),
         if (useNative)
           Positioned.fill(
@@ -1682,6 +1890,8 @@ class FlueraCanvasState extends State<FlueraCanvas>
       case CanvasTool.erase:
       case CanvasTool.erasePixel:
         return SystemMouseCursors.none; // preview circle *is* the cursor
+      case CanvasTool.select:
+        return SystemMouseCursors.basic;
     }
   }
 
@@ -1891,6 +2101,14 @@ class _CommittedStrokesPainter extends CustomPainter {
       // smallest bound that contains every visible stroke under the
       // current camera, which is exactly what we need.
       final layerRect = viewport;
+      // If the consumer registered a commercial GPU layer compositor
+      // (`fluera_canvas_gpu`), delegate the per-layer composite pass to
+      // it. The compositor receives a `paintStrokes` callback that
+      // paints the on-screen strokes into its own offscreen surface so
+      // it can apply Photoshop-grade blends, masks, etc. Falls back to
+      // the built-in `Canvas.saveLayer` path when no compositor is
+      // registered.
+      final compositor = FlueraCanvasGpu.layerCompositor;
       for (final layer in layers) {
         if (!layer.isVisible) continue;
         // Find strokes belonging to this layer by walking its children
@@ -1904,14 +2122,27 @@ class _CommittedStrokesPainter extends CustomPainter {
           }
         }
         if (layerStrokes.isEmpty) continue;
-        final paint = Paint()
-          ..color = ui.Color.fromRGBO(0, 0, 0, layer.opacity)
-          ..blendMode = layer.blendMode;
-        canvas.saveLayer(layerRect, paint);
-        for (final s in layerStrokes) {
-          canvas.drawPicture(s.picture());
+        void paintLayer(ui.Canvas c) {
+          for (final s in layerStrokes) {
+            c.drawPicture(s.picture());
+          }
         }
-        canvas.restore();
+        if (compositor != null) {
+          compositor.compositeLayer(
+            canvas,
+            opacity: layer.opacity,
+            blendMode: layer.blendMode,
+            layerRect: layerRect,
+            paintStrokes: paintLayer,
+          );
+        } else {
+          final paint = Paint()
+            ..color = ui.Color.fromRGBO(0, 0, 0, layer.opacity)
+            ..blendMode = layer.blendMode;
+          canvas.saveLayer(layerRect, paint);
+          paintLayer(canvas);
+          canvas.restore();
+        }
       }
     }
 

@@ -35,6 +35,7 @@ export 'src/canvas/fluera_color_picker_dialog.dart';
 export 'src/canvas/fluera_layer_panel.dart';
 export 'src/canvas/canvas_background.dart';
 export 'src/canvas/canvas_serializer.dart';
+export 'src/canvas/selection/canvas_selection.dart';
 
 // ─── DRAWING INPUT + FILTERS ───────────────────────────────────────────────
 
@@ -180,7 +181,11 @@ export 'src/rendering/optimization/point_simplifier.dart';
 // latency on the live path.
 
 export 'src/rendering/gpu/gpu_stroke_backend.dart'
-    show GpuStrokeBackend, FlueraCanvasGpu, CanvasStrokeRenderer;
+    show
+        GpuStrokeBackend,
+        FlueraCanvasGpu,
+        CanvasStrokeRenderer,
+        LayerCompositor;
 export 'src/rendering/native_stroke_overlay.dart'
     show NativeStrokeOverlay, NativeStrokeOverlayController;
 
