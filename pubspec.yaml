@@ -14,16 +14,6 @@ topics:
   - notes
   - graphics
 
-screenshots:
-  - description: 'Drop-in drawing toolbar — pen, shapes, eraser, color picker, stroke width slider.'
-    path: example/flutter_01.png
-  - description: 'Multi-layer scene with visibility / lock / opacity controls and blend modes.'
-    path: example/flutter_02.png
-  - description: 'Live text tool — caret editing inline on the canvas via Material TextField overlay.'
-    path: example/flutter_03.png
-  - description: 'Sticker panel + snap-to-grid + smart guides — design-tool UX out of the box.'
-    path: example/flutter_04.png
-
 environment:
   sdk: ^3.7.0
   flutter: ">=3.27.0"
