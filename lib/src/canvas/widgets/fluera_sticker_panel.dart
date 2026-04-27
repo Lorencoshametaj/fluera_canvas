@@ -24,6 +24,7 @@ import '../fluera_canvas_widget.dart' show FlueraCanvasState;
 /// drops the same sticker).
 @immutable
 class FlueraSticker {
+  /// API element `FlueraSticker`.
   const FlueraSticker({
     required this.id,
     required this.label,
@@ -57,9 +58,13 @@ class FlueraSticker {
     );
   }
 
+  /// Field `id`.
   final String id;
+  /// Field `label`.
   final String label;
+  /// Field `provider`.
   final ImageProvider provider;
+  /// Field `size`.
   final Size size;
 }
 
@@ -72,14 +77,18 @@ class FlueraSticker {
 @immutable
 class FlueraIconStickerProvider
     extends ImageProvider<FlueraIconStickerProvider> {
+  /// API element `FlueraIconStickerProvider`.
   const FlueraIconStickerProvider({
     required this.icon,
     this.color = const Color(0xFF1A1A1A),
     this.pixelSize = 128,
   });
 
+  /// Field `icon`.
   final IconData icon;
+  /// Field `color`.
   final Color color;
+  /// Field `pixelSize`.
   final double pixelSize;
 
   @override
@@ -239,6 +248,7 @@ const List<FlueraSticker> kFlueraDefaultStickers = <FlueraSticker>[
 /// );
 /// ```
 class FlueraStickerPanel extends StatelessWidget {
+  /// API element `FlueraStickerPanel`.
   const FlueraStickerPanel({
     super.key,
     required this.canvasKey,

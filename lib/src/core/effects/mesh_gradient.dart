@@ -12,14 +12,17 @@ class MeshControlPoint {
   /// Color at this control point.
   Color color;
 
+  /// API element `position`.
   MeshControlPoint({required this.position, required this.color});
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'x': position.dx,
     'y': position.dy,
     'color': color.toARGB32(),
   };
 
+  /// Method `fromJson`.
   factory MeshControlPoint.fromJson(Map<String, dynamic> json) =>
       MeshControlPoint(
         position: Offset(
@@ -90,6 +93,7 @@ class MeshGradient {
   /// Tessellation resolution per patch (subdivisions per axis).
   int resolution;
 
+  /// API element `MeshGradient`.
   MeshGradient({
     required this.rows,
     required this.columns,
@@ -213,6 +217,7 @@ class MeshGradient {
   // Serialization
   // ---------------------------------------------------------------------------
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'rows': rows,
     'columns': columns,
@@ -220,6 +225,7 @@ class MeshGradient {
     'points': _points.map((p) => p.toJson()).toList(),
   };
 
+  /// API element `fromJson`.
   factory MeshGradient.fromJson(Map<String, dynamic> json) {
     final rows = json['rows'] as int;
     final columns = json['columns'] as int;

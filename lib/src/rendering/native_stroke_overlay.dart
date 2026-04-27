@@ -65,6 +65,7 @@ import 'gpu/gpu_stroke_backend.dart';
 /// [beginStroke] and [endStroke] calls and streams them to the native
 /// renderer at native refresh rate.
 class NativeStrokeOverlayController extends ChangeNotifier {
+  /// Method `NativeStrokeOverlayController`.
   NativeStrokeOverlayController();
 
   final List<ProDrawingPoint> _points = <ProDrawingPoint>[];
@@ -76,14 +77,23 @@ class NativeStrokeOverlayController extends ChangeNotifier {
 
   // Brush tuning exposed verbatim so power users can mimic Fluera's pencil /
   // fountain pen rendering. Defaults match the engine's pencil brush.
+  /// Field `pencilBaseOpacity`.
   double pencilBaseOpacity = 0.4;
+  /// Field `pencilMaxOpacity`.
   double pencilMaxOpacity = 0.8;
+  /// Field `pencilMinPressure`.
   double pencilMinPressure = 0.5;
+  /// Field `pencilMaxPressure`.
   double pencilMaxPressure = 1.2;
+  /// Field `fountainThinning`.
   double fountainThinning = 0.5;
+  /// Field `fountainNibAngleDeg`.
   double fountainNibAngleDeg = 30.0;
+  /// Field `fountainNibStrength`.
   double fountainNibStrength = 0.35;
+  /// Field `fountainPressureRate`.
   double fountainPressureRate = 0.275;
+  /// Field `fountainTaperEntry`.
   int fountainTaperEntry = 6;
 
   /// Whether a stroke is currently being drawn.
@@ -162,12 +172,16 @@ class NativeStrokeOverlayController extends ChangeNotifier {
   // Internals consumed by [NativeStrokeOverlay]. Kept public for the widget
   // to read without reaching into private state, but not intended as API.
   @protected
+  /// Getter `color`.
   Color get color => _color;
   @protected
+  /// Getter `strokeWidth`.
   double get strokeWidth => _strokeWidth;
   @protected
+  /// Getter `brushType`.
   int get brushType => _brushType;
   @protected
+  /// Getter `bufferedPoints`.
   List<ProDrawingPoint> get bufferedPoints => _points;
 }
 
@@ -178,6 +192,7 @@ class NativeStrokeOverlayController extends ChangeNotifier {
 /// The overlay listens to [canvasController] so pan/zoom/rotation stay
 /// synchronised with the Dart scene automatically.
 class NativeStrokeOverlay extends StatefulWidget {
+  /// API element `NativeStrokeOverlay`.
   const NativeStrokeOverlay({
     super.key,
     required this.canvasController,

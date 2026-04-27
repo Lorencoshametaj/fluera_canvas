@@ -21,6 +21,7 @@ class CanvasStrokeNode extends CanvasNode {
   /// The wrapped flat stroke (points, pressures, color, width, brush).
   CanvasStroke stroke;
 
+  /// API element `CanvasStrokeNode`.
   CanvasStrokeNode({
     required super.id,
     required this.stroke,
@@ -74,6 +75,7 @@ class CanvasStrokeNode extends CanvasNode {
     return json;
   }
 
+  /// API element `fromJson`.
   factory CanvasStrokeNode.fromJson(Map<String, dynamic> json) {
     final node = CanvasStrokeNode(
       id: NodeId(json['id'] as String),

@@ -56,9 +56,11 @@ enum SectionType {
   /// Prototype flow data.
   prototypeData(7);
 
+  /// Field `code`.
   final int code;
   const SectionType(this.code);
 
+  /// API element `fromCode`.
   static SectionType fromCode(int code) {
     return SectionType.values.firstWhere(
       (e) => e.code == code,
@@ -80,12 +82,18 @@ enum SectionType {
 ///   - checksum: 4 bytes (CRC32 of section data)
 ///   - tag:      4 bytes (user-defined tag, e.g. page index or asset ID hash)
 class SectionDescriptor {
+  /// Field `type`.
   final SectionType type;
+  /// Field `offset`.
   final int offset;
+  /// Field `length`.
   final int length;
+  /// Field `checksum`.
   final int checksum;
+  /// Field `tag`.
   final int tag;
 
+  /// API element `SectionDescriptor`.
   const SectionDescriptor({
     required this.type,
     required this.offset,
@@ -135,11 +143,16 @@ class SectionDescriptor {
 ///   [16..23] TOC offset (uint64, byte offset to Table of Contents)
 ///   [24..31] reserved (8 bytes, zero-filled)
 class FlueraFileHeader {
+  /// Field `version`.
   final int version;
+  /// Field `flags`.
   final int flags;
+  /// Field `sectionCount`.
   final int sectionCount;
+  /// Field `tocOffset`.
   final int tocOffset;
 
+  /// API element `FlueraFileHeader`.
   const FlueraFileHeader({
     this.version = _currentVersion,
     this.flags = 0,
@@ -194,8 +207,10 @@ class FlueraFileHeader {
 
 /// Table of Contents: array of [SectionDescriptor]s for random access.
 class FlueraFileTOC {
+  /// Field `sections`.
   final List<SectionDescriptor> sections;
 
+  /// Method `sections`.
   const FlueraFileTOC(this.sections);
 
   /// Find all sections of a given type.
@@ -269,11 +284,16 @@ class _CRC32 {
 
 /// A prepared section ready for writing.
 class PreparedSection {
+  /// Field `type`.
   final SectionType type;
+  /// Field `data`.
   final Uint8List data;
+  /// Field `tag`.
   final int tag;
+  /// Field `dirty`.
   final bool dirty;
 
+  /// API element `PreparedSection`.
   PreparedSection({
     required this.type,
     required this.data,
@@ -281,6 +301,7 @@ class PreparedSection {
     this.dirty = true,
   });
 
+  /// Getter `checksum`.
   int get checksum => _CRC32.compute(data);
 }
 
@@ -479,11 +500,14 @@ class FlueraFileWriter {
 /// ```
 class FlueraFileReader {
   final Uint8List _bytes;
+  /// Field `header`.
   final FlueraFileHeader header;
+  /// Field `toc`.
   final FlueraFileTOC toc;
 
   FlueraFileReader._(this._bytes, this.header, this.toc);
 
+  /// API element `bytes`.
   factory FlueraFileReader(Uint8List bytes) {
     final header = FlueraFileHeader.decode(bytes);
 

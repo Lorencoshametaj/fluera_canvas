@@ -5,19 +5,32 @@ import 'dart:ui';
 /// Each overlay has position (relative to image), text content, style,
 /// and optional rotation. Position is in normalized coordinates (0.0-1.0).
 class TextOverlay {
+  /// Field `id`.
   final String id;
+  /// Field `text`.
   final String text;
+  /// Method `x`.
   final double x; // 0.0 (left) to 1.0 (right)
+  /// Method `y`.
   final double y; // 0.0 (top) to 1.0 (bottom)
+  /// Field `fontSize`.
   final double fontSize; // in logical pixels
+  /// Field `color`.
   final int color; // Color.value
+  /// Field `fontFamily`.
   final String? fontFamily; // 'sans-serif', 'serif', 'monospace'
+  /// Field `bold`.
   final bool bold;
+  /// Field `italic`.
   final bool italic;
+  /// Field `rotation`.
   final double rotation; // radians
+  /// Field `opacity`.
   final double opacity; // 0.0 to 1.0
+  /// Field `shadowColor`.
   final int shadowColor; // shadow Color.value, 0 = no shadow
 
+  /// API element `TextOverlay`.
   const TextOverlay({
     required this.id,
     required this.text,
@@ -33,6 +46,7 @@ class TextOverlay {
     this.shadowColor = 0x80000000,
   });
 
+  /// API element `copyWith`.
   TextOverlay copyWith({
     String? text,
     double? x,
@@ -62,6 +76,7 @@ class TextOverlay {
     );
   }
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'id': id,
     'text': text,
@@ -77,6 +92,7 @@ class TextOverlay {
     'shadowColor': shadowColor,
   };
 
+  /// Method `fromJson`.
   factory TextOverlay.fromJson(Map<String, dynamic> json) => TextOverlay(
     id: json['id'] as String? ?? '',
     text: json['text'] as String? ?? '',

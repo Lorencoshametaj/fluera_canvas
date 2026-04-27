@@ -86,10 +86,15 @@ class CanvasBackground {
   }) : _type = type;
 
   final _Type _type;
+  /// Field `fill`.
   final Color fill;
+  /// Field `lineColor`.
   final Color lineColor;
+  /// Field `spacing`.
   final double spacing;
+  /// Field `lineWidth`.
   final double lineWidth;
+  /// Field `dotRadius`.
   final double dotRadius;
 
   /// Paint the background. [viewport] is the visible rect in world space;

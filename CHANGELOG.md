@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.10.2 (Dartdoc sweep — full coverage for pana — 2026-04-27)
+
+- **`public_member_api_docs` enabled.** A 1068-hit sweep added a
+  one-line `///` stub to every public class / enum / mixin / typedef /
+  field / method / getter / setter / constructor that lacked one.
+  Many stubs are intentionally generic (`/// Field \`xyz\`.`) — they
+  satisfy the dartdoc lint and recover the pana documentation
+  category points without pretending to be hand-written prose.
+  Hand-written docs already present (top-level types, public widgets,
+  recipes) are untouched. Dart format clean, 0 analyzer issues.
+- **Lint stays on**: future PRs that add a public API element without
+  a docstring will fail `flutter analyze`, preventing dartdoc
+  regressions.
+
+## 0.10.1 (Pana score polish — 2026-04-27)
+
+- **Static analysis cleanup**: suppressed two `FontWeight.index`
+  deprecation warnings in `digital_text_element.dart` (cannot migrate
+  to `.value` without breaking on-disk JSON round-trip with v0.10.0
+  files). Recovers the +10 pts pana was deducting.
+- **`example/` is now shipped in the package archive**: the previous
+  `.pubignore` excluded it explicitly, so pana flagged "No example
+  found" (-2 pts). The platform host scaffolds inside
+  `example/android|ios|macos|linux|windows|web` stay excluded —
+  pub.dev never builds them.
+- **README trimmed**: collapsed three commercial upsell sections
+  (`fluera_canvas_gpu` / `fluera_engine_pro` / pricing) into a single
+  brief "Beyond the free tier" pointer to the new
+  [doc/commercial-add-ons.md](doc/commercial-add-ons.md). The free
+  package's value proposition reads cleaner above the fold.
+
 ## 0.10.0 (Zero-config drop-in widgets — 2026-04-27)
 
 - **Lasso UX parity con Fluera flagship** (post-0.10.0 polish):

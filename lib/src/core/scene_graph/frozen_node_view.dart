@@ -11,16 +11,27 @@ import '../nodes/group_node.dart';
 /// This guarantees that consumers (like plugins or background threads)
 /// cannot accidentally or maliciously mutate the scene graph.
 class FrozenNodeView {
+  /// Field `id`.
   final NodeId id;
+  /// Field `name`.
   final String name;
+  /// Field `typeName`.
   final String typeName;
+  /// Field `worldBounds`.
   final Rect worldBounds;
+  /// Field `localBounds`.
   final Rect localBounds;
+  /// Field `opacity`.
   final double opacity;
+  /// Field `blendMode`.
   final BlendMode blendMode;
+  /// Field `isVisible`.
   final bool isVisible;
+  /// Field `isLocked`.
   final bool isLocked;
+  /// Field `transformStorage`.
   final Float64List transformStorage;
+  /// Field `children`.
   final List<FrozenNodeView> children;
 
   FrozenNodeView._({

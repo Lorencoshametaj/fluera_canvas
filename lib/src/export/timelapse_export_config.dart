@@ -2,12 +2,18 @@ import 'package:flutter/material.dart';
 
 /// 🎬 Risoluzione video per timelapse export
 enum TimelapseResolution {
+  /// Method `hd720`.
   hd720(1280, 'HD 720p', '1280×720'),
+  /// Method `fullHd1080`.
   fullHd1080(1920, 'Full HD 1080p', '1920×1080'),
+  /// Method `uhd4k`.
   uhd4k(3840, '4K UHD', '3840×2160');
 
+  /// Field `width`.
   final int width;
+  /// Field `label`.
   final String label;
+  /// Field `description`.
   final String description;
 
   const TimelapseResolution(this.width, this.label, this.description);
@@ -40,15 +46,21 @@ enum TimelapseResolution {
 
 /// 🎬 Formato output video
 enum TimelapseFormat {
+  /// Method `mp4`.
   mp4('MP4', 'H.264', Icons.movie_outlined),
+  /// Method `gif`.
   gif('GIF', 'Animato', Icons.gif_box_outlined);
 
+  /// Field `label`.
   final String label;
+  /// Field `codec`.
   final String codec;
+  /// Field `icon`.
   final IconData icon;
 
   const TimelapseFormat(this.label, this.codec, this.icon);
 
+  /// Getter `extension`.
   String get extension => switch (this) {
     TimelapseFormat.mp4 => 'mp4',
     TimelapseFormat.gif => 'gif',
@@ -57,13 +69,20 @@ enum TimelapseFormat {
 
 /// 🎬 Speed timelapse
 enum TimelapseSpeed {
+  /// Method `x2`.
   x2(2, '2×'),
+  /// Method `x4`.
   x4(4, '4×'),
+  /// Method `x8`.
   x8(8, '8×'),
+  /// Method `x16`.
   x16(16, '16×'),
+  /// Method `x32`.
   x32(32, '32×');
 
+  /// Field `multiplier`.
   final int multiplier;
+  /// Field `label`.
   final String label;
 
   const TimelapseSpeed(this.multiplier, this.label);
@@ -97,6 +116,7 @@ class TimelapseExportConfig {
   /// Calculateto automaticamente da [calculateFramePlan].
   final int frameSkip;
 
+  /// API element `TimelapseExportConfig`.
   const TimelapseExportConfig({
     this.resolution = TimelapseResolution.fullHd1080,
     this.speed = TimelapseSpeed.x8,
@@ -158,6 +178,7 @@ class TimelapseExportConfig {
     );
   }
 
+  /// API element `copyWith`.
   TimelapseExportConfig copyWith({
     TimelapseResolution? resolution,
     TimelapseSpeed? speed,

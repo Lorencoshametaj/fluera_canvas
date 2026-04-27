@@ -17,9 +17,13 @@ import 'dart:math' as math;
 /// of `OneEuroFilter` with a filtered-derivative speed estimator —
 /// keeps slow strokes ultra-smooth and fast strokes responsive.
 class AdvancedOneEuroFilter {
+  /// Method `freq`.
   final double freq; // Frequenza di campionamento (Hz)
+  /// Method `minCutoff`.
   final double minCutoff; // Cutoff minimo (more basso = more smooth)
+  /// Method `beta`.
   final double beta; // Coefficiente speed (more alto = more reattivo)
+  /// Field `dCutoff`.
   final double dCutoff; // Cutoff per derivata
 
   // State per X
@@ -35,6 +39,7 @@ class AdvancedOneEuroFilter {
   // Timestamp
   DateTime? _lastTimestamp;
 
+  /// API element `AdvancedOneEuroFilter`.
   AdvancedOneEuroFilter({
     this.freq = 120.0, // 120 Hz (8.3ms per frame)
     this.minCutoff = 1.0, // Baseline smoothing

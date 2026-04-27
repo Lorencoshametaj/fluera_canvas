@@ -11,134 +11,225 @@ import './pro_drawing_point.dart';
 /// v2.0: Added realism parameters (jitter, inkAccumulation, smoothPath)
 class ProBrushSettings {
   // === FOUNTAIN PEN (Stilo) ===
+  /// Field `fountainMinPressure`.
   final double fountainMinPressure;
+  /// Field `fountainMaxPressure`.
   final double fountainMaxPressure;
+  /// Field `fountainTaperEntry`.
   final int fountainTaperEntry;
+  /// Field `fountainTaperExit`.
   final int fountainTaperExit;
+  /// Field `fountainVelocityInfluence`.
   final double fountainVelocityInfluence;
+  /// Field `fountainCurvatureInfluence`.
   final double fountainCurvatureInfluence;
   // Tilt support
+  /// Field `fountainTiltEnable`.
   final bool fountainTiltEnable;
+  /// Field `fountainTiltInfluence`.
   final double fountainTiltInfluence;
+  /// Field `fountainTiltEllipseRatio`.
   final double fountainTiltEllipseRatio;
   // 🆕 Realismo v2.0
+  /// Method `fountainJitter`.
   final double fountainJitter; // Micro-variazione naturale (0.0-0.15)
+  /// Method `fountainVelocitySensitivity`.
   final double fountainVelocitySensitivity; // Soglia normalizzazione speed (px)
+  /// Field `fountainInkAccumulation`.
   final double fountainInkAccumulation; // Effetto accumulo su rallentamento
+  /// Field `fountainSmoothPath`.
   final bool fountainSmoothPath; // Use spline per bordi morbidi
   // 🆕 Physics v3.0 (user-tunable from long-press)
+  /// Method `fountainThinning`.
   final double fountainThinning; // Pressure → width ratio (0.3-0.9)
+  /// Method `fountainPressureRate`.
   final double fountainPressureRate; // Accumulator speed (0.15-0.8)
+  /// Method `fountainNibAngleDeg`.
   final double fountainNibAngleDeg; // Nib angle in degrees (0-90)
+  /// Method `fountainNibStrength`.
   final double fountainNibStrength; // Calligraphic effect (0.0-0.6)
 
   // === PENCIL (Matita) ===
+  /// Field `pencilBaseOpacity`.
   final double pencilBaseOpacity;
+  /// Field `pencilMaxOpacity`.
   final double pencilMaxOpacity;
+  /// Field `pencilBlurRadius`.
   final double pencilBlurRadius;
+  /// Field `pencilMinPressure`.
   final double pencilMinPressure;
+  /// Field `pencilMaxPressure`.
   final double pencilMaxPressure;
 
   // === HIGHLIGHTER (Evidenziatore) ===
+  /// Field `highlighterOpacity`.
   final double highlighterOpacity;
+  /// Field `highlighterWidthMultiplier`.
   final double highlighterWidthMultiplier;
+  /// Field `highlighterAutoStraighten`.
   final bool highlighterAutoStraighten; // Auto-straighten near-horizontal lines
 
   // === BALLPOINT (Penna) ===
+  /// Field `ballpointMinPressure`.
   final double ballpointMinPressure;
+  /// Field `ballpointMaxPressure`.
   final double ballpointMaxPressure;
 
   // === TEXTURE (Phase 3A) ===
-  final String
-  textureType; // 'none', 'pencilGrain', 'charcoal', 'watercolor', 'canvas', 'kraft'
+  /// Texture key — one of `'none'`, `'pencilGrain'`, `'charcoal'`,
+  /// `'watercolor'`, `'canvas'`, `'kraft'`.
+  final String textureType;
+  /// Field `textureIntensity`.
   final double textureIntensity; // 0.0 = nessun effetto, 1.0 = pieno
+  /// Field `textureRotationMode`.
   final String textureRotationMode; // 'fixed', 'followStroke', 'random'
+  /// Method `textureWetEdge`.
   final double textureWetEdge; // 0.0-1.0 (edge darkening)
+  /// Method `textureScatterDensity`.
   final double textureScatterDensity; // 0.5-3.0 (dots per brush width)
+  /// Method `textureScatterJitter`.
   final double textureScatterJitter; // 0.0-1.0 (positional randomness)
+  /// Method `textureScatterSizeVar`.
   final double textureScatterSizeVar; // 0.0-0.5 (size randomness)
 
   // === STAMP DYNAMICS (Procreate-style) ===
+  /// Method `stampSpacing`.
   final double stampSpacing; // 0.1-1.0 (fraction of brush size)
+  /// Method `stampSizeJitter`.
   final double stampSizeJitter; // 0.0-0.5 (random size variation)
+  /// Method `stampRotationJitter`.
   final double stampRotationJitter; // 0.0-π (random rotation)
+  /// Method `stampScatter`.
   final double stampScatter; // 0.0-2.0 (perpendicular offset)
+  /// Method `stampSoftness`.
   final double stampSoftness; // 0.2-1.0 (edge softness)
+  /// Method `stampElongation`.
   final double stampElongation; // 1.0-3.0 (tilt stretch)
+  /// Field `stampEnabled`.
   final bool stampEnabled; // Use stamp-based rendering
+  /// Method `stampFlow`.
   final double stampFlow; // 0.1-1.0 (per-stamp opacity contribution)
+  /// Method `stampOpacityJitter`.
   final double stampOpacityJitter; // 0.0-0.5 (random opacity variation)
+  /// Method `stampWetEdges`.
   final double stampWetEdges; // 0.0-1.0 (darker edge ring intensity)
+  /// Method `stampMinSize`.
   final double stampMinSize; // 0.05-0.5 (minimum size as % of base)
+  /// Method `stampTaperEntry`.
   final int stampTaperEntry; // 0-15 (entry taper in brush-widths)
+  /// Method `stampTaperExit`.
   final int stampTaperExit; // 0-15 (exit taper in brush-widths)
+  /// Method `stampVelocitySize`.
   final double stampVelocitySize; // 0-1 (speed → size reduction)
+  /// Method `stampVelocityFlow`.
   final double stampVelocityFlow; // 0-1 (speed → flow reduction)
+  /// Field `stampGlazeMode`.
   final bool stampGlazeMode; // true=cap opacity, false=accumulate
+  /// Method `stampHueJitter`.
   final double stampHueJitter; // 0-30 (degrees of hue shift)
+  /// Method `stampSatJitter`.
   final double stampSatJitter; // 0-0.3 (saturation jitter)
+  /// Method `stampBrightJitter`.
   final double stampBrightJitter; // 0-0.2 (brightness jitter)
+  /// Method `stampTiltRotation`.
   final double stampTiltRotation; // 0-1 (tilt azimuth → rotation)
+  /// Method `stampTiltElongation`.
   final double stampTiltElongation; // 0-1 (tilt altitude → elongation)
+  /// Field `stampDualTexture`.
   final String stampDualTexture; // TextureType name for dual brush
+  /// Method `stampDualScale`.
   final double stampDualScale; // 0.5-3.0 (dual texture scale)
+  /// Method `stampDualBlend`.
   final double stampDualBlend; // 0-1 (dual brush intensity)
+  /// Method `stampPressureColor`.
   final double stampPressureColor; // 0-1 (pressure darkens color)
+  /// Method `stampWetMix`.
   final double stampWetMix; // 0-1 (color bleed between stamps)
+  /// Method `stampRoundnessJitter`.
   final double stampRoundnessJitter; // 0-1 (random elongation variation)
+  /// Method `stampColorGradient`.
   final double stampColorGradient; // 0-1 (fg→bg along stroke)
+  /// Method `stampAccumCap`.
   final double stampAccumCap; // 0-1 (max glaze opacity, 0=uncapped)
+  /// Method `stampSpacingPressure`.
   final double stampSpacingPressure; // 0-1 (pressure tightens spacing)
+  /// Method `stampTransferVelocity`.
   final double stampTransferVelocity; // 0-1 (slow→opaque)
+  /// Field `stampSymmetryAxes`.
   final int stampSymmetryAxes; // 0=off, 2=bilateral, 3+=radial
+  /// Field `stampEraserMode`.
   final bool stampEraserMode; // Use stamps to erase
+  /// Field `stampGrainScreenSpace`.
   final bool stampGrainScreenSpace; // true=paper-like grain
+  /// Field `stampShapeType`.
   final int stampShapeType; // 0=circle,1=square,2=diamond,3=star,4=leaf
+  /// Method `stampGrainScale`.
   final double stampGrainScale; // <1=fine (pencil), >1=coarse (charcoal)
-  final double
-  stampColorPressure; // 0-1 (pressure shifts color toward secondary)
+  /// Pressure-driven colour-shift toward the secondary stamp colour
+  /// (0..1).
+  final double stampColorPressure;
 
   // === PRESSURE CURVE (Phase 4A) ===
+  /// Field `pressureCurve`.
   final PressureCurve pressureCurve;
 
   // === VELOCITY CURVE (fountain pen only for now).
   // Remaps normalized velocity (distance/time/velocityReference) to the
   // speed factor that modulates stroke width.
+  /// Field `fountainVelocityCurve`.
   final VelocityCurve fountainVelocityCurve;
 
   // Reference velocity in px/ms that corresponds to "fast" (curve x=1.0).
   // Apple Pencil on ProMotion iPad Pro typically reaches ~2.0-3.0 px/ms on
   // fast handwriting, so 2.0 is a reasonable default.
+  /// Field `fountainVelocityReference`.
   final double fountainVelocityReference;
 
   // === STABILIZER (Phase 4B) ===
+  /// Field `stabilizerLevel`.
   final int stabilizerLevel; // 0 = off, 10 = max smoothing
 
   // === WATERCOLOR ===
+  /// Method `watercolorSpread`.
   final double watercolorSpread; // 0.0-2.0 (wet diffusion spread)
 
   // === MARKER ===
+  /// Method `markerFlatness`.
   final double markerFlatness; // 0.0-1.0 (chisel tip flatness)
 
   // === CHARCOAL ===
+  /// Method `charcoalGrain`.
   final double charcoalGrain; // 0.0-1.0 (paper grain erosion)
 
   // === TECHNICAL PEN ===
+  /// Field `techAngleSnap`.
   final bool techAngleSnap; // Snap lines to angle increments
+  /// Method `techSnapAngleDeg`.
   final double techSnapAngleDeg; // Snap resolution (15/30/45/90)
+  /// Field `techEndpointSnap`.
   final bool techEndpointSnap; // Close shape when end near start
+  /// Method `techCornerSharpening`.
   final double techCornerSharpening; // Corner sharpness threshold (0-1)
+  /// Field `techGridSnap`.
   final bool techGridSnap; // Snap to grid
+  /// Field `techGridSize`.
   final double techGridSize; // Grid cell size in logical pixels
+  /// Field `techStraightAssist`.
   final bool techStraightAssist; // Straighten slow straight segments
+  /// Field `techShowGuides`.
   final bool techShowGuides; // Show visual guides + measurements
+  /// Field `techParallelSnap`.
   final bool techParallelSnap; // Snap to previous stroke angle
+  /// Field `techPerpSnap`.
   final bool techPerpSnap; // Snap perpendicular to previous stroke
+  /// Field `techMultiSegment`.
   final bool techMultiSegment; // Tap-to-place connected points mode
 
   // === COLOR MANAGEMENT (Phase 4D) ===
+  /// Field `useWideGamut`.
   final bool useWideGamut; // false = sRGB, true = Display P3
 
+  /// API element `ProBrushSettings`.
   const ProBrushSettings({
     // Fountain Pen defaults (bilanciati v2.0)
     this.fountainMinPressure = 0.35,

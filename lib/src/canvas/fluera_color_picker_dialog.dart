@@ -42,6 +42,7 @@ Future<Color?> showFlueraColorPicker({
 /// (or `null` on cancel). Use [showFlueraColorPicker] for the
 /// imperative form.
 class FlueraColorPickerDialog extends StatefulWidget {
+  /// API element `FlueraColorPickerDialog`.
   const FlueraColorPickerDialog({
     super.key,
     required this.initial,
@@ -49,8 +50,11 @@ class FlueraColorPickerDialog extends StatefulWidget {
     this.enableAlpha = true,
   });
 
+  /// Field `initial`.
   final Color initial;
+  /// Field `title`.
   final String title;
+  /// Field `enableAlpha`.
   final bool enableAlpha;
 
   @override

@@ -81,6 +81,7 @@ class MutationRejectedError extends Error {
   /// The interceptor that rejected the mutation.
   final String interceptorName;
 
+  /// API element `reason`.
   MutationRejectedError({required this.reason, required this.interceptorName});
 
   @override

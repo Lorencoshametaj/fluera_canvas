@@ -53,8 +53,11 @@ abstract class CanvasNode {
     _opacity = value.clamp(0.0, 1.0);
   }
 
+  /// Field `ui`.
   ui.BlendMode blendMode;
+  /// Field `isVisible`.
   bool isVisible;
+  /// Field `isLocked`.
   bool isLocked;
 
   /// Non-destructive effects applied during rendering.
@@ -104,6 +107,7 @@ abstract class CanvasNode {
   // Constructor
   // ---------------------------------------------------------------------------
 
+  /// API element `CanvasNode`.
   CanvasNode({
     required this.id,
     this.name = '',
@@ -148,6 +152,7 @@ abstract class CanvasNode {
   Rect _cachedWorldBounds = Rect.zero;
   bool _worldBoundsDirty = true;
 
+  /// Getter `worldBounds`.
   Rect get worldBounds {
     if (!_worldBoundsDirty) return _cachedWorldBounds;
     final wt = worldTransform;
@@ -167,6 +172,7 @@ abstract class CanvasNode {
   late Matrix4 _cachedWorldTransform;
   bool _worldTransformDirty = true;
 
+  /// Getter `worldTransform`.
   Matrix4 get worldTransform {
     if (!_worldTransformDirty) return _cachedWorldTransform;
     if (parent == null) {
@@ -190,6 +196,7 @@ abstract class CanvasNode {
   /// **Package-internal** — do not set outside `GroupNode.invalidateTransformCache()`.
   bool propagatingTransform_ = false;
 
+  /// API element `invalidateTransformCache`.
   void invalidateTransformCache() {
     _worldTransformDirty = true;
     _worldBoundsDirty = true;

@@ -5,22 +5,38 @@ import 'dart:ui';
 /// Groups all color-related adjustments that were previously flat fields
 /// on ImageElement. This is a pure value object with JSON serialization.
 class ColorAdjustments {
+  /// Field `brightness`.
   final double brightness; // -1.0 to +1.0
+  /// Field `contrast`.
   final double contrast; // -1.0 to +1.0
+  /// Field `saturation`.
   final double saturation; // -1.0 to +1.0
+  /// Field `hueShift`.
   final double hueShift; // -1.0 to +1.0
+  /// Method `temperature`.
   final double temperature; // -1.0 to +1.0 (warm/cool)
+  /// Field `highlights`.
   final double highlights; // -1.0 to +1.0
+  /// Field `shadows`.
   final double shadows; // -1.0 to +1.0
+  /// Method `fade`.
   final double fade; // 0.0 to 1.0 (cinematic faded blacks)
+  /// Method `clarity`.
   final double clarity; // -1.0 to +1.0 (midtone contrast)
+  /// Method `texture`.
   final double texture; // -1.0 to +1.0 (fine detail)
+  /// Method `dehaze`.
   final double dehaze; // -1.0 to +1.0 (remove/add haze)
+  /// Method `splitHighlightColor`.
   final int splitHighlightColor; // Color.value or 0 (off)
+  /// Method `splitShadowColor`.
   final int splitShadowColor; // Color.value or 0 (off)
+  /// Method `splitBalance`.
   final double splitBalance; // -1.0 to +1.0 (shadow/highlight bias)
+  /// Field `splitIntensity`.
   final double splitIntensity; // 0.0 to 1.0
 
+  /// API element `ColorAdjustments`.
   const ColorAdjustments({
     this.brightness = 0.0,
     this.contrast = 0.0,
@@ -39,6 +55,7 @@ class ColorAdjustments {
     this.splitIntensity = 0.5,
   });
 
+  /// Method `identity`.
   static const identity = ColorAdjustments();
 
   /// Whether all values are at defaults (no adjustment needed)
@@ -59,6 +76,7 @@ class ColorAdjustments {
       splitBalance == 0 &&
       splitIntensity == 0.5;
 
+  /// API element `copyWith`.
   ColorAdjustments copyWith({
     double? brightness,
     double? contrast,
@@ -93,6 +111,7 @@ class ColorAdjustments {
     splitIntensity: splitIntensity ?? this.splitIntensity,
   );
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'brightness': brightness,
     'contrast': contrast,
@@ -111,6 +130,7 @@ class ColorAdjustments {
     'splitIntensity': splitIntensity,
   };
 
+  /// Method `fromJson`.
   factory ColorAdjustments.fromJson(Map<String, dynamic> json) =>
       ColorAdjustments(
         brightness: (json['brightness'] as num?)?.toDouble() ?? 0.0,

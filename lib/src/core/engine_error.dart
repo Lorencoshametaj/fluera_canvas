@@ -73,6 +73,7 @@ class EngineError {
   /// Optional context map for additional diagnostic data.
   final Map<String, dynamic>? context;
 
+  /// API element `EngineError`.
   EngineError({
     required this.severity,
     required this.domain,

@@ -22,10 +22,15 @@ import 'platform_guard_native.dart'
 class PlatformGuard {
   PlatformGuard._();
 
+  /// Getter `isAndroid`.
   static bool get isAndroid => !kIsWeb && impl.isAndroid;
+  /// Getter `isIOS`.
   static bool get isIOS => !kIsWeb && impl.isIOS;
+  /// Getter `isWindows`.
   static bool get isWindows => !kIsWeb && impl.isWindows;
+  /// Getter `isMacOS`.
   static bool get isMacOS => !kIsWeb && impl.isMacOS;
+  /// Getter `isLinux`.
   static bool get isLinux => !kIsWeb && impl.isLinux;
 
   /// Whether the platform is a mobile device (Android or iOS).

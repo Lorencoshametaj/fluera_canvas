@@ -84,11 +84,16 @@ class StrokePointPool {
 
 /// Statistics about pool usage.
 class PoolStatistics {
+  /// Field `poolSize`.
   final int poolSize;
+  /// Field `totalAllocated`.
   final int totalAllocated;
+  /// Field `totalReused`.
   final int totalReused;
+  /// Field `reuseRate`.
   final double reuseRate;
 
+  /// API element `PoolStatistics`.
   const PoolStatistics({
     required this.poolSize,
     required this.totalAllocated,

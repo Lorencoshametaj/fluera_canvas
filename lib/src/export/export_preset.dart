@@ -2,19 +2,29 @@ import 'package:flutter/material.dart';
 
 /// 📐 Export preset category
 enum ExportPresetCategory {
+  /// Method `paper`.
   paper, // Formati carta (A4, A3, Letter, etc.)
+  /// Method `social`.
   social, // Formati social media (Instagram, Twitter, etc.)
+  /// API element `custom`.
   custom, // Formato personalizzato
 }
 
 /// 📄 Formato pagina standard for export
 enum ExportPageFormat {
+  /// Enum value `a4Portrait`.
   a4Portrait,
+  /// Enum value `a4Landscape`.
   a4Landscape,
+  /// Enum value `a3Portrait`.
   a3Portrait,
+  /// Enum value `a3Landscape`.
   a3Landscape,
+  /// Enum value `letterPortrait`.
   letterPortrait,
+  /// Enum value `letterLandscape`.
   letterLandscape,
+  /// Enum value `custom`.
   custom,
 }
 
@@ -23,10 +33,15 @@ enum ExportPageFormat {
 /// Definisce formati predefiniti per esportare il canvas in diverse
 /// dimensioni e aspect ratio, ottimizzati per carta o social media.
 class ExportPreset {
+  /// Field `id`.
   final String id;
+  /// Field `name`.
   final String name;
+  /// Field `subtitle`.
   final String? subtitle;
+  /// Field `icon`.
   final IconData icon;
+  /// Field `category`.
   final ExportPresetCategory category;
 
   /// Aspect ratio (larghezza / altezza).
@@ -39,6 +54,7 @@ class ExportPreset {
   /// If true, l'utente can ridimensionare liberamente
   final bool isCustom;
 
+  /// API element `ExportPreset`.
   const ExportPreset({
     required this.id,
     required this.name,
@@ -122,6 +138,7 @@ class ExportPreset {
     fixedSize: Size(595, 842), // 72 DPI
   );
 
+  /// Method `a4Landscape`.
   static const ExportPreset a4Landscape = ExportPreset(
     id: 'a4_landscape',
     name: 'A4 Landscape',
@@ -132,6 +149,7 @@ class ExportPreset {
     fixedSize: Size(842, 595),
   );
 
+  /// Method `a3Portrait`.
   static const ExportPreset a3Portrait = ExportPreset(
     id: 'a3_portrait',
     name: 'A3 Portrait',
@@ -142,6 +160,7 @@ class ExportPreset {
     fixedSize: Size(842, 1191),
   );
 
+  /// Method `a3Landscape`.
   static const ExportPreset a3Landscape = ExportPreset(
     id: 'a3_landscape',
     name: 'A3 Landscape',
@@ -152,6 +171,7 @@ class ExportPreset {
     fixedSize: Size(1191, 842),
   );
 
+  /// Method `letterPortrait`.
   static const ExportPreset letterPortrait = ExportPreset(
     id: 'letter_portrait',
     name: 'Letter Portrait',
@@ -162,6 +182,7 @@ class ExportPreset {
     fixedSize: Size(612, 792),
   );
 
+  /// Method `letterLandscape`.
   static const ExportPreset letterLandscape = ExportPreset(
     id: 'letter_landscape',
     name: 'Letter Landscape',
@@ -183,6 +204,7 @@ class ExportPreset {
     fixedSize: Size(1080, 1080),
   );
 
+  /// Method `instagramPortrait`.
   static const ExportPreset instagramPortrait = ExportPreset(
     id: 'instagram_portrait',
     name: 'Instagram Portrait',
@@ -193,6 +215,7 @@ class ExportPreset {
     fixedSize: Size(1080, 1350),
   );
 
+  /// Method `instagramStory`.
   static const ExportPreset instagramStory = ExportPreset(
     id: 'instagram_story',
     name: 'Story / Reel',
@@ -203,6 +226,7 @@ class ExportPreset {
     fixedSize: Size(1080, 1920),
   );
 
+  /// Method `twitterPost`.
   static const ExportPreset twitterPost = ExportPreset(
     id: 'twitter_post',
     name: 'Twitter / X',
@@ -213,6 +237,7 @@ class ExportPreset {
     fixedSize: Size(1200, 675),
   );
 
+  /// Method `youtubeThumbnail`.
   static const ExportPreset youtubeThumbnail = ExportPreset(
     id: 'youtube_thumbnail',
     name: 'YouTube Thumbnail',
@@ -223,6 +248,7 @@ class ExportPreset {
     fixedSize: Size(1280, 720),
   );
 
+  /// Method `linkedInPost`.
   static const ExportPreset linkedInPost = ExportPreset(
     id: 'linkedin_post',
     name: 'LinkedIn',
@@ -233,6 +259,7 @@ class ExportPreset {
     fixedSize: Size(1200, 628),
   );
 
+  /// Method `facebookPost`.
   static const ExportPreset facebookPost = ExportPreset(
     id: 'facebook_post',
     name: 'Facebook',
@@ -253,6 +280,7 @@ class ExportPreset {
     isCustom: true,
   );
 
+  /// Method `custom`.
   static const ExportPreset custom = ExportPreset(
     id: 'custom',
     name: 'Custom',
@@ -302,18 +330,29 @@ class ExportPreset {
     }
   }
 }
-
 /// 🖼️ Formato di output for export
-enum ExportFormat { png, jpeg }
+
+enum ExportFormat {
+  /// PNG (lossless, supports transparency).
+  png,
+  /// JPEG (lossy, smaller file, no alpha).
+  jpeg,
+}
 
 /// ⚙️ Quality DPI for export
 enum ExportQuality {
+  /// Method `screen`.
   screen(72, 'Screen', '72 DPI'),
+  /// Method `standard`.
   standard(150, 'Standard', '150 DPI'),
+  /// Method `high`.
   high(300, 'High Quality', '300 DPI');
 
+  /// Field `dpi`.
   final double dpi;
+  /// Field `label`.
   final String label;
+  /// Field `subtitle`.
   final String subtitle;
 
   const ExportQuality(this.dpi, this.label, this.subtitle);
@@ -321,12 +360,18 @@ enum ExportQuality {
 
 /// 🎨 Opzioni di background for export
 enum ExportBackground {
+  /// Method `transparent`.
   transparent('Transparent', Icons.texture),
+  /// Method `white`.
   white('White', Icons.crop_square),
+  /// Method `solidColor`.
   solidColor('Solid Color', Icons.format_color_fill),
+  /// Method `withTemplate`.
   withTemplate('With Template', Icons.grid_on);
 
+  /// Field `label`.
   final String label;
+  /// Field `icon`.
   final IconData icon;
 
   const ExportBackground(this.label, this.icon);
@@ -334,22 +379,36 @@ enum ExportBackground {
 
 /// 📋 Complete configuration for export
 class ExportConfig {
+  /// Field `preset`.
   final ExportPreset preset;
+  /// Field `format`.
   final ExportFormat format;
+  /// Field `quality`.
   final ExportQuality quality;
+  /// Field `background`.
   final ExportBackground background;
+  /// Field `backgroundColor`.
   final Color? backgroundColor;
+  /// Field `paperType`.
   final String? paperType; // Paper type per background withTemplate
+  /// Field `exportArea`.
   final Rect exportArea;
+  /// Field `multiPage`.
   final bool multiPage;
+  /// Field `pageFormat`.
   final ExportPageFormat pageFormat;
+  /// Field `savedAreaName`.
   final String? savedAreaName; // If l'utente vuole salvare quest'area
 
   // PDF-specific options
+  /// Field `pdfAConformance`.
   final bool pdfAConformance;
+  /// Field `pdfWatermark`.
   final String? pdfWatermark;
+  /// Field `pdfPassword`.
   final String? pdfPassword;
 
+  /// API element `ExportConfig`.
   const ExportConfig({
     this.preset = ExportPreset.a4Portrait,
     this.format = ExportFormat.png,
@@ -366,6 +425,7 @@ class ExportConfig {
     this.pdfPassword,
   });
 
+  /// API element `copyWith`.
   ExportConfig copyWith({
     ExportPreset? preset,
     ExportFormat? format,

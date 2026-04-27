@@ -76,6 +76,7 @@ abstract class EngineEvent {
   /// Which subsystem produced this event.
   final EventDomain domain;
 
+  /// API element `source`.
   EngineEvent({required this.source, required this.domain})
     : timestamp = DateTime.now();
 }
@@ -94,37 +95,50 @@ mixin CriticalEvent on EngineEvent {}
 
 /// A node was added to the scene graph.
 class NodeAddedEngineEvent extends EngineEvent {
+  /// Field `node`.
   final CanvasNode node;
+  /// Field `parentId`.
   final String parentId;
 
+  /// API element `node`.
   NodeAddedEngineEvent({required this.node, required this.parentId})
     : super(source: 'SceneGraph', domain: EventDomain.sceneGraph);
 }
 
 /// A node was removed from the scene graph.
 class NodeRemovedEngineEvent extends EngineEvent {
+  /// Field `node`.
   final CanvasNode node;
+  /// Field `parentId`.
   final String parentId;
 
+  /// API element `node`.
   NodeRemovedEngineEvent({required this.node, required this.parentId})
     : super(source: 'SceneGraph', domain: EventDomain.sceneGraph);
 }
 
 /// A node's property changed.
 class NodePropertyChangedEngineEvent extends EngineEvent {
+  /// Field `node`.
   final CanvasNode node;
+  /// Field `property`.
   final String property;
 
+  /// API element `node`.
   NodePropertyChangedEngineEvent({required this.node, required this.property})
     : super(source: 'SceneGraph', domain: EventDomain.sceneGraph);
 }
 
 /// Children were reordered within a group.
 class NodeReorderedEngineEvent extends EngineEvent {
+  /// Field `parentId`.
   final String parentId;
+  /// Field `oldIndex`.
   final int oldIndex;
+  /// Field `newIndex`.
   final int newIndex;
 
+  /// API element `NodeReorderedEngineEvent`.
   NodeReorderedEngineEvent({
     required this.parentId,
     required this.oldIndex,
@@ -147,6 +161,7 @@ class SelectionChangedEngineEvent extends EngineEvent {
   /// Total number of selected nodes after this change.
   final int totalSelected;
 
+  /// API element `SelectionChangedEngineEvent`.
   SelectionChangedEngineEvent({
     required this.changeType,
     required this.affectedIds,
@@ -175,6 +190,7 @@ class VariableChangedEngineEvent extends EngineEvent {
   /// The new value.
   final dynamic newValue;
 
+  /// API element `VariableChangedEngineEvent`.
   VariableChangedEngineEvent({
     required this.variableId,
     this.modeId,
@@ -199,6 +215,7 @@ class MemoryPressureEngineEvent extends EngineEvent {
   /// Budget cap in MB.
   final int budgetCapMB;
 
+  /// API element `MemoryPressureEngineEvent`.
   MemoryPressureEngineEvent({
     required this.level,
     required this.totalEstimatedMB,
@@ -217,6 +234,7 @@ class ErrorReportedEngineEvent extends EngineEvent with CriticalEvent {
   /// The classified engine error.
   final EngineError error;
 
+  /// API element `error`.
   ErrorReportedEngineEvent({required this.error})
     : super(source: 'ErrorRecoveryService', domain: EventDomain.error);
 }
@@ -236,6 +254,7 @@ class CustomPluginEngineEvent extends EngineEvent {
   /// Optional payload data.
   final Map<String, dynamic>? data;
 
+  /// API element `CustomPluginEngineEvent`.
   CustomPluginEngineEvent({
     required this.pluginId,
     required this.name,
@@ -255,6 +274,7 @@ class BatchCompleteEngineEvent extends EngineEvent {
   /// How long the pause lasted.
   final Duration pauseDuration;
 
+  /// API element `BatchCompleteEngineEvent`.
   BatchCompleteEngineEvent({
     required this.suppressedCount,
     required this.pauseDuration,
@@ -273,6 +293,7 @@ class CommandExecutedEngineEvent extends EngineEvent {
   /// Runtime type name of the command (for telemetry).
   final String commandType;
 
+  /// API element `CommandExecutedEngineEvent`.
   CommandExecutedEngineEvent({
     required this.commandLabel,
     required this.commandType,
@@ -287,6 +308,7 @@ class CommandUndoneEngineEvent extends EngineEvent {
   /// Runtime type name of the command (for telemetry).
   final String commandType;
 
+  /// API element `CommandUndoneEngineEvent`.
   CommandUndoneEngineEvent({
     required this.commandLabel,
     required this.commandType,
@@ -302,6 +324,7 @@ class AccessibilityTreeChangedEvent extends EngineEvent {
   /// Number of accessible nodes in the new tree.
   final int nodeCount;
 
+  /// API element `nodeCount`.
   AccessibilityTreeChangedEvent({required this.nodeCount})
     : super(source: 'AccessibilityBridge', domain: EventDomain.accessibility);
 }
@@ -312,6 +335,7 @@ class AccessibilityTreeChangedEvent extends EngineEvent {
 
 /// Animation playback started.
 class AnimationPlaybackStartedEvent extends EngineEvent {
+  /// Method `AnimationPlaybackStartedEvent`.
   AnimationPlaybackStartedEvent()
     : super(source: 'AnimationPlayer', domain: EventDomain.animation);
 }
@@ -321,6 +345,7 @@ class AnimationPlaybackStoppedEvent extends EngineEvent {
   /// Whether playback completed naturally (reached end) vs. was stopped.
   final bool completed;
 
+  /// API element `completed`.
   AnimationPlaybackStoppedEvent({required this.completed})
     : super(source: 'AnimationPlayer', domain: EventDomain.animation);
 }
@@ -330,6 +355,7 @@ class AnimationFrameEvent extends EngineEvent {
   /// Current playback time.
   final Duration time;
 
+  /// API element `time`.
   AnimationFrameEvent({required this.time})
     : super(source: 'AnimationPlayer', domain: EventDomain.animation);
 }
@@ -346,6 +372,7 @@ class ProfileRecommendationsChangedEvent extends EngineEvent {
   /// Current tile prefetch bias.
   final double prefetchBias;
 
+  /// API element `ProfileRecommendationsChangedEvent`.
   ProfileRecommendationsChangedEvent({
     required this.stabilizerLevel,
     required this.prefetchBias,
@@ -357,6 +384,7 @@ class LintCompletedEvent extends EngineEvent {
   /// Number of violations found.
   final int violationCount;
 
+  /// API element `violationCount`.
   LintCompletedEvent({required this.violationCount})
     : super(source: 'ConsciousArchitecture', domain: EventDomain.intelligence);
 }
@@ -366,6 +394,7 @@ class SnapThresholdChangedEvent extends EngineEvent {
   /// New threshold in canvas pixels.
   final double threshold;
 
+  /// API element `threshold`.
   SnapThresholdChangedEvent({required this.threshold})
     : super(source: 'ConsciousArchitecture', domain: EventDomain.intelligence);
 }

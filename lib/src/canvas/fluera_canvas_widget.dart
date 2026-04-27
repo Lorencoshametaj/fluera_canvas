@@ -77,6 +77,7 @@ class CanvasStroke {
   /// Base stroke width in world units. Pressure scales this linearly.
   final double baseWidth;
 
+  /// API element `CanvasStroke`.
   CanvasStroke({
     required this.points,
     required this.pressures,
@@ -552,6 +553,7 @@ enum FlueraExportBounds {
 /// }
 /// ```
 class FlueraCanvas extends StatefulWidget {
+  /// API element `FlueraCanvas`.
   const FlueraCanvas({
     super.key,
     this.controller,
@@ -735,6 +737,7 @@ class FlueraCanvas extends StatefulWidget {
   State<FlueraCanvas> createState() => FlueraCanvasState();
 }
 
+/// API element `class`.
 class FlueraCanvasState extends State<FlueraCanvas>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   late final InfiniteCanvasController _controller;
@@ -3859,6 +3862,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
     return true;
   }
 
+  /// API element `setLayerFlueraBlendMode`.
   bool setLayerFlueraBlendMode(NodeId id, FlueraBlendMode mode) {
     final layer = _findLayer(id);
     if (layer == null) return false;
@@ -6354,15 +6358,20 @@ class _NudgeIntent extends Intent {
 /// `[rangeStart, rangeEnd]` is the world-space extent on the
 /// non-axis dimension.
 class SmartGuideLine {
+  /// API element `SmartGuideLine`.
   const SmartGuideLine({
     required this.axis,
     required this.position,
     required this.rangeStart,
     required this.rangeEnd,
   });
+  /// Field `axis`.
   final Axis axis;
+  /// Field `position`.
   final double position;
+  /// Field `rangeStart`.
   final double rangeStart;
+  /// Field `rangeEnd`.
   final double rangeEnd;
 }
 

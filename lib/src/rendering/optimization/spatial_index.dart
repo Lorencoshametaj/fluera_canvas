@@ -72,6 +72,7 @@ class RTree<T> {
   /// Threshold: auto-rebuild when total mutations exceed this fraction of count.
   static const double _mutationRebuildThreshold = 0.30;
 
+  /// API element `_boundsOf`.
   RTree(this._boundsOf, {int maxEntries = 16})
     : _maxEntries = maxEntries,
       _minEntries = (maxEntries / 2).ceil();
@@ -707,6 +708,7 @@ class SpatialIndexManager {
   /// R-tree for text elements.
   RTree<DigitalTextElement>? _textTree;
 
+  /// API element `build`.
   void build({
     required List<ProStroke> strokes,
     required List<GeometricShape> shapes,

@@ -82,6 +82,7 @@ class NodeConstraint {
   /// Whether this constraint is currently active.
   bool isEnabled;
 
+  /// API element `NodeConstraint`.
   NodeConstraint({
     required this.id,
     required this.type,
@@ -93,6 +94,7 @@ class NodeConstraint {
 
   // -- Serialization --------------------------------------------------------
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'id': id,
     'type': type.name,
@@ -102,6 +104,7 @@ class NodeConstraint {
     if (!isEnabled) 'isEnabled': false,
   };
 
+  /// API element `fromJson`.
   factory NodeConstraint.fromJson(Map<String, dynamic> json) {
     return NodeConstraint(
       id: json['id'] as String,
@@ -152,6 +155,7 @@ class NodeConstraintSolver {
   /// Function to resolve a node ID to its [CanvasNode].
   final CanvasNode? Function(String id) nodeResolver;
 
+  /// API element `constraints`.
   NodeConstraintSolver({required this.constraints, required this.nodeResolver});
 
   /// Solve all constraints iteratively.

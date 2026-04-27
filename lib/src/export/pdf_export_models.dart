@@ -27,6 +27,7 @@ class PdfImageXObject {
   /// Optional SMask object ID (for alpha channel).
   final int? smaskId;
 
+  /// API element `PdfImageXObject`.
   const PdfImageXObject({
     required this.objectId,
     required this.resourceName,
@@ -54,6 +55,7 @@ class PdfBookmark {
   /// Child bookmarks (for nested outline hierarchy).
   final List<PdfBookmark> children;
 
+  /// API element `PdfBookmark`.
   const PdfBookmark({
     required this.title,
     required this.pageIndex,
@@ -97,6 +99,7 @@ class PdfWatermark {
   /// Position mode.
   final WatermarkPosition position;
 
+  /// API element `PdfWatermark`.
   const PdfWatermark({
     required this.text,
     this.fontSize = 72,
@@ -123,9 +126,11 @@ class PdfLinkAnnotation {
   /// Destination page index for internal links.
   final int? destPageIndex;
 
+  /// API element `uri`.
   const PdfLinkAnnotation.uri({required this.rect, required String this.uri})
     : destPageIndex = null;
 
+  /// API element `page`.
   const PdfLinkAnnotation.page({
     required this.rect,
     required int this.destPageIndex,
@@ -173,6 +178,7 @@ class PdfPageLabel {
   /// Starting number (default: 1).
   final int startNumber;
 
+  /// API element `PdfPageLabel`.
   const PdfPageLabel({
     required this.startPage,
     this.style = PageLabelStyle.decimal,
@@ -205,11 +211,16 @@ sealed class PdfFormField {
 
 /// Interactive text input field.
 class PdfTextField extends PdfFormField {
+  /// Field `defaultValue`.
   final String defaultValue;
+  /// Field `fontSize`.
   final double fontSize;
+  /// Field `multiline`.
   final bool multiline;
+  /// Field `maxLength`.
   final int maxLength;
 
+  /// API element `PdfTextField`.
   const PdfTextField({
     required super.name,
     required super.rect,
@@ -223,8 +234,10 @@ class PdfTextField extends PdfFormField {
 
 /// Checkbox toggle field.
 class PdfCheckboxField extends PdfFormField {
+  /// Field `defaultChecked`.
   final bool defaultChecked;
 
+  /// API element `PdfCheckboxField`.
   const PdfCheckboxField({
     required super.name,
     required super.rect,
@@ -235,10 +248,14 @@ class PdfCheckboxField extends PdfFormField {
 
 /// Dropdown / combo-box selection field.
 class PdfDropdownField extends PdfFormField {
+  /// Field `options`.
   final List<String> options;
+  /// Field `defaultValue`.
   final String? defaultValue;
+  /// Field `editable`.
   final bool editable;
 
+  /// API element `PdfDropdownField`.
   const PdfDropdownField({
     required super.name,
     required super.rect,
@@ -255,11 +272,16 @@ class PdfDropdownField extends PdfFormField {
 
 /// A content redaction area on a PDF page.
 class PdfRedaction {
+  /// Field `ui`.
   final ui.Rect rect;
+  /// Field `ui`.
   final ui.Color overlayColor;
+  /// Field `replacementText`.
   final String? replacementText;
+  /// Field `pageIndex`.
   final int pageIndex;
 
+  /// API element `PdfRedaction`.
   const PdfRedaction({
     required this.rect,
     this.overlayColor = const ui.Color(0xFF000000),

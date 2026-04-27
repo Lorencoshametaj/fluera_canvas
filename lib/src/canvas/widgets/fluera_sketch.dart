@@ -62,6 +62,7 @@ enum FlueraSketchPreset {
 /// FlueraSketch(canvasKey: myKey, initialBytes: bytesFromDisk); // restore
 /// ```
 class FlueraSketch extends StatefulWidget {
+  /// API element `FlueraSketch`.
   const FlueraSketch({
     super.key,
     this.preset = FlueraSketchPreset.whiteboard,
@@ -197,6 +198,7 @@ class _FlueraSketchState extends State<FlueraSketch> {
 /// );
 /// ```
 class FlueraSketchScaffold extends StatefulWidget {
+  /// API element `FlueraSketchScaffold`.
   const FlueraSketchScaffold({
     super.key,
     this.title = 'Sketch',
@@ -467,6 +469,7 @@ class _FlueraSketchScaffoldState extends State<FlueraSketchScaffold> {
 /// directly when you need to embed the sketch as a page inside an
 /// existing `MaterialApp`.
 class FlueraSketchApp extends StatelessWidget {
+  /// API element `FlueraSketchApp`.
   const FlueraSketchApp({
     super.key,
     this.title = 'Sketch',
@@ -479,13 +482,21 @@ class FlueraSketchApp extends StatelessWidget {
     this.onExportPng,
   });
 
+  /// Field `title`.
   final String title;
+  /// Field `preset`.
   final FlueraSketchPreset preset;
+  /// Field `themeMode`.
   final ThemeMode? themeMode;
+  /// Field `background`.
   final CanvasBackground? background;
+  /// Method `bytes`.
   final Future<void> Function(Uint8List bytes)? onAutoSave;
+  /// Method `onAutoLoad`.
   final Future<Uint8List?> Function()? onAutoLoad;
+  /// Field `autoSaveDebounce`.
   final Duration autoSaveDebounce;
+  /// Method `bytes`.
   final Future<void> Function(Uint8List bytes)? onExportPng;
 
   @override

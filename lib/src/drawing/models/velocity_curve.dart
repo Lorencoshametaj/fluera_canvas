@@ -10,9 +10,12 @@ import 'package:flutter/material.dart';
 /// thinner at high speed. Gentler curves produce more uniform strokes;
 /// aggressive curves exaggerate the swoosh at fast motion like GoodNotes.
 class VelocityCurve {
+  /// Field `p1`.
   final Offset p1;
+  /// Field `p2`.
   final Offset p2;
 
+  /// API element `VelocityCurve`.
   const VelocityCurve({
     this.p1 = const Offset(0.25, 0.25),
     this.p2 = const Offset(0.75, 0.75),
@@ -45,6 +48,7 @@ class VelocityCurve {
     p2: Offset(0.35, 0.95),
   );
 
+  /// API element `presets`.
   static const Map<String, VelocityCurve> presets = {
     'linear': linear,
     'gentle': gentle,
@@ -52,6 +56,7 @@ class VelocityCurve {
     'aggressive': aggressive,
   };
 
+  /// API element `evaluate`.
   double evaluate(double normalized) {
     final x = normalized.clamp(0.0, 1.0);
     if (x <= 0.0) return 0.0;
@@ -94,6 +99,7 @@ class VelocityCurve {
     return t;
   }
 
+  /// Getter `isLinear`.
   bool get isLinear {
     const eps = 0.01;
     return (p1.dx - 0.25).abs() < eps &&
@@ -102,6 +108,7 @@ class VelocityCurve {
         (p2.dy - 0.75).abs() < eps;
   }
 
+  /// Getter `presetName`.
   String? get presetName {
     const eps = 0.02;
     for (final entry in presets.entries) {
@@ -115,6 +122,7 @@ class VelocityCurve {
     return null;
   }
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'p1x': _round3(p1.dx),
     'p1y': _round3(p1.dy),
@@ -122,6 +130,7 @@ class VelocityCurve {
     'p2y': _round3(p2.dy),
   };
 
+  /// API element `fromJson`.
   factory VelocityCurve.fromJson(Map<String, dynamic>? json) {
     if (json == null) return VelocityCurve.linear;
     return VelocityCurve(

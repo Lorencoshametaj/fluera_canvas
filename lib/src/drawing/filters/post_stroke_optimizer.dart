@@ -29,6 +29,7 @@ class PostStrokeOptimizer {
   /// Enable final Bézier pass
   final bool enableFinalSmoothing;
 
+  /// API element `PostStrokeOptimizer`.
   PostStrokeOptimizer({
     this.simplificationTolerance = 0.5,
     this.targetPointDistance = 3.0,

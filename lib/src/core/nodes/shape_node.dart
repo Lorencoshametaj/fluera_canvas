@@ -17,6 +17,7 @@ class ShapeNode extends CanvasNode with PaintStackMixin {
   /// Optional mesh gradient fill (rendered instead of solid fill).
   MeshGradient? meshGradient;
 
+  /// API element `ShapeNode`.
   ShapeNode({
     required super.id,
     required this.shape,
@@ -85,6 +86,7 @@ class ShapeNode extends CanvasNode with PaintStackMixin {
     return json;
   }
 
+  /// API element `fromJson`.
   factory ShapeNode.fromJson(Map<String, dynamic> json) {
     final shape = GeometricShape.fromJson(
       json['shape'] as Map<String, dynamic>,

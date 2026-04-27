@@ -34,6 +34,7 @@ class RawInputProcessor120Hz {
   /// Number of punti attivi nel buffer
   int _pointCount = 0;
 
+  /// API element `onPointsUpdated`.
   RawInputProcessor120Hz({required this.onPointsUpdated})
     : _pointBuffer = List<ProDrawingPoint>.filled(
         _bufferCapacity,

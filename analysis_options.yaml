@@ -19,12 +19,7 @@ analyzer:
 
 linter:
   rules:
-    public_member_api_docs: false  # Enabled for pub.dev — exported symbols already documented.
-    # NOTE: kept `false` for now because Dart's lint flags every public
-    # member of every class (incl. constructors / fields), not just the
-    # top-level types. The 5 top-level exports flagged at audit time
-    # (0.10.0) have all been given a docstring; flipping this to `true`
-    # would surface ~3000 hits on internal class members. Pana already
-    # only checks top-level public symbols, so disabled-here doesn't
-    # cost the score and keeps `flutter analyze` clean.
+    public_member_api_docs: true  # 0.10.2+ sweep brought every public
+    # API element to a documented state — the lint stays on so future
+    # additions can't regress dartdoc coverage.
     avoid_print: true

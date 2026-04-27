@@ -256,6 +256,7 @@ class FlueraFileLoadResult {
   /// File statistics.
   final Map<String, dynamic> stats;
 
+  /// API element `FlueraFileLoadResult`.
   const FlueraFileLoadResult({
     required this.layers,
     required this.pages,

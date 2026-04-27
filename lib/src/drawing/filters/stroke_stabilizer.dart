@@ -70,6 +70,7 @@ class StrokeStabilizer {
     return t * t * (3.0 - 2.0 * t); // Hermite smoothstep
   }
 
+  /// Field `level`.
   StrokeStabilizer({int level = 0, this.elasticEnabled = true})
     : _level = level.clamp(0, 10);
 

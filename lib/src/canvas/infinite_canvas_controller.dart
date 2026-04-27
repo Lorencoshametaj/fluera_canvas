@@ -44,6 +44,7 @@ class CameraKeyframe {
   /// Easing curve for this phase.
   final Curve curve;
 
+  /// API element `CameraKeyframe`.
   const CameraKeyframe({
     required this.targetOffset,
     required this.targetScale,
@@ -104,8 +105,11 @@ class InfiniteCanvasController extends ChangeNotifier {
   VoidCallback? onGestureEnd;
 
   // Getters
+  /// Getter `offset`.
   Offset get offset => _offset;
+  /// Getter `scale`.
   double get scale => _scale;
+  /// Getter `rotation`.
   double get rotation => _rotation;
 
   /// 🚀 Current pan velocity from active momentum simulation.
@@ -123,7 +127,9 @@ class InfiniteCanvasController extends ChangeNotifier {
   // 🌀 Rotation lock (default: LOCKED for first-time users)
   bool _rotationLocked =
       true; // 🔒 Locked by default — simpler first experience
+  /// Getter `rotationLocked`.
   bool get rotationLocked => _rotationLocked;
+  /// API element `rotationLocked`.
   set rotationLocked(bool value) {
     _rotationLocked = value;
     notifyListeners();
@@ -155,7 +161,9 @@ class InfiniteCanvasController extends ChangeNotifier {
 
   /// Physics configuration (injectable, immutable)
   LiquidCanvasConfig _liquidConfig = const LiquidCanvasConfig();
+  /// Getter `liquidConfig`.
   LiquidCanvasConfig get liquidConfig => _liquidConfig;
+  /// API element `liquidConfig`.
   set liquidConfig(LiquidCanvasConfig config) {
     _liquidConfig = config;
   }
@@ -279,6 +287,7 @@ class InfiniteCanvasController extends ChangeNotifier {
   /// or running any physics animation (momentum, spring-back).
   /// Painters use this to skip expensive work during all gesture types.
   bool _isPanning = false;
+  /// Getter `isPanning`.
   bool get isPanning =>
       _isPanning ||
       _isMomentumActive ||
@@ -286,6 +295,7 @@ class InfiniteCanvasController extends ChangeNotifier {
       _isRotationSpringActive ||
       _isZoomSpringActive ||
       _isZoomMomentumActive;
+  /// API element `isPanning`.
   set isPanning(bool value) {
     final wasActive = _isPanning;
     _isPanning = value;

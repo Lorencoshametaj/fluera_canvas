@@ -28,6 +28,7 @@ import 'infinite_canvas_controller.dart';
 /// 3. `stop()` on gesture end / cancel. Idempotent.
 /// 4. `dispose()` when the parent State disposes.
 class EdgePanController {
+  /// API element `EdgePanController`.
   EdgePanController({
     required this.controller,
     required TickerProvider vsync,

@@ -16,30 +16,43 @@ abstract class SceneGraphEvent {
 
 /// A node was added to the tree.
 class NodeAddedEvent extends SceneGraphEvent {
+  /// Field `node`.
   final CanvasNode node;
+  /// Field `parentId`.
   final String parentId;
+  /// Method `node`.
   NodeAddedEvent(this.node, this.parentId);
 }
 
 /// A node was removed from the tree.
 class NodeRemovedEvent extends SceneGraphEvent {
+  /// Field `node`.
   final CanvasNode node;
+  /// Field `parentId`.
   final String parentId;
+  /// Method `node`.
   NodeRemovedEvent(this.node, this.parentId);
 }
 
 /// A node's properties changed.
 class NodeChangedEvent extends SceneGraphEvent {
+  /// Field `node`.
   final CanvasNode node;
+  /// Field `property`.
   final String property;
+  /// Method `node`.
   NodeChangedEvent(this.node, this.property);
 }
 
 /// Children were reordered within a group.
 class NodeReorderedEvent extends SceneGraphEvent {
+  /// Field `parentId`.
   final String parentId;
+  /// Field `oldIndex`.
   final int oldIndex;
+  /// Field `newIndex`.
   final int newIndex;
+  /// Method `parentId`.
   NodeReorderedEvent(this.parentId, this.oldIndex, this.newIndex);
 }
 

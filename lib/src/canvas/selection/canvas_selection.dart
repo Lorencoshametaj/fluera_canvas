@@ -25,6 +25,7 @@ import '../../core/scene_graph/node_id.dart';
 /// snapshot so observers (UI overlays, transform handles) don't have
 /// to re-walk the graph each frame.
 class CanvasSelection {
+  /// API element `CanvasSelection`.
   CanvasSelection({
     required this.ids,
     required this.bounds,
@@ -56,12 +57,17 @@ class CanvasSelection {
   /// when no rotation/scale is active on the selected node.
   final Matrix4 frameTransform;
 
+  /// Getter `isEmpty`.
   bool get isEmpty => ids.isEmpty;
+  /// Getter `isNotEmpty`.
   bool get isNotEmpty => ids.isNotEmpty;
+  /// Getter `length`.
   int get length => ids.length;
 
+  /// Method `contains`.
   bool contains(NodeId id) => ids.contains(id);
 
+  /// API element `copyWith`.
   CanvasSelection copyWith({
     Set<NodeId>? ids,
     Rect? bounds,
@@ -104,6 +110,7 @@ class CanvasSelection {
 class CanvasSelectionController extends ChangeNotifier {
   CanvasSelection _value = CanvasSelection.empty;
 
+  /// Getter `value`.
   CanvasSelection get value => _value;
 
   /// Replace the active selection. No-ops when [next] is structurally

@@ -4,10 +4,15 @@ import '../../drawing/brushes/brush_texture.dart';
 
 /// 🎨 Paper type for the canvas background
 enum PaperType {
+  /// Method `smooth`.
   smooth, // Carta liscia (nessuna grana)
+  /// Method `coldPress`.
   coldPress, // Carta pressata a freddo (grana media)
+  /// Method `hotPress`.
   hotPress, // Carta pressata a caldo (grana fine)
+  /// Method `canvas`.
   canvas, // Tela pittura (grana regolare)
+  /// Method `kraft`.
   kraft, // Carta kraft (grana con fibre)
 }
 
@@ -30,6 +35,7 @@ class PaperGrainPainter extends CustomPainter {
   /// If true, la texture is stata caricata ed is pronta
   final ui.Image? textureImage;
 
+  /// API element `PaperGrainPainter`.
   const PaperGrainPainter({
     required this.paperType,
     this.opacity = 0.15,

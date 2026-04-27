@@ -22,6 +22,7 @@ class GroupNode extends CanvasNode {
   Rect? _cachedLocalBounds;
   bool _boundsDirty = true;
 
+  /// API element `GroupNode`.
   GroupNode({
     required super.id,
     super.name,

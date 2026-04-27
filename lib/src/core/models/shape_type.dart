@@ -3,33 +3,56 @@ import '../effects/gradient_fill.dart';
 
 /// Tipi di figure geometriche disegnabili
 enum ShapeType {
+  /// Method `freehand`.
   freehand, // Disegno a mano libera (default)
+  /// API element `line`.
   line, // Linea retta
+  /// API element `rectangle`.
   rectangle, // Rettangolo
+  /// API element `circle`.
   circle, // Cerchio/Ellisse
+  /// API element `triangle`.
   triangle, // Triangolo
+  /// API element `arrow`.
   arrow, // Freccia
+  /// API element `star`.
   star, // Stella a 5 punte
+  /// API element `heart`.
   heart, // Cuore
+  /// API element `diamond`.
   diamond, // Rombo
+  /// API element `pentagon`.
   pentagon, // Pentagono
+  /// API element `hexagon`.
   hexagon, // Esagono
 }
 
 /// Modello per a geometric shape
 class GeometricShape {
+  /// Field `id`.
   final String id;
+  /// Field `type`.
   final ShapeType type;
+  /// Field `startPoint`.
   final Offset startPoint;
+  /// Field `endPoint`.
   final Offset endPoint;
+  /// Field `color`.
   final Color color;
+  /// Field `strokeWidth`.
   final double strokeWidth;
+  /// Field `filled`.
   final bool filled;
+  /// Field `createdAt`.
   final DateTime createdAt;
+  /// Field `fillGradient`.
   final GradientFill? fillGradient;
+  /// Field `strokeGradient`.
   final GradientFill? strokeGradient;
+  /// Method `rotation`.
   final double rotation; // Rotation angle in radians (for rotated shapes)
 
+  /// API element `GeometricShape`.
   GeometricShape({
     required this.id,
     required this.type,

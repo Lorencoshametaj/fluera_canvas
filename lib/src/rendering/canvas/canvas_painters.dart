@@ -3,11 +3,15 @@ import 'dart:ui' as ui;
 
 /// 🖼️ Painter per disegnare l'background image
 class BackgroundImagePainter extends CustomPainter {
+  /// Field `ui`.
   final ui.Image image;
+  /// Field `isImageEditMode`.
   final bool isImageEditMode;
+  /// API element `viewportSize`.
   final Size?
   viewportSize; // Viewport dimensions for scaling in image edit mode
 
+  /// API element `BackgroundImagePainter`.
   BackgroundImagePainter({
     required this.image,
     this.isImageEditMode = false,
@@ -39,10 +43,14 @@ class BackgroundImagePainter extends CustomPainter {
 
 /// Painter for full-screen dark overlay with holes for pages
 class FullScreenDarkOverlayPainter extends CustomPainter {
+  /// Field `pageBounds`.
   final List<Rect> pageBounds;
+  /// Field `canvasScale`.
   final double canvasScale;
+  /// Field `canvasOffset`.
   final Offset canvasOffset;
 
+  /// API element `FullScreenDarkOverlayPainter`.
   FullScreenDarkOverlayPainter({
     required this.pageBounds,
     required this.canvasScale,

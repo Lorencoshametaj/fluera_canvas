@@ -10,9 +10,12 @@ class ToneCurve {
 
   /// Per-channel control points (empty = identity for that channel).
   final List<CurvePoint> redPoints;
+  /// Field `greenPoints`.
   final List<CurvePoint> greenPoints;
+  /// Field `bluePoints`.
   final List<CurvePoint> bluePoints;
 
+  /// API element `ToneCurve`.
   const ToneCurve({
     this.points = const [],
     this.redPoints = const [],
@@ -139,6 +142,7 @@ class ToneCurve {
       'bluePoints': bluePoints.map((p) => {'x': p.x, 'y': p.y}).toList(),
   };
 
+  /// API element `fromJson`.
   factory ToneCurve.fromJson(Map<String, dynamic> json) {
     List<CurvePoint> parsePts(String key) =>
         (json[key] as List<dynamic>?)
@@ -158,6 +162,7 @@ class ToneCurve {
     );
   }
 
+  /// API element `copyWith`.
   ToneCurve copyWith({
     List<CurvePoint>? points,
     List<CurvePoint>? redPoints,
@@ -173,9 +178,12 @@ class ToneCurve {
 
 /// A single control point on the tone curve
 class CurvePoint {
+  /// Method `x`.
   final double x; // 0.0-1.0 (input luminance)
+  /// Method `y`.
   final double y; // 0.0-1.0 (output luminance)
 
+  /// Method `x`.
   const CurvePoint(this.x, this.y);
 
   @override

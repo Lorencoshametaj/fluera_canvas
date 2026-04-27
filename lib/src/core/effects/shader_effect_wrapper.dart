@@ -15,6 +15,7 @@ class ShaderEffectWrapper extends NodeEffect {
   /// The underlying shader effect configuration.
   final ShaderEffect effect;
 
+  /// API element `effect`.
   ShaderEffectWrapper({required this.effect, super.isEnabled});
 
   @override
@@ -30,6 +31,7 @@ class ShaderEffectWrapper extends NodeEffect {
     'effect': effect.toJson(),
   };
 
+  /// Method `fromJson`.
   factory ShaderEffectWrapper.fromJson(Map<String, dynamic> json) =>
       ShaderEffectWrapper(
         effect: ShaderEffect.fromJson(json['effect'] as Map<String, dynamic>),

@@ -21,11 +21,15 @@ import 'dart:math' as math;
 
 /// A predicted point with both position and pressure.
 class PredictedPoint {
+  /// Field `position`.
   final Offset position;
+  /// Field `pressure`.
   final double pressure;
+  /// Method `position`.
   const PredictedPoint(this.position, this.pressure);
 }
 
+/// API element `class`.
 class PredictiveRenderer {
   /// Number of points to predict ahead.
   final int predictedPointsCount;
@@ -40,6 +44,7 @@ class PredictiveRenderer {
   final List<_PointWithTime> _recentPoints = [];
   static const int _maxRecentPoints = 6;
 
+  /// API element `PredictiveRenderer`.
   PredictiveRenderer({
     this.predictedPointsCount = 2,
     this.ghostOpacity = 0.08,

@@ -688,34 +688,6 @@ AndroidManifest tweaks, no Podfile changes.
   `Listener.onPointerDown` (button == 2) and
   `Clipboard.setData` / `Clipboard.getData` if your UX needs them.
 
-## Optional native GPU live-stroke (commercial add-on)
-
-The free `fluera_canvas` widget renders the live stroke through a Dart
-`CustomPainter`. Latency is ~12–16 ms, which is fine for note-taking and
-whiteboards on a flagship device.
-
-If you need sub-frame latency on a wide range of hardware (Procreate /
-Goodnotes-class UX), the commercial **`fluera_canvas_gpu`** package
-plugs a native renderer into the same widget tree via the public
-`GpuStrokeBackend` interface that ships in this core. Backends:
-Android Vulkan, iOS / macOS Metal, Linux OpenGL, Windows Direct3D 11,
-Web WebGPU. Wire it once at `main()`:
-
-```dart
-import 'package:fluera_canvas_gpu/fluera_canvas_gpu.dart';
-
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  FlueraCanvasGpu.setBackend(FlueraCanvasGpuBackend());
-  runApp(const MyApp());
-}
-```
-
-With no backend registered the canvas falls back to the Dart painter
-silently — your app keeps working everywhere `fluera_canvas` works.
-See [engine.fluera.dev/pricing](https://engine.fluera.dev/pricing) for
-the licensing tiers.
-
 ## Export
 
 `fluera_canvas` free ships **PNG raster** export with four
@@ -780,26 +752,17 @@ is rejected over 16 384 px per side (GPU max texture). Helpful
 sibling getters: `state.contentBoundsWorld`, `state.selectionBoundsWorld`,
 `state.viewportCenterWorld`, `state.viewportSize`.
 
-**Vector formats** — SVG 1.1, PDF 1.5 with multi-page picker, OCG
-toggleable layers, blend modes via `/ExtGState /BM`, watermarks,
-PDF/A-1b conformance, drop-in `FlueraPdfExportButton` widget — ship
-in the commercial **`fluera_canvas_gpu`** package. They serve the
-design-tool / pre-print / plotter customer segments and live behind
-the Indie €399 / Team €1499 license tier. See
-[engine.fluera.dev/pricing](https://engine.fluera.dev/pricing).
+## Beyond the free tier
 
-## What's *not* in here
-
-- Advanced brush engines (watercolor, charcoal, fountain pen, oil, neon,
-  ink wash, marker)
-- Real-time collaboration (CRDT, vector clocks)
-- PDF annotation editing
-- LaTeX OCR and AI-assisted tools
-- SQLCipher encrypted storage
-- Timeline branching and time-travel playback
-
-All of the above ship in the commercial `fluera_engine_pro` package. See
-[engine.fluera.dev/pricing](https://engine.fluera.dev/pricing) for details.
+Vector export (SVG / PDF), native sub-frame live-stroke latency, advanced
+brush engines, real-time collaboration, PDF annotation, LaTeX OCR,
+SQLCipher storage and timeline playback are intentionally **not** in this
+package. They're available as optional commercial add-ons (`fluera_canvas_gpu`,
+`fluera_engine_pro`) that plug into the same scene graph via the public
+`GpuStrokeBackend` hook — no fork, no rewrite. See
+**[doc/commercial-add-ons.md](doc/commercial-add-ons.md)** for the full
+list and pricing pointer. The free `fluera_canvas` package on its own is
+production-ready.
 
 ## FAQ / Troubleshooting
 

@@ -87,11 +87,16 @@ class PathPool {
 
 /// Statistics about path pool usage.
 class PathPoolStatistics {
+  /// Field `poolSize`.
   final int poolSize;
+  /// Field `totalAllocated`.
   final int totalAllocated;
+  /// Field `totalReused`.
   final int totalReused;
+  /// Field `reuseRate`.
   final double reuseRate;
 
+  /// API element `PathPoolStatistics`.
   const PathPoolStatistics({
     required this.poolSize,
     required this.totalAllocated,

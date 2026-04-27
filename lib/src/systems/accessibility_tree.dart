@@ -85,6 +85,7 @@ class AccessibilityInfo {
   /// Custom actions available on this element.
   final List<AccessibilityAction> customActions;
 
+  /// API element `AccessibilityInfo`.
   AccessibilityInfo({
     this.role = AccessibilityRole.decorative,
     this.label,
@@ -98,6 +99,7 @@ class AccessibilityInfo {
     this.customActions = const [],
   });
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'role': role.name,
     if (label != null) 'label': label,
@@ -112,6 +114,7 @@ class AccessibilityInfo {
       'customActions': customActions.map((a) => a.toJson()).toList(),
   };
 
+  /// Method `fromJson`.
   factory AccessibilityInfo.fromJson(Map<String, dynamic> json) =>
       AccessibilityInfo(
         role: AccessibilityRole.values.byName(
@@ -138,13 +141,18 @@ class AccessibilityInfo {
 
 /// A custom accessibility action available on a node.
 class AccessibilityAction {
+  /// Field `id`.
   final String id;
+  /// Field `label`.
   final String label;
 
+  /// API element `id`.
   const AccessibilityAction({required this.id, required this.label});
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {'id': id, 'label': label};
 
+  /// Method `fromJson`.
   factory AccessibilityAction.fromJson(Map<String, dynamic> json) =>
       AccessibilityAction(
         id: json['id'] as String,
@@ -156,11 +164,16 @@ class AccessibilityAction {
 ///
 /// Mirrors the scene graph structure but only includes accessible nodes.
 class AccessibilityTreeNode {
+  /// Field `nodeId`.
   final String nodeId;
+  /// Field `info`.
   final AccessibilityInfo info;
+  /// Field `worldBounds`.
   final Rect worldBounds;
+  /// Field `children`.
   final List<AccessibilityTreeNode> children;
 
+  /// API element `AccessibilityTreeNode`.
   AccessibilityTreeNode({
     required this.nodeId,
     required this.info,

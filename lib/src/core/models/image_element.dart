@@ -10,89 +10,140 @@ import 'package:fluera_canvas/fluera_canvas.dart';
 /// 🖼️ MODELLO ELEMENTO IMMAGINE
 /// Represents an image positioned on the canvas with all modifications
 class ImageElement {
+  /// Field `id`.
   final String id;
+  /// Field `imagePath`.
   final String imagePath; // Path locale of the image
+  /// Method `storageUrl`.
   final String? storageUrl; // URL Cloud Storage (per immagini grandi)
+  /// Field `thumbnailUrl`.
   final String? thumbnailUrl; // URL thumbnail per preview rapida
+  /// Field `position`.
   final Offset position; // Position on the canvas
+  /// Method `scale`.
   final double scale; // Scala (1.0 = size originale)
+  /// Field `rotation`.
   final double rotation; // Rotazione in radianti
+  /// Field `createdAt`.
   final DateTime createdAt;
+  /// Field `pageIndex`.
   final int pageIndex; // Page this image belongs to
 
   // ✨ Color filters
+  /// Field `brightness`.
   final double brightness; // -0.5 to +0.5
+  /// Field `contrast`.
   final double contrast; // -0.5 to +0.5
+  /// Field `saturation`.
   final double saturation; // -1.0 to +1.0
+  /// Field `opacity`.
   final double opacity; // 0.0 to 1.0
+  /// Method `vignette`.
   final double vignette; // 0.0 (off) to 1.0 (max)
+  /// Method `vignetteColor`.
   final int vignetteColor; // Color.value, default 0xFF000000 (black)
+  /// Method `hueShift`.
   final double hueShift; // -1.0 to +1.0 (maps to -π to +π)
+  /// Method `temperature`.
   final double temperature; // -1.0 (cool) to +1.0 (warm)
+  /// Method `highlights`.
   final double highlights; // -1.0 to +1.0 (tone bright areas)
+  /// Method `shadows`.
   final double shadows; // -1.0 to +1.0 (tone dark areas)
+  /// Method `fade`.
   final double fade; // 0.0 (off) to 1.0 (faded/lifted blacks)
 
   // 🎨 Split toning
+  /// Field `splitHighlightColor`.
   final int splitHighlightColor; // 0 = off, else Color.value for highlights
+  /// Field `splitShadowColor`.
   final int splitShadowColor; // 0 = off, else Color.value for shadows
+  /// Method `splitBalance`.
   final double splitBalance; // -1.0 (shadow-heavy) to +1.0 (highlight-heavy)
+  /// Method `splitIntensity`.
   final double splitIntensity; // 0.0 (off) to 1.0 (max)
+  /// Method `clarity`.
   final double clarity; // -1.0 to +1.0 (local contrast / structure)
+  /// Method `texture`.
   final double texture; // -1.0 to +1.0 (fine detail enhancement)
+  /// Method `dehaze`.
   final double dehaze; // -1.0 to +1.0 (remove/add haze)
 
   // 📤 Export settings
+  /// Field `exportFormat`.
   final String exportFormat; // 'png', 'jpeg', 'webp'
+  /// Method `exportQuality`.
   final int exportQuality; // 0-100 (for lossy formats)
 
   // 📈 Tone Curve
+  /// Field `toneCurve`.
   final ToneCurve toneCurve; // custom tone adjustment curve
 
   // 🎨 HSL per-channel (7 channels × 3 values = 21 doubles)
   // Channels: Red, Orange, Yellow, Green, Cyan, Blue, Purple
   // Per channel: [hue shift, saturation, luminance] each -1.0 to +1.0
+  /// Field `hslAdjustments`.
   final List<double> hslAdjustments;
 
   // 🔇 Noise
+  /// Method `noiseReduction`.
   final double noiseReduction; // 0.0 (off) to 1.0 (max)
 
   // 🌈 Gradient Filter
+  /// Field `gradientAngle`.
   final double gradientAngle; // 0.0-360.0 degrees
+  /// Method `gradientPosition`.
   final double gradientPosition; // 0.0-1.0 (where filter starts)
+  /// Field `gradientStrength`.
   final double gradientStrength; // 0.0-1.0
+  /// Field `gradientColor`.
   final int gradientColor; // Color.value, 0 = transparent
 
   // 📐 Perspective Correction
+  /// Method `perspectiveX`.
   final double perspectiveX; // -1.0 to +1.0 (horizontal keystone)
+  /// Method `perspectiveY`.
   final double perspectiveY; // -1.0 to +1.0 (vertical keystone)
 
   // 🔍 Post-processing (GPU)
+  /// Method `blurRadius`.
   final double blurRadius; // 0.0 (off) to 50.0 (max)
+  /// Method `sharpenAmount`.
   final double sharpenAmount; // 0.0 (off) to 2.0 (very strong)
+  /// Method `edgeDetectStrength`.
   final double edgeDetectStrength; // 0.0 (off) to 1.0 (full sketch)
+  /// Method `lutIndex`.
   final int lutIndex; // -1 (none) or index into lutPresets
+  /// Method `grainAmount`.
   final double grainAmount; // 0.0 (off) to 1.0 (heavy grain)
+  /// Method `grainSize`.
   final double grainSize; // 0.5 (fine) to 3.0 (coarse)
 
   // 🔄 Transformations
+  /// Field `flipHorizontal`.
   final bool flipHorizontal;
+  /// Field `flipVertical`.
   final bool flipVertical;
 
   // ✂️ Crop (cropped area, relativa all'immagine originale 0.0-1.0)
+  /// Field `cropRect`.
   final Rect? cropRect; // null = nessun crop
 
   // 🎨 Strokes and shapes drawn on top of the image (in editing mode)
+  /// Field `drawingStrokes`.
   final List<ProStroke> drawingStrokes;
+  /// Field `drawingShapes`.
   final List<GeometricShape> drawingShapes;
 
   // 📝 Text overlays
+  /// Field `textOverlays`.
   final List<TextOverlay> textOverlays;
 
   // ── Composed Sub-Model Getters ──
   // These construct sub-model instances from the flat fields.
   // Use these in new code instead of accessing raw fields.
 
+  /// Getter `colorAdjustments`.
   ColorAdjustments get colorAdjustments => ColorAdjustments(
     brightness: brightness,
     contrast: contrast,
@@ -111,6 +162,7 @@ class ImageElement {
     splitIntensity: splitIntensity,
   );
 
+  /// Getter `gradientFilter`.
   GradientFilter get gradientFilter => GradientFilter(
     angle: gradientAngle,
     position: gradientPosition,
@@ -118,12 +170,15 @@ class ImageElement {
     color: gradientColor,
   );
 
+  /// Getter `perspective`.
   PerspectiveSettings get perspective =>
       PerspectiveSettings(x: perspectiveX, y: perspectiveY);
 
+  /// Getter `exportSettings`.
   ExportSettings get exportSettings =>
       ExportSettings(format: exportFormat, quality: exportQuality);
 
+  /// API element `ImageElement`.
   const ImageElement({
     required this.id,
     required this.imagePath,

@@ -8,20 +8,38 @@ import 'package:vector_math/vector_math_64.dart' show Matrix4;
 /// Eight standard handles (4 corners + 4 mid-edges) plus a dedicated
 /// `rotate` handle drawn above the top-mid edge.
 enum SelectionHandle {
+  /// Enum value `topLeft`.
   topLeft,
+  /// Enum value `topMid`.
   topMid,
+  /// Enum value `topRight`.
   topRight,
+  /// Enum value `midRight`.
   midRight,
+  /// Enum value `bottomRight`.
   bottomRight,
+  /// Enum value `bottomMid`.
   bottomMid,
+  /// Enum value `bottomLeft`.
   bottomLeft,
+  /// Enum value `midLeft`.
   midLeft,
+  /// Enum value `rotate`.
   rotate,
 }
+/// (or `move` when they grabbed the bounding-box body itself).
 
 /// Active transform gesture mode driven by the handle the user grabbed
-/// (or `move` when they grabbed the bounding-box body itself).
-enum TransformMode { move, scaleCorner, scaleEdge, rotate }
+enum TransformMode {
+  /// Body drag — translate the entire selection.
+  move,
+  /// Corner-handle drag — uniform / non-uniform scale.
+  scaleCorner,
+  /// Edge-handle drag — single-axis scale.
+  scaleEdge,
+  /// Rotate-handle drag — pivot around the selection centre.
+  rotate,
+}
 
 /// Pure-math helpers for the active transform gesture. Applied on top
 /// of each selected node's `localTransform` after capturing a snapshot

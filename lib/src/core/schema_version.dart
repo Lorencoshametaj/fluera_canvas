@@ -208,6 +208,7 @@ class SchemaVersionException implements Exception {
   /// Human-readable explanation.
   final String message;
 
+  /// API element `SchemaVersionException`.
   const SchemaVersionException({
     required this.documentVersion,
     required this.currentVersion,

@@ -18,6 +18,7 @@ import '../vector/vector_path.dart';
 ///   strokes: [StrokeLayer(color: Colors.black, width: 2.0)]
 /// ```
 class PathNode extends CanvasNode with PaintStackMixin {
+  /// Field `path`.
   VectorPath path;
 
   /// Fill color — **deprecated**, use [fills] instead.
@@ -48,6 +49,7 @@ class PathNode extends CanvasNode with PaintStackMixin {
   @Deprecated('Use strokes list from PaintStackMixin instead')
   ui.StrokeJoin strokeJoin;
 
+  /// API element `PathNode`.
   PathNode({
     required super.id,
     required this.path,
@@ -116,6 +118,7 @@ class PathNode extends CanvasNode with PaintStackMixin {
     return json;
   }
 
+  /// API element `fromJson`.
   factory PathNode.fromJson(Map<String, dynamic> json) {
     final node = PathNode(
       id: NodeId(json['id'] as String),

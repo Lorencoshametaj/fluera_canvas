@@ -13,8 +13,11 @@ import 'package:fluera_canvas/fluera_canvas.dart';
 /// - Bounds checking in BinaryReader (graceful error on corruption)
 /// - Uint32 point counts (supports strokes > 65535 points)
 class BinaryCanvasFormat {
+  /// Field `magicNumber`.
   static const int magicNumber = 0x4C4F4F50; // "LOOP"
+  /// Field `version`.
   static const int version = 3;
+  /// Field `headerSize`.
   static const int headerSize = 24;
 
   /// 📦 Encode multiple pages to binary format
@@ -481,6 +484,7 @@ class BinaryCanvasFormat {
     return b.buffer.asUint8List();
   }
 
+  /// API element `isBinaryFormat`.
   static bool isBinaryFormat(Uint8List data) {
     if (data.length < 4) return false;
     final magic = ByteData.view(data.buffer).getUint32(0, Endian.little);

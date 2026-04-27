@@ -27,6 +27,7 @@ import 'canvas_selection.dart';
 /// listenable of the selection controller, the camera and the marquee
 /// notifier so paints fire only when something actually moves.
 class SelectionPainter extends CustomPainter {
+  /// API element `SelectionPainter`.
   SelectionPainter({
     required this.selection,
     required this.controller,

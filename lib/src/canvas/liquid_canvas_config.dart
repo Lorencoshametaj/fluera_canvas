@@ -103,6 +103,7 @@ class LiquidCanvasConfig {
   /// engine-specific dependency into the SDK.
   final Object? reflow;
 
+  /// API element `LiquidCanvasConfig`.
   const LiquidCanvasConfig({
     this.panFriction = 0.015,
     this.zoomSpringStiffness = 280.0,

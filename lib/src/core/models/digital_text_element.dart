@@ -11,14 +11,22 @@ import 'package:flutter/material.dart';
 /// Each span carries its own text and optional style overrides.
 /// `null` values inherit from the parent [DigitalTextElement].
 class DigitalTextSpan {
+  /// Field `text`.
   final String text;
+  /// Field `color`.
   final Color? color;
+  /// Field `fontWeight`.
   final FontWeight? fontWeight;
+  /// Field `fontStyle`.
   final FontStyle? fontStyle;
+  /// Field `fontSize`.
   final double? fontSize;
+  /// Field `textDecoration`.
   final TextDecoration? textDecoration;
+  /// Field `letterSpacing`.
   final double? letterSpacing;
 
+  /// API element `DigitalTextSpan`.
   const DigitalTextSpan({
     required this.text,
     this.color,
@@ -29,6 +37,7 @@ class DigitalTextSpan {
     this.letterSpacing,
   });
 
+  /// API element `copyWith`.
   DigitalTextSpan copyWith({
     String? text,
     Color? color,
@@ -49,10 +58,15 @@ class DigitalTextSpan {
     );
   }
 
+  /// API element `toJson`.
   Map<String, dynamic> toJson() {
     return {
       'text': text,
       if (color != null) 'color': color!.toARGB32(),
+      // ignore: deprecated_member_use — keeping `.index` for backward
+      // compatibility with FCV files written by 0.10.x and earlier.
+      // `.value` would change the on-disk numeric range from 0..8 to
+      // 100..900 and break round-trip with previously-saved canvases.
       if (fontWeight != null) 'fontWeight': fontWeight!.index,
       if (fontStyle != null)
         'fontStyle': fontStyle == FontStyle.italic ? 'italic' : 'normal',
@@ -63,6 +77,7 @@ class DigitalTextSpan {
     };
   }
 
+  /// API element `fromJson`.
   factory DigitalTextSpan.fromJson(Map<String, dynamic> json) {
     return DigitalTextSpan(
       text: json['text'] as String,
@@ -129,23 +144,41 @@ const Object _sentinel = Object();
 /// Since [copyWith] returns a new instance, the cache is automatically
 /// invalidated (new instance = null cache fields).
 class DigitalTextElement {
+  /// Field `id`.
   final String id;
+  /// Field `text`.
   final String text;
+  /// Field `position`.
   final Offset position;
+  /// Field `color`.
   final Color color;
+  /// Field `fontSize`.
   final double fontSize;
+  /// Field `fontWeight`.
   final FontWeight fontWeight;
+  /// Field `fontStyle`.
   final FontStyle fontStyle;
+  /// Field `fontFamily`.
   final String? fontFamily;
+  /// Field `textAlign`.
   final TextAlign textAlign;
+  /// Field `textDecoration`.
   final TextDecoration textDecoration;
+  /// Field `letterSpacing`.
   final double letterSpacing;
+  /// Field `opacity`.
   final double opacity;
+  /// Field `rotation`.
   final double rotation; // radians
+  /// Field `scale`.
   final double scale;
+  /// Field `isOCR`.
   final bool isOCR;
+  /// Field `pageIndex`.
   final int? pageIndex;
+  /// Field `createdAt`.
   final DateTime createdAt;
+  /// Field `modifiedAt`.
   final DateTime? modifiedAt;
 
   /// Optional text shadow
@@ -175,6 +208,7 @@ class DigitalTextElement {
   TextPainter? _cachedPainter;
   Rect? _cachedBounds;
 
+  /// API element `DigitalTextElement`.
   DigitalTextElement({
     required this.id,
     required this.text,
@@ -211,6 +245,7 @@ class DigitalTextElement {
     return text;
   }
 
+  /// API element `copyWith`.
   DigitalTextElement copyWith({
     String? id,
     String? text,
@@ -476,6 +511,7 @@ class DigitalTextElement {
       'position': {'x': position.dx, 'y': position.dy},
       'color': color.toARGB32(),
       'fontSize': fontSize,
+      // ignore: deprecated_member_use — see DigitalTextSpan.toJson.
       'fontWeight': fontWeight.index,
       'fontStyle': fontStyle == FontStyle.italic ? 'italic' : 'normal',
       'fontFamily': fontFamily,

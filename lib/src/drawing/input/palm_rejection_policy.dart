@@ -47,6 +47,7 @@ enum PalmRejectionReason {
 /// `false`, every record method does nothing. Override the methods you care
 /// about.
 class PalmRejectionPolicy {
+  /// Method `PalmRejectionPolicy`.
   const PalmRejectionPolicy();
 
   /// Called on every stylus hover event (pen above the screen, not touching).

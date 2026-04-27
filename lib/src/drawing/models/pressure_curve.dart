@@ -20,8 +20,10 @@ class PressureCurve {
   /// The two interior control points of the cubic Bézier.
   /// p0=(0,0) and p3=(1,1) are implicit.
   final Offset p1;
+  /// Field `p2`.
   final Offset p2;
 
+  /// API element `PressureCurve`.
   const PressureCurve({
     this.p1 = const Offset(0.25, 0.25),
     this.p2 = const Offset(0.75, 0.75),
@@ -160,6 +162,7 @@ class PressureCurve {
 
   // ─── Serialization ───
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'p1x': _round3(p1.dx),
     'p1y': _round3(p1.dy),
@@ -167,6 +170,7 @@ class PressureCurve {
     'p2y': _round3(p2.dy),
   };
 
+  /// API element `fromJson`.
   factory PressureCurve.fromJson(Map<String, dynamic>? json) {
     if (json == null) return PressureCurve.linear;
     return PressureCurve(

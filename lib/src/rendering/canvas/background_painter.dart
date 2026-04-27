@@ -15,8 +15,11 @@ import 'package:fluera_canvas/fluera_canvas.dart';
 /// - 🚀 Per-frame cost: ~10 draw calls (negligible)
 /// - 🚀 Wrapped in RepaintBoundary → no cascade to siblings
 class BackgroundPainter extends CustomPainter {
+  /// Field `paperType`.
   final String paperType;
+  /// Field `backgroundColor`.
   final Color backgroundColor;
+  /// Field `controller`.
   final InfiniteCanvasController controller;
 
   // 🚀 TILE CACHE: a single small tile to print repeatedly
@@ -29,6 +32,7 @@ class BackgroundPainter extends CustomPainter {
   // 1cm = 37.8px (96 DPI standard)
   static const double _patternScale = 37.8;
 
+  /// API element `BackgroundPainter`.
   BackgroundPainter({
     required this.paperType,
     required this.backgroundColor,

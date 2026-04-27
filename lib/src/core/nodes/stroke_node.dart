@@ -13,6 +13,7 @@ class StrokeNode extends CanvasNode {
   /// The actual stroke data (points, color, width, pen type, etc.).
   ProStroke stroke;
 
+  /// API element `StrokeNode`.
   StrokeNode({
     required super.id,
     required this.stroke,
@@ -43,6 +44,7 @@ class StrokeNode extends CanvasNode {
     return json;
   }
 
+  /// API element `fromJson`.
   factory StrokeNode.fromJson(Map<String, dynamic> json) {
     final node = StrokeNode(
       id: NodeId(json['id'] as String),

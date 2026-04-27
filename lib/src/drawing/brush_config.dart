@@ -42,6 +42,7 @@ class PencilConfig {
   /// Upper bound of the pressure clamp before the ramp.
   final double maxPressure;
 
+  /// API element `PencilConfig`.
   const PencilConfig({
     this.baseOpacity = 0.4,
     this.maxOpacity = 0.8,
@@ -53,6 +54,7 @@ class PencilConfig {
   /// the pencil — saves an allocation when the defaults are fine.
   static const PencilConfig defaults = PencilConfig();
 
+  /// API element `copyWith`.
   PencilConfig copyWith({
     double? baseOpacity,
     double? maxOpacity,
@@ -104,6 +106,7 @@ class FountainPenConfig {
   /// always lands at full pressure.
   final int taperEntry;
 
+  /// API element `FountainPenConfig`.
   const FountainPenConfig({
     this.thinning = 0.5,
     this.nibAngleDeg = 30.0,
@@ -112,8 +115,10 @@ class FountainPenConfig {
     this.taperEntry = 6,
   });
 
+  /// Method `defaults`.
   static const FountainPenConfig defaults = FountainPenConfig();
 
+  /// API element `copyWith`.
   FountainPenConfig copyWith({
     double? thinning,
     double? nibAngleDeg,

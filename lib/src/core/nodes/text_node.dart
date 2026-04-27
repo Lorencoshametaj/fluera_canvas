@@ -17,6 +17,7 @@ class TextNode extends CanvasNode {
   /// Updated externally when the text is laid out.
   Size _cachedTextSize = Size.zero;
 
+  /// API element `TextNode`.
   TextNode({
     required super.id,
     required this.textElement,
@@ -30,6 +31,7 @@ class TextNode extends CanvasNode {
 
   /// Set the measured text size (called after layout).
   set cachedTextSize(Size size) => _cachedTextSize = size;
+  /// Getter `cachedTextSize`.
   Size get cachedTextSize => _cachedTextSize;
 
   // ---------------------------------------------------------------------------
@@ -71,6 +73,7 @@ class TextNode extends CanvasNode {
     return json;
   }
 
+  /// API element `fromJson`.
   factory TextNode.fromJson(Map<String, dynamic> json) {
     final node = TextNode(
       id: NodeId(json['id'] as String),

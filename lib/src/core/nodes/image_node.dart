@@ -18,6 +18,7 @@ class ImageNode extends CanvasNode {
   /// Cached image dimensions (set after decoding).
   Size _imageSize;
 
+  /// API element `ImageNode`.
   ImageNode({
     required super.id,
     required this.imageElement,
@@ -32,6 +33,7 @@ class ImageNode extends CanvasNode {
 
   /// Set the decoded image dimensions.
   set imageSize(Size size) => _imageSize = size;
+  /// Getter `imageSize`.
   Size get imageSize => _imageSize;
 
   /// Strokes drawn ON this image. Stored in the image's *local* coords
@@ -73,6 +75,7 @@ class ImageNode extends CanvasNode {
     return json;
   }
 
+  /// API element `fromJson`.
   factory ImageNode.fromJson(Map<String, dynamic> json) {
     final node = ImageNode(
       id: NodeId(json['id'] as String),

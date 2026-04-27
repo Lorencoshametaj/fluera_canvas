@@ -951,6 +951,7 @@ class _LayerHeaderResult {
 /// and feed each `(imagePath, bytes)` entry from [imageBlobs] into
 /// `ImageNodePainter.decodeAndCache` so the GPU handles get reborn.
 class DecodeResult {
+  /// Method `root`.
   DecodeResult(this.root, this.extendedCodes, this.imageBlobs);
 
   /// Fresh `LayerNode` root with the original layer hierarchy.

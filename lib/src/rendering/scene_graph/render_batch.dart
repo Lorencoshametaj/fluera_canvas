@@ -4,12 +4,18 @@ import 'package:flutter/widgets.dart'; // For Matrix4 and MatrixUtils
 
 /// Identifies a unique material (paint configuration) for batching.
 class MaterialKey {
+  /// Field `colorValue`.
   final int colorValue;
+  /// Field `shaderHash`.
   final int? shaderHash;
+  /// Field `blendMode`.
   final BlendMode blendMode;
+  /// Field `style`.
   final PaintingStyle style;
+  /// Field `strokeWidth`.
   final double strokeWidth;
 
+  /// API element `MaterialKey`.
   const MaterialKey({
     required this.colorValue,
     this.shaderHash,
@@ -35,14 +41,18 @@ class MaterialKey {
 
 /// A specific drawing operation inside a batch.
 abstract class DrawCommand {
+  /// Method `execute`.
   void execute(Canvas canvas, Paint paint);
 }
 
 /// Command to draw a path with a specific transform.
 class PathDrawCommand implements DrawCommand {
+  /// Field `path`.
   final Path path;
+  /// Field `transform`.
   final Matrix4 transform;
 
+  /// Method `path`.
   PathDrawCommand(this.path, this.transform);
 
   @override
@@ -58,9 +68,12 @@ class PathDrawCommand implements DrawCommand {
 
 /// Command to draw an entire pre-recorded picture (used for Symbols/Instancing).
 class PictureDrawCommand implements DrawCommand {
+  /// Field `picture`.
   final Picture picture;
+  /// Field `transform`.
   final Matrix4 transform;
 
+  /// Method `picture`.
   PictureDrawCommand(this.picture, this.transform);
 
   @override
@@ -76,9 +89,12 @@ class PictureDrawCommand implements DrawCommand {
 
 /// Command to draw a basic rectangle (optimized into drawVertices when batched).
 class RectDrawCommand implements DrawCommand {
+  /// Field `rect`.
   final Rect rect;
+  /// Field `transform`.
   final Matrix4 transform;
 
+  /// Method `rect`.
   RectDrawCommand(this.rect, this.transform);
 
   @override
@@ -94,18 +110,23 @@ class RectDrawCommand implements DrawCommand {
 
 /// A batch of draw calls sharing the same material.
 class RenderBatch {
+  /// Field `maxCommands`.
   static const int maxCommands = 4096;
 
   MaterialKey _material;
+  /// Field `commands`.
   final List<DrawCommand> commands = [];
 
+  /// Method `_material`.
   RenderBatch(this._material);
 
   /// Current material key (may change via [reset] for pool reuse).
   MaterialKey get material => _material;
 
+  /// Getter `isFull`.
   bool get isFull => commands.length >= maxCommands;
 
+  /// API element `addCommand`.
   void addCommand(DrawCommand cmd) {
     commands.add(cmd);
   }
@@ -117,6 +138,7 @@ class RenderBatch {
     _material = newMaterial;
   }
 
+  /// API element `flush`.
   void flush(Canvas canvas) {
     if (commands.isEmpty) return;
 
@@ -206,6 +228,7 @@ class BatchRenderer {
   RenderBatch? _currentBatch;
   int _activeBatchCount = 0;
 
+  /// API element `flushAll`.
   void flushAll(Canvas canvas) {
     for (int i = 0; i < _activeBatchCount; i++) {
       _batches[i].flush(canvas);
@@ -238,14 +261,17 @@ class BatchRenderer {
     return batch;
   }
 
+  /// API element `addPath`.
   void addPath(MaterialKey key, Path path, Matrix4 transform) {
     _getBatch(key).addCommand(PathDrawCommand(path, transform));
   }
 
+  /// API element `addRect`.
   void addRect(MaterialKey key, Rect rect, Matrix4 transform) {
     _getBatch(key).addCommand(RectDrawCommand(rect, transform));
   }
 
+  /// Method `addPicture`.
   void addPicture(
     Picture picture,
     Matrix4 transform, {

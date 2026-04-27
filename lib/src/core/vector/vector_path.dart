@@ -6,8 +6,10 @@ import 'dart:typed_data';
 /// Every segment ends at [endPoint]. The segment type determines
 /// how the path is drawn from the previous endpoint to this one.
 abstract class PathSegment {
+  /// Field `endPoint`.
   Offset endPoint;
 
+  /// API element `endPoint`.
   PathSegment({required this.endPoint});
 
   /// Create a transformed copy of this segment.
@@ -39,6 +41,7 @@ abstract class PathSegment {
 
 /// Moves the pen to [endPoint] without drawing.
 class MoveSegment extends PathSegment {
+  /// API element `endPoint`.
   MoveSegment({required super.endPoint});
 
   @override
@@ -53,6 +56,7 @@ class MoveSegment extends PathSegment {
     'y': endPoint.dy,
   };
 
+  /// API element `fromJson`.
   factory MoveSegment.fromJson(Map<String, dynamic> json) {
     return MoveSegment(
       endPoint: Offset(
@@ -65,6 +69,7 @@ class MoveSegment extends PathSegment {
 
 /// A straight line to [endPoint].
 class LineSegment extends PathSegment {
+  /// API element `endPoint`.
   LineSegment({required super.endPoint});
 
   @override
@@ -79,6 +84,7 @@ class LineSegment extends PathSegment {
     'y': endPoint.dy,
   };
 
+  /// API element `fromJson`.
   factory LineSegment.fromJson(Map<String, dynamic> json) {
     return LineSegment(
       endPoint: Offset(
@@ -91,9 +97,12 @@ class LineSegment extends PathSegment {
 
 /// A cubic Bézier curve to [endPoint] with two control points.
 class CubicSegment extends PathSegment {
+  /// Field `controlPoint1`.
   Offset controlPoint1;
+  /// Field `controlPoint2`.
   Offset controlPoint2;
 
+  /// API element `CubicSegment`.
   CubicSegment({
     required this.controlPoint1,
     required this.controlPoint2,
@@ -120,6 +129,7 @@ class CubicSegment extends PathSegment {
     'y': endPoint.dy,
   };
 
+  /// API element `fromJson`.
   factory CubicSegment.fromJson(Map<String, dynamic> json) {
     return CubicSegment(
       controlPoint1: Offset(
@@ -140,8 +150,10 @@ class CubicSegment extends PathSegment {
 
 /// A quadratic Bézier curve to [endPoint] with one control point.
 class QuadSegment extends PathSegment {
+  /// Field `controlPoint`.
   Offset controlPoint;
 
+  /// API element `controlPoint`.
   QuadSegment({required this.controlPoint, required super.endPoint});
 
   @override
@@ -161,6 +173,7 @@ class QuadSegment extends PathSegment {
     'y': endPoint.dy,
   };
 
+  /// API element `fromJson`.
   factory QuadSegment.fromJson(Map<String, dynamic> json) {
     return QuadSegment(
       controlPoint: Offset(
@@ -184,9 +197,12 @@ class QuadSegment extends PathSegment {
 /// The path always starts with a [MoveSegment]. It may be open or closed.
 /// Use [toFlutterPath] to convert to a Flutter [Path] for rendering.
 class VectorPath {
+  /// Field `segments`.
   final List<PathSegment> segments;
+  /// Field `isClosed`.
   bool isClosed;
 
+  /// API element `segments`.
   VectorPath({required this.segments, this.isClosed = false});
 
   /// Create an empty path starting at [start].

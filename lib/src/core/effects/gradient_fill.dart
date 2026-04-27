@@ -1,19 +1,31 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-
 /// Type of gradient fill.
-enum GradientType { linear, radial, conic }
+
+enum GradientType {
+  /// Linear gradient — colours interpolate along a straight axis.
+  linear,
+  /// Radial gradient — colours interpolate from a central point outward.
+  radial,
+  /// Conic gradient — colours sweep around a centre point.
+  conic,
+}
 
 /// Abstract base for gradient fills on shapes and strokes.
 ///
 /// Gradients use normalized coordinates (0.0–1.0) so they scale
 /// automatically when the shape bounds change.
 abstract class GradientFill {
+  /// Field `type`.
   final GradientType type;
+  /// Field `colors`.
   final List<Color> colors;
+  /// Field `stops`.
   final List<double> stops;
+  /// Field `ui`.
   final ui.TileMode tileMode;
 
+  /// API element `GradientFill`.
   const GradientFill({
     required this.type,
     required this.colors,
@@ -72,9 +84,12 @@ abstract class GradientFill {
 /// [begin] and [end] are in normalized coordinates (0.0–1.0)
 /// relative to the shape bounds. E.g. (0,0) = top-left, (1,1) = bottom-right.
 class LinearGradientFill extends GradientFill {
+  /// Field `begin`.
   final Offset begin;
+  /// Field `end`.
   final Offset end;
 
+  /// API element `LinearGradientFill`.
   const LinearGradientFill({
     required super.colors,
     required super.stops,
@@ -105,6 +120,7 @@ class LinearGradientFill extends GradientFill {
     return json;
   }
 
+  /// API element `fromJson`.
   factory LinearGradientFill.fromJson(Map<String, dynamic> json) {
     final beginList = json['begin'] as List<dynamic>;
     final endList = json['end'] as List<dynamic>;
@@ -123,6 +139,7 @@ class LinearGradientFill extends GradientFill {
     );
   }
 
+  /// API element `copyWith`.
   LinearGradientFill copyWith({
     List<Color>? colors,
     List<double>? stops,
@@ -149,9 +166,12 @@ class LinearGradientFill extends GradientFill {
 /// [center] is in normalized coordinates (0.5, 0.5 = center).
 /// [radius] is normalized to the shorter dimension of the bounds.
 class RadialGradientFill extends GradientFill {
+  /// Field `center`.
   final Offset center;
+  /// Field `radius`.
   final double radius;
 
+  /// API element `RadialGradientFill`.
   const RadialGradientFill({
     required super.colors,
     required super.stops,
@@ -179,6 +199,7 @@ class RadialGradientFill extends GradientFill {
     return json;
   }
 
+  /// API element `fromJson`.
   factory RadialGradientFill.fromJson(Map<String, dynamic> json) {
     final centerList = json['center'] as List<dynamic>;
     return RadialGradientFill(
@@ -193,6 +214,7 @@ class RadialGradientFill extends GradientFill {
     );
   }
 
+  /// API element `copyWith`.
   RadialGradientFill copyWith({
     List<Color>? colors,
     List<double>? stops,
@@ -219,9 +241,12 @@ class RadialGradientFill extends GradientFill {
 /// [center] is in normalized coordinates.
 /// [startAngle] is in radians (0 = right, π/2 = down).
 class ConicGradientFill extends GradientFill {
+  /// Field `center`.
   final Offset center;
+  /// Field `startAngle`.
   final double startAngle;
 
+  /// API element `ConicGradientFill`.
   const ConicGradientFill({
     required super.colors,
     required super.stops,
@@ -247,6 +272,7 @@ class ConicGradientFill extends GradientFill {
     return json;
   }
 
+  /// API element `fromJson`.
   factory ConicGradientFill.fromJson(Map<String, dynamic> json) {
     final centerList = json['center'] as List<dynamic>;
     return ConicGradientFill(
@@ -261,6 +287,7 @@ class ConicGradientFill extends GradientFill {
     );
   }
 
+  /// API element `copyWith`.
   ConicGradientFill copyWith({
     List<Color>? colors,
     List<double>? stops,

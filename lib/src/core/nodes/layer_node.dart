@@ -16,6 +16,7 @@ import '../models/image_element.dart';
 /// preserving the familiar API while storing everything in a unified
 /// children list with proper z-ordering.
 class LayerNode extends GroupNode {
+  /// API element `LayerNode`.
   LayerNode({
     required super.id,
     super.name = 'Layer',

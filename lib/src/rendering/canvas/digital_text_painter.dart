@@ -7,11 +7,16 @@ import 'package:fluera_canvas/fluera_canvas.dart';
 /// creating new TextPainter/TextSpan objects per element per frame.
 /// Layout is done lazily in the element itself and cached across frames.
 class DigitalTextPainter extends CustomPainter {
+  /// Field `texts`.
   final List<DigitalTextElement> texts;
+  /// Field `canvasOffset`.
   final Offset canvasOffset;
+  /// Field `canvasScale`.
   final double canvasScale;
+  /// Field `selectedElementId`.
   final String? selectedElementId;
 
+  /// API element `DigitalTextPainter`.
   DigitalTextPainter({
     required this.texts,
     required this.canvasOffset,

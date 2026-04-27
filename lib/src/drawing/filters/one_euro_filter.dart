@@ -14,8 +14,11 @@ import 'dart:math' as math;
 
 /// One Euro Filter per smoothing adattivo of the stroke
 class OneEuroFilter {
+  /// Field `minCutoff`.
   final double minCutoff;
+  /// Field `beta`.
   final double beta;
+  /// Field `dCutoff`.
   final double dCutoff;
 
   Offset? _lastFiltered;
@@ -23,6 +26,7 @@ class OneEuroFilter {
   Offset? _lastDx;
   int? _lastTime; // millisecondsSinceEpoch
 
+  /// API element `minCutoff`.
   OneEuroFilter({this.minCutoff = 1.0, this.beta = 0.007, this.dCutoff = 1.0});
 
   /// Filters un nuovo punto of the stroke con adaptive smoothing
@@ -144,12 +148,15 @@ class OneEuroFilter {
 
 /// Kalman Filter per predizione e smoothing
 class KalmanFilter {
+  /// Field `processNoise`.
   final double processNoise;
+  /// Field `measurementNoise`.
   final double measurementNoise;
 
   Offset _estimate = Offset.zero;
   double _errorCovariance = 1.0;
 
+  /// API element `processNoise`.
   KalmanFilter({this.processNoise = 0.01, this.measurementNoise = 0.1});
 
   /// Filters un nuovo punto
@@ -181,9 +188,11 @@ class KalmanFilter {
 
 /// Moving Average Filter - Media mobile semplice
 class MovingAverageFilter {
+  /// Field `windowSize`.
   final int windowSize;
   final List<Offset> _buffer = [];
 
+  /// API element `windowSize`.
   MovingAverageFilter({this.windowSize = 5});
 
   /// Filters un nuovo punto
@@ -218,6 +227,7 @@ class AdaptiveStrokeFilter {
 
   FilterType _currentType = FilterType.oneEuro;
 
+  /// API element `AdaptiveStrokeFilter`.
   AdaptiveStrokeFilter({
     FilterType initialType = FilterType.oneEuro,
     double oneEuroMinCutoff = 1.0,
@@ -260,13 +270,18 @@ class AdaptiveStrokeFilter {
     _movingAverage.reset();
   }
 
+  /// Getter `currentType`.
   FilterType get currentType => _currentType;
 }
 
 /// Tipi di filtro disponibili
 enum FilterType {
+  /// API element `oneEuro`.
   oneEuro, // Bilanciato - raccomandato per uso generale
+  /// API element `kalman`.
   kalman, // Predittivo - migliore for thetency compensation
+  /// API element `movingAverage`.
   movingAverage, // Semplice - more veloce ma meno raffinato
+  /// API element `none`.
   none, // Nessun filtro
 }

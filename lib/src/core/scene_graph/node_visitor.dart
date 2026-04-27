@@ -17,12 +17,19 @@ import './canvas_node.dart';
 /// extend [DefaultNodeVisitor] and override [visitOther] to downcast and
 /// dispatch to their own visit methods.
 abstract class NodeVisitor<R> {
+  /// Method `R`.
   R visitGroup(GroupNode node);
+  /// Method `R`.
   R visitLayer(LayerNode node);
+  /// Method `R`.
   R visitShape(ShapeNode node);
+  /// Method `R`.
   R visitStroke(StrokeNode node);
+  /// Method `R`.
   R visitText(TextNode node);
+  /// Method `R`.
   R visitImage(ImageNode node);
+  /// Method `R`.
   R visitPath(PathNode node);
 
   /// Fallback for nodes whose concrete type lives outside canvas-core.
@@ -38,6 +45,7 @@ class DefaultNodeVisitor<R> implements NodeVisitor<R> {
   /// Value returned for unhandled node types.
   final R defaultValue;
 
+  /// Method `defaultValue`.
   DefaultNodeVisitor(this.defaultValue);
 
   @override

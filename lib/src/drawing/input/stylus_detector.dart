@@ -122,8 +122,11 @@ class StylusDetector {
 
 /// Type of input rilevato
 enum StylusInputType {
+  /// API element `stylus`.
   stylus, // Penna stylus
+  /// API element `finger`.
   finger, // Dito
+  /// API element `unknown`.
   unknown, // Do not determinato
 }
 
@@ -143,6 +146,7 @@ class StylusInputManager {
   final Set<int> _activePointers = {};
   final Map<int, PointerEvent> _pointerCache = {};
 
+  /// Getter `stylusModeEnabled`.
   bool get stylusModeEnabled => _stylusModeEnabled;
 
   /// Enable/disable stylus mode
@@ -263,8 +267,12 @@ class StylusInputManager {
 
 /// Stato dell'input corrente
 enum StylusInputState {
+  /// API element `idle`.
   idle, // Nessun input attivo
+  /// API element `drawing`.
   drawing, // Disegno attivo
+  /// Method `panning`.
   panning, // Pan attivo (movimento)
+  /// Method `zooming`.
   zooming, // Zoom attivo (pinch)
 }

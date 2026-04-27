@@ -66,6 +66,7 @@ const List<Color> kFlueraDefaultPalette = <Color>[
 /// so undo / redo buttons reflect the live history state without the
 /// caller having to wire `onStrokeCommitted` + `setState` manually.
 class FlueraCanvasToolbar extends StatelessWidget {
+  /// API element `FlueraCanvasToolbar`.
   const FlueraCanvasToolbar({
     super.key,
     required this.canvasKey,
@@ -137,12 +138,16 @@ class FlueraCanvasToolbar extends StatelessWidget {
   /// Stroke-width slider bounds (in world units, same scale as
   /// [FlueraCanvas.strokeWidth]).
   final double minStrokeWidth;
+  /// Field `maxStrokeWidth`.
   final double maxStrokeWidth;
+  /// Field `strokeWidthDivisions`.
   final int strokeWidthDivisions;
 
   /// Toggle individual buttons off if your UI provides them elsewhere.
   final bool showUndo;
+  /// Field `showRedo`.
   final bool showRedo;
+  /// Field `showClear`.
   final bool showClear;
 
   /// When `true`, the segmented control gains line / rectangle /
@@ -238,7 +243,9 @@ class FlueraCanvasToolbar extends StatelessWidget {
   /// touch-friendly range — small enough for fine cuts, large enough
   /// to wipe whole strokes in one tap.
   final double minEraserRadius;
+  /// Field `maxEraserRadius`.
   final double maxEraserRadius;
+  /// Field `eraserRadiusDivisions`.
   final int eraserRadiusDivisions;
 
   /// Inner padding around the toolbar content.

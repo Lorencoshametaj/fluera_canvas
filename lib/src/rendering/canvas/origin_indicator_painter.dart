@@ -9,8 +9,10 @@ import 'package:flutter/material.dart';
 /// 🚀 NO repaint: during pan/zoom — updated only on widget rebuild
 /// (stroke change). Wrappato in RepaintBoundary per isolamento.
 class OriginIndicatorPainter extends CustomPainter {
+  /// Field `scale`.
   final double scale;
 
+  /// API element `scale`.
   const OriginIndicatorPainter({required this.scale});
 
   @override

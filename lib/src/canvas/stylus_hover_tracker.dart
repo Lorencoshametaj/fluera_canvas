@@ -11,6 +11,7 @@ import 'dart:ui' show Offset;
 /// Hook receiving stylus hover lifecycle events from
 /// [InfiniteCanvasGestureDetector].
 class StylusHoverTracker {
+  /// Method `StylusHoverTracker`.
   const StylusHoverTracker();
 
   /// The stylus is hovering above the screen at [position] with physical
@@ -21,4 +22,5 @@ class StylusHoverTracker {
   void endHover() {}
 }
 
+/// Method `noopStylusHoverTracker`.
 const StylusHoverTracker noopStylusHoverTracker = StylusHoverTracker();

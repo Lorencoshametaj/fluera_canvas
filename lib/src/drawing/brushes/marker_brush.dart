@@ -15,11 +15,17 @@ import 'package:fluera_canvas/fluera_canvas.dart';
 /// - 🖊️ Miter-join outlines from smoothed positions
 /// - 🖊️ drawVertices triangle strip (matches GPU exactly)
 class MarkerBrush {
+  /// Field `name`.
   static const String name = 'Marker';
+  /// Field `icon`.
   static const IconData icon = Icons.format_paint_rounded;
+  /// Field `baseWidthMultiplier`.
   static const double baseWidthMultiplier = 2.5;
+  /// Field `baseOpacity`.
   static const double baseOpacity = 0.7;
+  /// Field `strokeCap`.
   static const StrokeCap strokeCap = StrokeCap.round;
+  /// Field `strokeJoin`.
   static const StrokeJoin strokeJoin = StrokeJoin.round;
 
   /// Draw marker stroke with default settings

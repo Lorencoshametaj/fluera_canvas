@@ -3,11 +3,17 @@ import 'package:flutter/services.dart';
 
 /// 🎨 Type of texture applicable to brushes
 enum TextureType {
+  /// API element `none`.
   none, // No texture
+  /// API element `pencilGrain`.
   pencilGrain, // Pencil grain on rough paper
+  /// API element `charcoal`.
   charcoal, // Heavy charcoal
+  /// API element `watercolor`.
   watercolor, // Watercolor stains
+  /// API element `canvas`.
   canvas, // Canvas weave pattern
+  /// API element `kraft`.
   kraft, // Kraft paper with fibers
 }
 

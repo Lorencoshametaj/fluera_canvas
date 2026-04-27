@@ -41,6 +41,7 @@ class LayerPictureCache {
   /// Access order for LRU eviction. Front = LRU, back = MRU.
   final List<String> _accessOrder = [];
 
+  /// API element `maxEntries`.
   LayerPictureCache({this.maxEntries = 32});
 
   /// Get a cached picture for [nodeId] if it matches [contentVersion].

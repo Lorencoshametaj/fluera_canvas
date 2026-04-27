@@ -15,15 +15,25 @@ import 'package:fluera_canvas/fluera_canvas.dart';
 /// - 🖍️ Uses Catmull-Rom spline → dense sampling → perpendicular offset →
 ///   triangle strip (same architecture as MarkerBrush for GPU parity)
 class HighlighterBrush {
+  /// Field `name`.
   static const String name = 'Evidenziatore';
+  /// Field `icon`.
   static const IconData icon = Icons.highlight;
+  /// Field `baseWidthMultiplier`.
   static const double baseWidthMultiplier = 3.5;
+  /// Field `baseOpacity`.
   static const double baseOpacity = 0.30;
+  /// Field `strokeCap`.
   static const StrokeCap strokeCap = StrokeCap.square;
+  /// Field `strokeJoin`.
   static const StrokeJoin strokeJoin = StrokeJoin.miter;
+  /// Field `usePressureForWidth`.
   static const bool usePressureForWidth = false;
+  /// Field `usePressureForOpacity`.
   static const bool usePressureForOpacity = false;
+  /// Field `hasBlur`.
   static const bool hasBlur = false;
+  /// Field `blurRadius`.
   static const double blurRadius = 0.0;
 
   /// Draw with default settings

@@ -6,13 +6,20 @@ import './pro_brush_settings.dart';
 
 /// Punto di disegno professionale con metadati completi
 class ProDrawingPoint {
+  /// Field `position`.
   final Offset position;
+  /// Field `pressure`.
   final double pressure;
+  /// Field `tiltX`.
   final double tiltX;
+  /// Field `tiltY`.
   final double tiltY;
+  /// Field `orientation`.
   final double orientation;
+  /// Field `timestamp`.
   final int timestamp;
 
+  /// API element `ProDrawingPoint`.
   const ProDrawingPoint({
     required this.position,
     required this.pressure,
@@ -117,6 +124,7 @@ class ProDrawingPoint {
     );
   }
 
+  /// API element `copyWith`.
   ProDrawingPoint copyWith({
     Offset? position,
     double? pressure,
@@ -138,12 +146,19 @@ class ProDrawingPoint {
 
 /// Complete professional stroke
 class ProStroke {
+  /// Field `id`.
   final String id;
+  /// Field `points`.
   final List<ProDrawingPoint> points;
+  /// Field `color`.
   final Color color;
+  /// Field `baseWidth`.
   final double baseWidth;
+  /// Field `penType`.
   final ProPenType penType;
+  /// Field `createdAt`.
   final DateTime createdAt;
+  /// Field `settings`.
   final ProBrushSettings settings; // 🎛️ Parametri pennello personalizzati
 
   /// 🛡️ Engine version that produced this stroke.
@@ -164,6 +179,7 @@ class ProStroke {
   /// 🪣 Fill overlay — transient raster image (not serialized)
   /// Stored in canvas-space coordinates; rendered at fillBounds position
   ui.Image? fillOverlay;
+  /// Field `fillBounds`.
   Rect? fillBounds;
 
   /// True if this stroke is a fill operation (has raster overlay)
@@ -243,6 +259,7 @@ class ProStroke {
   /// Whether this stroke is a stub (paged out to disk, points empty).
   bool get isStub => _forcedBounds != null && points.isEmpty;
 
+  /// API element `ProStroke`.
   ProStroke({
     required this.id,
     required List<ProDrawingPoint> points,
@@ -330,6 +347,7 @@ class ProStroke {
     );
   }
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'id': id,
     'ev': engineVersion, // 🛡️ Engine version tag
@@ -343,6 +361,7 @@ class ProStroke {
     if (referenceScale != 1.0) 'rs': referenceScale,
   };
 
+  /// Method `fromJson`.
   factory ProStroke.fromJson(Map<String, dynamic> json) => ProStroke(
     id: json['id'] as String,
     // 🛡️ Old strokes without 'ev' are version 1 (pre-versioning)
@@ -379,6 +398,7 @@ class ProStroke {
     referenceScale: (json['rs'] as num?)?.toDouble() ?? 1.0,
   );
 
+  /// API element `copyWith`.
   ProStroke copyWith({
     String? id,
     List<ProDrawingPoint>? points,
@@ -406,16 +426,28 @@ class ProStroke {
 
 /// Professional pen types
 enum ProPenType {
+  /// API element `ballpoint`.
   ballpoint, // Ball-point pen
+  /// API element `fountain`.
   fountain, // Fountain pen
+  /// API element `pencil`.
   pencil, // Pencil
+  /// API element `highlighter`.
   highlighter, // Highlighter
+  /// Method `watercolor`.
   watercolor, // Watercolor brush (wet-on-wet diffusion)
+  /// Method `marker`.
   marker, // Flat marker (saturated alpha accumulation)
+  /// Method `charcoal`.
   charcoal, // Charcoal stick (grain erosion + noise)
+  /// Method `oilPaint`.
   oilPaint, // Oil paint (GPU impasto texture + directional smear)
+  /// Method `sprayPaint`.
   sprayPaint, // Spray paint (GPU stochastic dots + gaussian falloff)
+  /// Method `neonGlow`.
   neonGlow, // Neon glow (GPU multi-layer bloom + bright core)
+  /// Method `inkWash`.
   inkWash, // Ink wash (GPU wet-ink diffusion + bleed edges)
+  /// Method `technicalPen`.
   technicalPen, // Technical pen (constant width, no taper, hard edges)
 }

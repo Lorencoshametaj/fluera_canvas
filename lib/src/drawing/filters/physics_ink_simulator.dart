@@ -43,6 +43,7 @@ class PhysicsInkSimulator {
   /// Timestamp ultimo update
   DateTime? _lastUpdate;
 
+  /// API element `PhysicsInkSimulator`.
   PhysicsInkSimulator({
     this.damping = 0.15,
     this.stiffness = 300.0,

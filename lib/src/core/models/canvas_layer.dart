@@ -15,6 +15,7 @@ class CanvasLayer {
   // Constructor
   // ---------------------------------------------------------------------------
 
+  /// API element `CanvasLayer`.
   CanvasLayer({
     required String id,
     required String name,
@@ -64,20 +65,30 @@ class CanvasLayer {
   // Properties (delegated to node)
   // ---------------------------------------------------------------------------
 
+  /// Getter `id`.
   String get id => node.id;
+  /// Getter `name`.
   String get name => node.name;
+  /// Getter `isVisible`.
   bool get isVisible => node.isVisible;
+  /// Getter `isLocked`.
   bool get isLocked => node.isLocked;
+  /// Getter `opacity`.
   double get opacity => node.opacity;
+  /// Getter `ui`.
   ui.BlendMode get blendMode => node.blendMode;
 
   // ---------------------------------------------------------------------------
   // Typed element access (read-only views from the node tree)
   // ---------------------------------------------------------------------------
 
+  /// Getter `strokes`.
   List<ProStroke> get strokes => node.strokes;
+  /// Getter `shapes`.
   List<GeometricShape> get shapes => node.shapes;
+  /// Getter `texts`.
   List<DigitalTextElement> get texts => node.texts;
+  /// Getter `images`.
   List<ImageElement> get images => node.images;
 
   // ---------------------------------------------------------------------------
@@ -94,6 +105,7 @@ class CanvasLayer {
   // copyWith
   // ---------------------------------------------------------------------------
 
+  /// API element `copyWith`.
   CanvasLayer copyWith({
     String? id,
     String? name,

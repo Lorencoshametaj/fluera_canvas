@@ -16,16 +16,26 @@ enum BrushCategory {
 /// Represents a saved brush configuration including pen type, width,
 /// color, and all ProBrushSettings parameters.
 class BrushPreset {
+  /// Field `id`.
   final String id;
+  /// Field `name`.
   final String name;
+  /// Field `icon`.
   final String icon; // emoji
+  /// Field `penType`.
   final ProPenType penType;
+  /// Field `baseWidth`.
   final double baseWidth;
+  /// Field `color`.
   final Color color;
+  /// Field `settings`.
   final ProBrushSettings settings;
+  /// Field `isBuiltIn`.
   final bool isBuiltIn;
+  /// Field `category`.
   final BrushCategory category;
 
+  /// API element `BrushPreset`.
   const BrushPreset({
     required this.id,
     required this.name,
@@ -42,6 +52,7 @@ class BrushPreset {
   // BUILT-IN PRESETS
   // ─────────────────────────────────────────────────────────────
 
+  /// Field `builtInPresets`.
   static const List<BrushPreset> builtInPresets = [
     // 🚀 Everyday Pen — default writing pen, max FPS
     // Ballpoint: single drawPath(), no pressure/velocity/tilt computation,
@@ -261,6 +272,7 @@ class BrushPreset {
   // SERIALIZATION
   // ─────────────────────────────────────────────────────────────
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
@@ -271,6 +283,7 @@ class BrushPreset {
     'settings': settings.toJson(),
   };
 
+  /// API element `fromJson`.
   factory BrushPreset.fromJson(Map<String, dynamic> json) {
     return BrushPreset(
       id: json['id'] as String,
@@ -285,6 +298,7 @@ class BrushPreset {
     );
   }
 
+  /// API element `copyWith`.
   BrushPreset copyWith({
     String? id,
     String? name,

@@ -10,8 +10,10 @@ import './shader_effect_wrapper.dart';
 /// Each effect can be individually enabled/disabled without removing it
 /// from the stack.
 abstract class NodeEffect {
+  /// Field `isEnabled`.
   bool isEnabled;
 
+  /// API element `isEnabled`.
   NodeEffect({this.isEnabled = true});
 
   /// Whether this effect renders BEFORE the node (e.g. shadows).
@@ -58,9 +60,12 @@ abstract class NodeEffect {
 ///
 /// Uses `ImageFilter.blur` via `saveLayer` to blur the entire node.
 class BlurEffect extends NodeEffect {
+  /// Field `sigmaX`.
   double sigmaX;
+  /// Field `sigmaY`.
   double sigmaY;
 
+  /// API element `sigmaX`.
   BlurEffect({this.sigmaX = 4.0, this.sigmaY = 4.0, super.isEnabled});
 
   @override
@@ -86,6 +91,7 @@ class BlurEffect extends NodeEffect {
     'sigmaY': sigmaY,
   };
 
+  /// API element `fromJson`.
   factory BlurEffect.fromJson(Map<String, dynamic> json) {
     return BlurEffect(
       sigmaX: (json['sigmaX'] as num?)?.toDouble() ?? 4.0,
@@ -94,6 +100,7 @@ class BlurEffect extends NodeEffect {
     );
   }
 
+  /// Method `copyWith`.
   BlurEffect copyWith({double? sigmaX, double? sigmaY, bool? isEnabled}) =>
       BlurEffect(
         sigmaX: sigmaX ?? this.sigmaX,
@@ -111,11 +118,16 @@ class BlurEffect extends NodeEffect {
 /// The node is rendered twice: first as a shadow (offset + blur + color),
 /// then the original on top.
 class DropShadowEffect extends NodeEffect {
+  /// Field `ui`.
   ui.Color color;
+  /// Field `ui`.
   ui.Offset offset;
+  /// Field `blurRadius`.
   double blurRadius;
+  /// Field `spread`.
   double spread;
 
+  /// API element `DropShadowEffect`.
   DropShadowEffect({
     this.color = const ui.Color(0x66000000),
     this.offset = const ui.Offset(4, 4),
@@ -149,6 +161,7 @@ class DropShadowEffect extends NodeEffect {
     'spread': spread,
   };
 
+  /// API element `fromJson`.
   factory DropShadowEffect.fromJson(Map<String, dynamic> json) {
     return DropShadowEffect(
       color: ui.Color((json['color'] as int?)?.toUnsigned(32) ?? 0x66000000),
@@ -162,6 +175,7 @@ class DropShadowEffect extends NodeEffect {
     );
   }
 
+  /// API element `copyWith`.
   DropShadowEffect copyWith({
     ui.Color? color,
     ui.Offset? offset,
@@ -186,10 +200,14 @@ class DropShadowEffect extends NodeEffect {
 /// Implementation: draws the node, then uses `BlendMode.dstOut` with
 /// a blurred inset to create the inner shadow illusion.
 class InnerShadowEffect extends NodeEffect {
+  /// Field `ui`.
   ui.Color color;
+  /// Field `ui`.
   ui.Offset offset;
+  /// Field `blurRadius`.
   double blurRadius;
 
+  /// API element `InnerShadowEffect`.
   InnerShadowEffect({
     this.color = const ui.Color(0x44000000),
     this.offset = const ui.Offset(2, 2),
@@ -203,6 +221,7 @@ class InnerShadowEffect extends NodeEffect {
   @override
   bool get isPost => true;
 
+  /// Getter `sigma`.
   double get sigma => blurRadius * 0.5;
 
   @override
@@ -214,6 +233,7 @@ class InnerShadowEffect extends NodeEffect {
     'blurRadius': blurRadius,
   };
 
+  /// API element `fromJson`.
   factory InnerShadowEffect.fromJson(Map<String, dynamic> json) {
     return InnerShadowEffect(
       color: ui.Color((json['color'] as int?)?.toUnsigned(32) ?? 0x44000000),
@@ -226,6 +246,7 @@ class InnerShadowEffect extends NodeEffect {
     );
   }
 
+  /// API element `copyWith`.
   InnerShadowEffect copyWith({
     ui.Color? color,
     ui.Offset? offset,
@@ -248,10 +269,14 @@ class InnerShadowEffect extends NodeEffect {
 /// Visually similar to a drop shadow but with `BlendMode.plus` for
 /// a light emission effect.
 class OuterGlowEffect extends NodeEffect {
+  /// Field `ui`.
   ui.Color color;
+  /// Field `blurRadius`.
   double blurRadius;
+  /// Field `spread`.
   double spread;
 
+  /// API element `OuterGlowEffect`.
   OuterGlowEffect({
     this.color = const ui.Color(0x88FFAA00),
     this.blurRadius = 12.0,
@@ -281,6 +306,7 @@ class OuterGlowEffect extends NodeEffect {
     'spread': spread,
   };
 
+  /// API element `fromJson`.
   factory OuterGlowEffect.fromJson(Map<String, dynamic> json) {
     return OuterGlowEffect(
       color: ui.Color((json['color'] as int?)?.toUnsigned(32) ?? 0x88FFAA00),
@@ -290,6 +316,7 @@ class OuterGlowEffect extends NodeEffect {
     );
   }
 
+  /// API element `copyWith`.
   OuterGlowEffect copyWith({
     ui.Color? color,
     double? blurRadius,
@@ -309,9 +336,12 @@ class OuterGlowEffect extends NodeEffect {
 
 /// Applies a solid color tint over the node using a [ColorFilter].
 class ColorOverlayEffect extends NodeEffect {
+  /// Field `ui`.
   ui.Color color;
+  /// Field `ui`.
   ui.BlendMode blendMode;
 
+  /// API element `ColorOverlayEffect`.
   ColorOverlayEffect({
     this.color = const ui.Color(0x44FF0000),
     this.blendMode = ui.BlendMode.srcATop,
@@ -336,6 +366,7 @@ class ColorOverlayEffect extends NodeEffect {
     'blendMode': blendMode.name,
   };
 
+  /// API element `fromJson`.
   factory ColorOverlayEffect.fromJson(Map<String, dynamic> json) {
     return ColorOverlayEffect(
       color: ui.Color((json['color'] as int?)?.toUnsigned(32) ?? 0x44FF0000),
@@ -347,6 +378,7 @@ class ColorOverlayEffect extends NodeEffect {
     );
   }
 
+  /// API element `copyWith`.
   ColorOverlayEffect copyWith({
     ui.Color? color,
     ui.BlendMode? blendMode,

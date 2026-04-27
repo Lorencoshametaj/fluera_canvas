@@ -208,6 +208,7 @@ class TelemetryCounter {
   /// Current count.
   int value = 0;
 
+  /// Method `name`.
   TelemetryCounter(this.name);
 
   /// Increment by [n] (default 1).
@@ -225,6 +226,7 @@ class TelemetryGauge {
   /// Current value.
   double value = 0;
 
+  /// Method `name`.
   TelemetryGauge(this.name);
 
   /// Set the gauge to [v].
@@ -254,6 +256,7 @@ class TelemetrySpan {
   /// Reference to the telemetry bus (set when span is recorded).
   EngineTelemetry? _telemetry;
 
+  /// API element `name`.
   TelemetrySpan(this.name, {this.parent, this.scope})
     : startUs = EngineTelemetry._nowUs(),
       _noop = false;
@@ -278,6 +281,7 @@ class TelemetrySpan {
     _telemetry?._recordSpan(this);
   }
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'name': name,
     'startUs': startUs,
@@ -290,16 +294,21 @@ class TelemetrySpan {
 
 /// Point-in-time event with optional metadata.
 class TelemetryEvent {
+  /// Field `name`.
   final String name;
+  /// Field `timestampUs`.
   final int timestampUs;
+  /// API element `data`.
   final Map<String, dynamic>? data;
 
+  /// API element `TelemetryEvent`.
   const TelemetryEvent({
     required this.name,
     required this.timestampUs,
     this.data,
   });
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'name': name,
     'timestampUs': timestampUs,
@@ -324,6 +333,7 @@ class TelemetryEvent {
 /// print(hist.p99); // 99th percentile
 /// ```
 class TelemetryHistogram {
+  /// Field `name`.
   final String name;
   final List<double> _values = [];
   bool _sorted = false;
@@ -331,6 +341,7 @@ class TelemetryHistogram {
   /// Maximum number of retained values.
   static const int maxValues = 2048;
 
+  /// Method `name`.
   TelemetryHistogram(this.name);
 
   /// Record a value.
@@ -397,6 +408,7 @@ class TelemetryHistogram {
     _sorted = false;
   }
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'name': name,
     'count': count,
@@ -415,14 +427,23 @@ class TelemetryHistogram {
 
 /// Subsystem scope for tagged metrics.
 enum TelemetryScope {
+  /// Enum value `rendering`.
   rendering,
+  /// Enum value `history`.
   history,
+  /// Enum value `layout`.
   layout,
+  /// Enum value `io`.
   io,
+  /// Enum value `network`.
   network,
+  /// Enum value `sceneGraph`.
   sceneGraph,
+  /// Enum value `selection`.
   selection,
+  /// Enum value `plugin`.
   plugin,
+  /// Enum value `theme`.
   theme,
 }
 
@@ -432,6 +453,7 @@ enum TelemetryScope {
 
 /// Interface for controlling which spans/events are recorded.
 abstract class TelemetrySampler {
+  /// Method `TelemetrySampler`.
   const TelemetrySampler();
 
   /// Whether to sample (record) a span or event with the given [name].
@@ -440,6 +462,7 @@ abstract class TelemetrySampler {
 
 /// Always sample (debug/development mode).
 class AlwaysSampler extends TelemetrySampler {
+  /// Method `AlwaysSampler`.
   const AlwaysSampler();
 
   @override
@@ -459,6 +482,7 @@ class RateSampler extends TelemetrySampler {
   int _counter = 0;
   final int _interval;
 
+  /// Method `rate`.
   RateSampler(this.rate) : _interval = rate > 0 ? (1 / rate).ceil() : 0;
 
   @override
@@ -475,14 +499,19 @@ class RateSampler extends TelemetrySampler {
 /// Starts at [baseRate] and drops to [minRate] when the number
 /// of samples per window exceeds [maxPerWindow].
 class AdaptiveSampler extends TelemetrySampler {
+  /// Field `baseRate`.
   final double baseRate;
+  /// Field `minRate`.
   final double minRate;
+  /// Field `maxPerWindow`.
   final int maxPerWindow;
+  /// Field `window`.
   final Duration window;
 
   int _windowCount = 0;
   DateTime _windowStart = DateTime.now();
 
+  /// API element `AdaptiveSampler`.
   AdaptiveSampler({
     this.baseRate = 1.0,
     this.minRate = 0.01,
@@ -513,6 +542,7 @@ class AdaptiveSampler extends TelemetrySampler {
 
 /// Interface for pushing telemetry data to external systems.
 abstract class TelemetryExporter {
+  /// Method `TelemetryExporter`.
   const TelemetryExporter();
 
   /// Export a telemetry snapshot.
@@ -521,6 +551,7 @@ abstract class TelemetryExporter {
 
 /// Exporter that prints a summary to the debug console.
 class ConsoleTelemetryExporter extends TelemetryExporter {
+  /// Method `ConsoleTelemetryExporter`.
   const ConsoleTelemetryExporter();
 
   @override
@@ -549,8 +580,10 @@ class ConsoleTelemetryExporter extends TelemetryExporter {
 /// }));
 /// ```
 class CallbackTelemetryExporter extends TelemetryExporter {
+  /// Method `snapshot`.
   final void Function(Map<String, dynamic> snapshot) onExport;
 
+  /// Method `onExport`.
   const CallbackTelemetryExporter(this.onExport);
 
   @override
@@ -560,9 +593,16 @@ class CallbackTelemetryExporter extends TelemetryExporter {
 // =============================================================================
 // Alert Rules
 // =============================================================================
-
 /// Severity level for triggered alerts.
-enum AlertSeverity { info, warning, critical }
+
+enum AlertSeverity {
+  /// Informational — no action required.
+  info,
+  /// Warning — degraded but not failing.
+  warning,
+  /// Critical — operator action required.
+  critical,
+}
 
 /// A threshold-based alert rule on a histogram metric.
 ///
@@ -576,12 +616,18 @@ enum AlertSeverity { info, warning, critical }
 /// ));
 /// ```
 class AlertRule {
+  /// Field `name`.
   final String name;
+  /// Field `metricName`.
   final String metricName;
+  /// Field `percentile`.
   final int percentile;
+  /// Field `thresholdUs`.
   final double thresholdUs;
+  /// Field `severity`.
   final AlertSeverity severity;
 
+  /// API element `AlertRule`.
   const AlertRule({
     required this.name,
     required this.metricName,
@@ -593,10 +639,14 @@ class AlertRule {
 
 /// A triggered alert containing the rule and actual measured value.
 class TriggeredAlert {
+  /// Field `rule`.
   final AlertRule rule;
+  /// Field `actualValue`.
   final double actualValue;
+  /// Field `sampleCount`.
   final int sampleCount;
 
+  /// API element `TriggeredAlert`.
   const TriggeredAlert({
     required this.rule,
     required this.actualValue,

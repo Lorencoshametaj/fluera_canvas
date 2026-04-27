@@ -33,54 +33,71 @@ import 'dart:ui' as ui;
 /// how to handle. See file header for the design rationale.
 enum FlueraBlendMode {
   // ─── 17 standard modes (one-to-one with ui.BlendMode) ──────────────────
+  /// Method `normal`.
   normal(code: 0, name: 'Normal', flutterBlendMode: ui.BlendMode.srcOver),
+  /// Method `darken`.
   darken(code: 1, name: 'Darken', flutterBlendMode: ui.BlendMode.darken),
+  /// Method `multiply`.
   multiply(code: 2, name: 'Multiply', flutterBlendMode: ui.BlendMode.multiply),
+  /// Method `colorBurn`.
   colorBurn(
     code: 3,
     name: 'Color Burn',
     flutterBlendMode: ui.BlendMode.colorBurn,
   ),
+  /// Method `lighten`.
   lighten(code: 4, name: 'Lighten', flutterBlendMode: ui.BlendMode.lighten),
+  /// Method `screen`.
   screen(code: 5, name: 'Screen', flutterBlendMode: ui.BlendMode.screen),
+  /// Method `colorDodge`.
   colorDodge(
     code: 6,
     name: 'Color Dodge',
     flutterBlendMode: ui.BlendMode.colorDodge,
   ),
+  /// Method `overlay`.
   overlay(code: 7, name: 'Overlay', flutterBlendMode: ui.BlendMode.overlay),
+  /// Method `softLight`.
   softLight(
     code: 8,
     name: 'Soft Light',
     flutterBlendMode: ui.BlendMode.softLight,
   ),
+  /// Method `hardLight`.
   hardLight(
     code: 9,
     name: 'Hard Light',
     flutterBlendMode: ui.BlendMode.hardLight,
   ),
+  /// Method `difference`.
   difference(
     code: 10,
     name: 'Difference',
     flutterBlendMode: ui.BlendMode.difference,
   ),
+  /// Method `exclusion`.
   exclusion(
     code: 11,
     name: 'Exclusion',
     flutterBlendMode: ui.BlendMode.exclusion,
   ),
+  /// Method `hue`.
   hue(code: 12, name: 'Hue', flutterBlendMode: ui.BlendMode.hue),
+  /// Method `saturation`.
   saturation(
     code: 13,
     name: 'Saturation',
     flutterBlendMode: ui.BlendMode.saturation,
   ),
+  /// Method `color`.
   color(code: 14, name: 'Color', flutterBlendMode: ui.BlendMode.color),
+  /// Method `luminosity`.
   luminosity(
     code: 15,
     name: 'Luminosity',
     flutterBlendMode: ui.BlendMode.luminosity,
   ),
+  /// Method `plus`.
   plus(
     code: 16,
     name: 'Linear Dodge (Add)',
@@ -88,54 +105,63 @@ enum FlueraBlendMode {
   ),
 
   // ─── 9 extended Photoshop modes (require custom shader for accuracy) ───
+  /// Method `linearBurn`.
   linearBurn(
     code: 100,
     name: 'Linear Burn',
     flutterBlendMode: null,
     fallback: ui.BlendMode.multiply,
   ),
+  /// Method `vividLight`.
   vividLight(
     code: 101,
     name: 'Vivid Light',
     flutterBlendMode: null,
     fallback: ui.BlendMode.overlay,
   ),
+  /// Method `linearLight`.
   linearLight(
     code: 102,
     name: 'Linear Light',
     flutterBlendMode: null,
     fallback: ui.BlendMode.hardLight,
   ),
+  /// Method `pinLight`.
   pinLight(
     code: 103,
     name: 'Pin Light',
     flutterBlendMode: null,
     fallback: ui.BlendMode.hardLight,
   ),
+  /// Method `hardMix`.
   hardMix(
     code: 104,
     name: 'Hard Mix',
     flutterBlendMode: null,
     fallback: ui.BlendMode.hardLight,
   ),
+  /// Method `darkerColor`.
   darkerColor(
     code: 105,
     name: 'Darker Color',
     flutterBlendMode: null,
     fallback: ui.BlendMode.darken,
   ),
+  /// Method `lighterColor`.
   lighterColor(
     code: 106,
     name: 'Lighter Color',
     flutterBlendMode: null,
     fallback: ui.BlendMode.lighten,
   ),
+  /// Method `subtract`.
   subtract(
     code: 107,
     name: 'Subtract',
     flutterBlendMode: null,
     fallback: ui.BlendMode.difference,
   ),
+  /// Method `divide`.
   divide(
     code: 108,
     name: 'Divide',

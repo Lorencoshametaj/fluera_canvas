@@ -10,9 +10,21 @@ linux/
 windows/
 shared/
 
-# Example / test directories — shipped separately once stable.
-example/
+# Tests are shipped separately (CI artifacts, big assets, etc.).
 test/
+
+# Example app: keep in the published archive so pub.dev can render
+# the runnable demo on the package page (and pana stops complaining
+# about "no example found"). Skip the host-platform scaffolds inside
+# it though — pub.dev never builds them.
+example/build/
+example/.dart_tool/
+example/android/
+example/ios/
+example/macos/
+example/linux/
+example/windows/
+example/web/
 
 # Local build artifacts.
 .dart_tool/

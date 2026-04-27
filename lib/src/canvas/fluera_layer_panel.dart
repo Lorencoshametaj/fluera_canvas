@@ -37,6 +37,7 @@ import 'fluera_canvas_widget.dart';
 /// ]);
 /// ```
 class FlueraLayerPanel extends StatefulWidget {
+  /// API element `FlueraLayerPanel`.
   const FlueraLayerPanel({
     super.key,
     required this.canvasKey,

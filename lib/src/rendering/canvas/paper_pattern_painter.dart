@@ -3,10 +3,14 @@ import 'dart:math' as math;
 
 /// Painter to draw paper patterns on the canvas
 class PaperPatternPainter extends CustomPainter {
+  /// Field `paperType`.
   final String paperType;
+  /// Field `backgroundColor`.
   final Color backgroundColor;
+  /// Field `scale`.
   final double scale;
 
+  /// API element `PaperPatternPainter`.
   PaperPatternPainter({
     required this.paperType,
     required this.backgroundColor,

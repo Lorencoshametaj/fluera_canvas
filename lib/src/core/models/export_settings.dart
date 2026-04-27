@@ -10,15 +10,19 @@ class ExportSettings {
   /// Quality 0..100 for lossy formats. Ignored for lossless.
   final int quality;
 
+  /// API element `format`.
   const ExportSettings({this.format = 'png', this.quality = 90});
 
+  /// Method `copyWith`.
   ExportSettings copyWith({String? format, int? quality}) => ExportSettings(
     format: format ?? this.format,
     quality: quality ?? this.quality,
   );
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {'format': format, 'quality': quality};
 
+  /// Method `fromJson`.
   factory ExportSettings.fromJson(Map<String, dynamic> json) => ExportSettings(
     format: json['format'] as String? ?? 'png',
     quality: (json['quality'] as num?)?.toInt() ?? 90,

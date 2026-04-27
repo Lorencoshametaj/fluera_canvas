@@ -20,6 +20,7 @@ import 'dart:math' as math;
 class DynamicPressureMapper {
   /// Range di pressione (0.0 = min, 1.0 = max)
   final double minPressure;
+  /// Field `maxPressure`.
   final double maxPressure;
 
   /// Sensitivity alla speed (more alto = more sensibile)
@@ -35,6 +36,7 @@ class DynamicPressureMapper {
   final List<_VelocityPoint> _velocityHistory = [];
   static const int _maxVelocityHistory = 5;
 
+  /// API element `DynamicPressureMapper`.
   DynamicPressureMapper({
     this.minPressure = 0.3,
     this.maxPressure = 1.0,

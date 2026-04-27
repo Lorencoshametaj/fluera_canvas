@@ -27,14 +27,17 @@ enum ContentOrigin {
 abstract final class ContentOriginColors {
   /// 🟢 Handwriting — student-authored content.
   static const int handwritingLight = 0xFF4CAF50;
+  /// Field `handwritingDark`.
   static const int handwritingDark = 0xFF66BB6A;
 
   /// 🔵 Imported — external content.
   static const int importedLight = 0xFF2196F3;
+  /// Field `importedDark`.
   static const int importedDark = 0xFF42A5F5;
 
   /// 🔴 AI-generated — machine-authored content.
   static const int aiGeneratedLight = 0xFFE53935;
+  /// Field `aiGeneratedDark`.
   static const int aiGeneratedDark = 0xFFEF5350;
 
   /// Size of the origin dot indicator (in logical pixels, scale-independent).
@@ -42,6 +45,7 @@ abstract final class ContentOriginColors {
 
   /// Offset from the top-right corner of the node bounds.
   static const double dotOffsetX = -6.0;
+  /// Field `dotOffsetY`.
   static const double dotOffsetY = 6.0;
 
   /// Opacity of the dot indicator.

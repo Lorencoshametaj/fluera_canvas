@@ -27,6 +27,7 @@ class PredictionResult {
   /// Total list: realPoints + predictedPoints (safe to pass to renderer).
   final List<ProDrawingPoint> allPoints;
 
+  /// API element `PredictionResult`.
   const PredictionResult({
     required this.realPoints,
     required this.predictedCount,

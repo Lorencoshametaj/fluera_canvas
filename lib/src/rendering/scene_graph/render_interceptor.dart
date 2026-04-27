@@ -52,6 +52,7 @@ class DebugBoundsInterceptor extends RenderInterceptor {
   /// Pre-allocated paint — zero alloc in paint().
   late final Paint _debugPaint;
 
+  /// API element `DebugBoundsInterceptor`.
   DebugBoundsInterceptor({
     Color color = const Color(0xFF00FF00),
     double strokeWidth = 1.0,
@@ -92,6 +93,7 @@ class NodeFilterInterceptor extends RenderInterceptor {
   /// Predicate that returns `true` for nodes that should be rendered.
   final bool Function(CanvasNode node) predicate;
 
+  /// Method `predicate`.
   NodeFilterInterceptor(this.predicate);
 
   @override

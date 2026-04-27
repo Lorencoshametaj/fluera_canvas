@@ -13,19 +13,42 @@ class _Absent {
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
-
 /// Type of fill in a paint stack layer.
-enum FillType { solid, gradient, image }
+
+enum FillType {
+  /// Solid colour fill.
+  solid,
+  /// Gradient fill (see `GradientType`).
+  gradient,
+  /// Image / texture fill.
+  image,
+}
+/// - [outside]: stroke extends outward from the shape bounds.
 
 /// Stroke alignment relative to the path boundary.
 ///
 /// - [center]: stroke straddles the path (default, standard Canvas behavior).
 /// - [inside]: stroke is inset so it stays within the shape bounds.
-/// - [outside]: stroke extends outward from the shape bounds.
-enum StrokePosition { center, inside, outside }
-
+enum StrokePosition {
+  /// Stroke straddles the path (default, standard Canvas behaviour).
+  center,
+  /// Stroke is inset so it stays within the shape bounds.
+  inside,
+  /// Stroke extends outward from the shape bounds.
+  outside,
+}
 /// How an image fill is scaled within the shape bounds.
-enum ImageFillMode { fill, fit, crop, tile }
+
+enum ImageFillMode {
+  /// Fill the entire shape, distorting aspect ratio if needed.
+  fill,
+  /// Fit the image inside the bounds preserving aspect ratio.
+  fit,
+  /// Crop the image to cover the bounds preserving aspect ratio.
+  crop,
+  /// Tile the image to cover the bounds.
+  tile,
+}
 
 // ---------------------------------------------------------------------------
 // FillLayer
@@ -65,7 +88,9 @@ class FillLayer {
 
   /// Independent opacity for this fill layer (0.0–1.0).
   double _opacity;
+  /// Getter `opacity`.
   double get opacity => _opacity;
+  /// Method `opacity`.
   set opacity(double value) => _opacity = value.clamp(0.0, 1.0);
 
   /// Blend mode for compositing this fill onto the layers below.
@@ -74,6 +99,7 @@ class FillLayer {
   /// Whether this fill layer is currently visible.
   bool isVisible;
 
+  /// API element `FillLayer`.
   FillLayer({
     String? id,
     this.type = FillType.solid,
@@ -191,6 +217,7 @@ class FillLayer {
 
   // -- Serialization --------------------------------------------------------
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'id': id,
     'type': type.name,
@@ -204,6 +231,7 @@ class FillLayer {
     if (!isVisible) 'isVisible': false,
   };
 
+  /// API element `fromJson`.
   factory FillLayer.fromJson(Map<String, dynamic> json) {
     return FillLayer(
       id: json['id'] as String? ?? generateUid(),
@@ -294,7 +322,9 @@ class StrokeLayer {
 
   /// Independent opacity for this stroke layer (0.0–1.0).
   double _opacity;
+  /// Getter `opacity`.
   double get opacity => _opacity;
+  /// Method `opacity`.
   set opacity(double value) => _opacity = value.clamp(0.0, 1.0);
 
   /// Blend mode for compositing this stroke onto the layers below.
@@ -309,6 +339,7 @@ class StrokeLayer {
   /// Example: `[6.0, 3.0]` = 6px dash, 3px gap, repeating.
   List<double>? dashPattern;
 
+  /// API element `StrokeLayer`.
   StrokeLayer({
     String? id,
     this.color,
@@ -414,6 +445,7 @@ class StrokeLayer {
 
   // -- Serialization --------------------------------------------------------
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'id': id,
     if (color != null) 'color': color!.toARGB32(),
@@ -428,6 +460,7 @@ class StrokeLayer {
     if (dashPattern != null) 'dashPattern': dashPattern,
   };
 
+  /// API element `fromJson`.
   factory StrokeLayer.fromJson(Map<String, dynamic> json) {
     return StrokeLayer(
       id: json['id'] as String? ?? generateUid(),

@@ -46,10 +46,14 @@ bool _defaultShouldTransformSelection(Offset _) => false;
 /// );
 /// ```
 class InfiniteCanvasGestureDetector extends StatefulWidget {
+  /// Field `controller`.
   final InfiniteCanvasController controller;
+  /// Field `child`.
   final Widget child;
+  /// API element `onDrawStart`.
   final Function(Offset, double pressure, double tiltX, double tiltY)?
   onDrawStart;
+  /// API element `onDrawUpdate`.
   final Function(Offset position, double pressure, double tiltX, double tiltY)?
   onDrawUpdate;
 
@@ -61,26 +65,36 @@ class InfiniteCanvasGestureDetector extends StatefulWidget {
     List<double> tiltsY,
   )?
   onDrawBatchUpdate;
+  /// Method `onDrawEnd`.
   final Function(Offset)? onDrawEnd;
+  /// Method `onDrawCancel`.
   final VoidCallback?
   onDrawCancel; // 🚫 Clear stroke without saving (e.g. 2nd finger interrupts)
+  /// API element `onDoubleTapZoom`.
   final VoidCallback?
   onDoubleTapZoom; // 🎯 Called on double-tap zoom to undo the first tap's dot
+  /// Method `onLongPress`.
   final Function(Offset)? onLongPress;
 
   /// 🎯 Long-press continuation: move and end events forwarded to radial menu
   final Function(Offset screenPos)? onLongPressMoveUpdate;
+  /// Method `screenPos`.
   final Function(Offset screenPos)? onLongPressEnd;
 
   // ✂️ SPACE-SPLIT: Two-finger spread gesture callbacks
+  /// API element `onSpaceSplitStart`.
   final Function(double splitLinePosition, {bool isHorizontal})?
   onSpaceSplitStart;
+  /// API element `onSpaceSplitUpdate`.
   final Function(double splitLinePosition, double spreadDistance)?
   onSpaceSplitUpdate;
+  /// Field `onSpaceSplitEnd`.
   final VoidCallback? onSpaceSplitEnd;
 
   // ✌️ MULTI-FINGER TAP: Undo with 2-finger tap, Redo with 3-finger tap
+  /// Field `onTwoFingerTap`.
   final VoidCallback? onTwoFingerTap;
+  /// Field `onThreeFingerTap`.
   final VoidCallback? onThreeFingerTap;
 
   /// 🧠 SEMANTIC TAP: Called on single-finger quick taps (no movement).
@@ -89,19 +103,28 @@ class InfiniteCanvasGestureDetector extends StatefulWidget {
   final bool Function(Offset screenPoint)? onSingleTap;
 
   // 🔲 GESTURAL LASSO: Tap + Drag activates lasso without switching tools
+  /// Method `canvasPosition`.
   final Function(Offset canvasPosition)? onGesturalLassoStart;
+  /// Method `canvasPosition`.
   final Function(Offset canvasPosition)? onGesturalLassoUpdate;
+  /// Method `canvasPosition`.
   final Function(Offset canvasPosition)? onGesturalLassoEnd;
+  /// Field `onGesturalLassoArmed`.
   final VoidCallback? onGesturalLassoArmed; // #2: Haptic when lasso arms
 
-  final bool Function()
-  blockPanZoom; // 🔒 Block pan/zoom when true (evaluated at gesture time)
-  final bool
-  enableSingleFingerPan; // 🖐️ Enable pan with a finger instead of drawing
+  /// Predicate evaluated at gesture time — when it returns `true` the
+  /// pan / zoom path is blocked (used to gate the camera while a
+  /// modal overlay is open).
+  final bool Function() blockPanZoom;
+  /// When `true`, a single-finger drag pans the camera instead of
+  /// starting a stroke. Useful for note-taking apps where two-finger
+  /// pan feels less natural.
+  final bool enableSingleFingerPan;
   /// 📄 Optional callback: given a canvas-space position, returns true if
   /// the single-finger pan should be intercepted and routed to draw callbacks
   /// instead (e.g. for PDF document dragging).
   final bool Function(Offset canvasPosition)? onPanInterceptTest;
+  /// Field `isStylusModeEnabled`.
   final bool isStylusModeEnabled; // 🖊️ Stylus mode: stylus draws, finger pans
 
   /// 🖐️ PALM REJECTION: optional exclusion zone where large-area touches
@@ -109,13 +132,16 @@ class InfiniteCanvasGestureDetector extends StatefulWidget {
   final ui.Rect? palmExclusionZone;
 
   // 🌀 Image rotation callbacks (two-finger rotate + scale on selected image)
+  /// Field `onImageScaleStart`.
   final VoidCallback? onImageScaleStart;
+  /// API element `onImageTransform`.
   final Function(
     double rotationDelta,
     double scaleDelta,
     Offset focalPointDelta,
   )?
   onImageTransform;
+  /// Field `onImageScaleEnd`.
   final VoidCallback? onImageScaleEnd;
 
   /// ⚡ Evaluated at GESTURE TIME (not build time) to decide whether
@@ -125,13 +151,16 @@ class InfiniteCanvasGestureDetector extends StatefulWidget {
   final bool Function(Offset focalPoint) shouldRouteToImageRotation;
 
   // 🤏 SELECTION TRANSFORM: Two-finger rotate + scale on lasso selection
+  /// Field `onSelectionScaleStart`.
   final VoidCallback? onSelectionScaleStart;
+  /// API element `onSelectionTransform`.
   final Function(
     double rotationDelta,
     double scaleDelta,
     Offset focalPointDelta,
   )?
   onSelectionTransform;
+  /// Field `onSelectionScaleEnd`.
   final VoidCallback? onSelectionScaleEnd;
 
   /// Evaluated at GESTURE TIME to decide whether two-finger gestures
@@ -148,6 +177,7 @@ class InfiniteCanvasGestureDetector extends StatefulWidget {
 
   // 📈 Graph viewport zoom+pan: called when blockPanZoom blocks canvas zoom.
   // Routes two-finger pinch scale and pan delta to graph viewport.
+  /// Method `scale`.
   final Function(double scale, Offset focalDelta)? onBlockedScale;
 
   /// 🖐️ Palm rejection / handedness policy. Defaults to a no-op: every touch
@@ -159,6 +189,7 @@ class InfiniteCanvasGestureDetector extends StatefulWidget {
   /// stylus-hover events to a cursor overlay or snap helper.
   final StylusHoverTracker stylusHoverTracker;
 
+  /// API element `InfiniteCanvasGestureDetector`.
   const InfiniteCanvasGestureDetector({
     super.key,
     required this.controller,

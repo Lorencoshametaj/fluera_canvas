@@ -7,11 +7,14 @@ import '../scene_graph/node_visitor.dart';
 ///
 /// Uniforms are the primary way to parameterize shader effects.
 sealed class ShaderUniform {
+  /// Field `name`.
   final String name;
   const ShaderUniform(this.name);
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson();
 
+  /// API element `fromJson`.
   static ShaderUniform fromJson(Map<String, dynamic> json) {
     switch (json['type'] as String) {
       case 'float':
@@ -46,7 +49,9 @@ sealed class ShaderUniform {
 
 /// A single float uniform.
 class FloatUniform extends ShaderUniform {
+  /// Field `value`.
   double value;
+  /// Method `name`.
   FloatUniform(super.name, this.value);
 
   @override
@@ -59,8 +64,11 @@ class FloatUniform extends ShaderUniform {
 
 /// A vec2 (2D vector) uniform.
 class Vec2Uniform extends ShaderUniform {
+  /// Field `x`.
   double x;
+  /// Field `y`.
   double y;
+  /// Method `name`.
   Vec2Uniform(super.name, this.x, this.y);
 
   @override
@@ -74,10 +82,15 @@ class Vec2Uniform extends ShaderUniform {
 
 /// A vec4 (4D vector) uniform.
 class Vec4Uniform extends ShaderUniform {
+  /// Field `x`.
   double x;
+  /// Field `y`.
   double y;
+  /// Field `z`.
   double z;
+  /// Field `w`.
   double w;
+  /// Method `name`.
   Vec4Uniform(super.name, this.x, this.y, this.z, this.w);
 
   @override
@@ -93,7 +106,9 @@ class Vec4Uniform extends ShaderUniform {
 
 /// A color uniform (passed as vec4 r, g, b, a to shader).
 class ColorUniform extends ShaderUniform {
+  /// Field `ui`.
   ui.Color value;
+  /// Method `name`.
   ColorUniform(super.name, this.value);
 
   @override
@@ -165,6 +180,7 @@ class ShaderEffect {
   /// Opacity of the shader effect.
   double opacity;
 
+  /// API element `ShaderEffect`.
   ShaderEffect({
     this.preset = ShaderPreset.custom,
     this.shaderAssetPath,
@@ -204,6 +220,7 @@ class ShaderEffect {
     uniforms.add(ColorUniform(name, color));
   }
 
+  /// Method `toJson`.
   Map<String, dynamic> toJson() => {
     'preset': preset.name,
     if (shaderAssetPath != null) 'shaderAssetPath': shaderAssetPath,
@@ -213,6 +230,7 @@ class ShaderEffect {
     'opacity': opacity,
   };
 
+  /// Method `fromJson`.
   factory ShaderEffect.fromJson(Map<String, dynamic> json) => ShaderEffect(
     preset: ShaderPreset.values.byName(json['preset'] as String? ?? 'custom'),
     shaderAssetPath: json['shaderAssetPath'] as String?,
@@ -236,17 +254,20 @@ class ShaderEffect {
         uniforms: [FloatUniform('scale', scale), FloatUniform('speed', speed)],
       );
 
+  /// Method `voronoi`.
   factory ShaderEffect.voronoi({double scale = 5.0}) => ShaderEffect(
     preset: ShaderPreset.voronoi,
     uniforms: [FloatUniform('scale', scale)],
   );
 
+  /// Method `chromaticAberration`.
   factory ShaderEffect.chromaticAberration({double intensity = 3.0}) =>
       ShaderEffect(
         preset: ShaderPreset.chromaticAberration,
         uniforms: [FloatUniform('intensity', intensity)],
       );
 
+  /// Method `glitch`.
   factory ShaderEffect.glitch({double intensity = 0.5, double speed = 2.0}) =>
       ShaderEffect(
         preset: ShaderPreset.glitch,
@@ -256,6 +277,7 @@ class ShaderEffect {
         ],
       );
 
+  /// Method `pixelate`.
   factory ShaderEffect.pixelate({double pixelSize = 8.0}) => ShaderEffect(
     preset: ShaderPreset.pixelate,
     uniforms: [FloatUniform('pixelSize', pixelSize)],
@@ -276,6 +298,7 @@ class ShaderNode extends CanvasNode {
   /// Height of the shader quad.
   double height;
 
+  /// API element `ShaderNode`.
   ShaderNode({
     required super.id,
     super.name = 'Shader',
@@ -292,6 +315,7 @@ class ShaderNode extends CanvasNode {
   @override
   ui.Rect get localBounds => ui.Rect.fromLTWH(0, 0, width, height);
 
+  /// API element `hitTestLocal`.
   bool hitTestLocal(ui.Offset localPoint) {
     return localBounds.contains(localPoint);
   }
@@ -306,6 +330,7 @@ class ShaderNode extends CanvasNode {
     return json;
   }
 
+  /// API element `fromJson`.
   factory ShaderNode.fromJson(Map<String, dynamic> json) {
     final node = ShaderNode(
       id: NodeId(json['id'] as String),
