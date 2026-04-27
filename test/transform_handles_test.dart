@@ -98,15 +98,17 @@ void main() {
 
   // ── Rotation ────────────────────────────────────────────────────────
   group('TransformMath.rotationDelta', () {
-    test('quarter turn from east to north → +π/2 (CCW in math, CW visually)',
-        () {
-      final delta = TransformMath.rotationDelta(
-        center: Offset.zero,
-        anchor: const Offset(10, 0),
-        pointer: const Offset(0, 10),
-      );
-      expect(delta, closeTo(math.pi / 2, 1e-9));
-    });
+    test(
+      'quarter turn from east to north → +π/2 (CCW in math, CW visually)',
+      () {
+        final delta = TransformMath.rotationDelta(
+          center: Offset.zero,
+          anchor: const Offset(10, 0),
+          pointer: const Offset(0, 10),
+        );
+        expect(delta, closeTo(math.pi / 2, 1e-9));
+      },
+    );
 
     test('snap15 quantises to 15° steps', () {
       // 22° actual -> snaps to 15°.

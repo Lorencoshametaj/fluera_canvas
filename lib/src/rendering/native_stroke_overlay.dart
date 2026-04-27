@@ -315,9 +315,7 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay>
       // surface before we go quiet again. Skipped while warmup is in
       // progress — the ticker callback owns that lifecycle.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_wasDrawing &&
-            _repaintTicker.isActive &&
-            _warmupTicksLeft == 0) {
+        if (!_wasDrawing && _repaintTicker.isActive && _warmupTicksLeft == 0) {
           _repaintTicker.stop();
         }
       });
@@ -473,14 +471,18 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay>
       backend.clear();
       _pushTransform();
       if (kDebugMode) {
-        debugPrint('[NSO] PEN-DOWN. tick=$_repaintTick '
-            'points=${c.bufferedPoints.length} '
-            'textureId=$_textureId');
+        debugPrint(
+          '[NSO] PEN-DOWN. tick=$_repaintTick '
+          'points=${c.bufferedPoints.length} '
+          'textureId=$_textureId',
+        );
       }
     }
     if (kDebugMode && drawing) {
-      debugPrint('[NSO] tick=$_repaintTick '
-          'points=${c.bufferedPoints.length}');
+      debugPrint(
+        '[NSO] tick=$_repaintTick '
+        'points=${c.bufferedPoints.length}',
+      );
     }
     _wasDrawing = drawing;
     _ensureRepaintTickerRunning(drawing);
@@ -618,16 +620,20 @@ class _DartFallbackPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final pts = controller.bufferedPoints;
     if (kDebugMode) {
-      debugPrint('[DartPreview] paint pts=${pts.length} '
-          'color=${controller.color.toARGB32().toRadixString(16)} '
-          'width=${controller.strokeWidth}');
+      debugPrint(
+        '[DartPreview] paint pts=${pts.length} '
+        'color=${controller.color.toARGB32().toRadixString(16)} '
+        'width=${controller.strokeWidth}',
+      );
     }
     if (pts.length < 2) {
       // Even a single point should be visible — draw a dot.
       if (pts.length == 1) {
         canvas.save();
         canvas.translate(
-            canvasController.offset.dx, canvasController.offset.dy);
+          canvasController.offset.dx,
+          canvasController.offset.dy,
+        );
         canvas.scale(canvasController.scale);
         canvas.drawCircle(
           pts[0].position,
@@ -676,12 +682,13 @@ class _DartFallbackPainter extends CustomPainter {
       );
     }
 
-    final paint = Paint()
-      ..color = controller.color
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..strokeWidth = strokeWidth;
+    final paint =
+        Paint()
+          ..color = controller.color
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..strokeWidth = strokeWidth;
     canvas.drawPath(path, paint);
     canvas.restore();
   }

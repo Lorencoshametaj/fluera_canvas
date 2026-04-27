@@ -58,13 +58,12 @@ class PencilConfig {
     double? maxOpacity,
     double? minPressure,
     double? maxPressure,
-  }) =>
-      PencilConfig(
-        baseOpacity: baseOpacity ?? this.baseOpacity,
-        maxOpacity: maxOpacity ?? this.maxOpacity,
-        minPressure: minPressure ?? this.minPressure,
-        maxPressure: maxPressure ?? this.maxPressure,
-      );
+  }) => PencilConfig(
+    baseOpacity: baseOpacity ?? this.baseOpacity,
+    maxOpacity: maxOpacity ?? this.maxOpacity,
+    minPressure: minPressure ?? this.minPressure,
+    maxPressure: maxPressure ?? this.maxPressure,
+  );
 
   @override
   bool operator ==(Object other) =>
@@ -121,14 +120,13 @@ class FountainPenConfig {
     double? nibStrength,
     double? pressureRate,
     int? taperEntry,
-  }) =>
-      FountainPenConfig(
-        thinning: thinning ?? this.thinning,
-        nibAngleDeg: nibAngleDeg ?? this.nibAngleDeg,
-        nibStrength: nibStrength ?? this.nibStrength,
-        pressureRate: pressureRate ?? this.pressureRate,
-        taperEntry: taperEntry ?? this.taperEntry,
-      );
+  }) => FountainPenConfig(
+    thinning: thinning ?? this.thinning,
+    nibAngleDeg: nibAngleDeg ?? this.nibAngleDeg,
+    nibStrength: nibStrength ?? this.nibStrength,
+    pressureRate: pressureRate ?? this.pressureRate,
+    taperEntry: taperEntry ?? this.taperEntry,
+  );
 
   @override
   bool operator ==(Object other) =>
@@ -141,11 +139,6 @@ class FountainPenConfig {
           other.taperEntry == taperEntry);
 
   @override
-  int get hashCode => Object.hash(
-        thinning,
-        nibAngleDeg,
-        nibStrength,
-        pressureRate,
-        taperEntry,
-      );
+  int get hashCode =>
+      Object.hash(thinning, nibAngleDeg, nibStrength, pressureRate, taperEntry);
 }

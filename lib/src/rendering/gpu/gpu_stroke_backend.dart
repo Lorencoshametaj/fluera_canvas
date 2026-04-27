@@ -163,6 +163,187 @@ class FlueraCanvasGpu {
 
   /// Currently registered committed-stroke renderer, or `null` if none.
   static CanvasStrokeRenderer? get strokeRenderer => _strokeRenderer;
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Layer compositor (canvas 0.6.0+)
+  // ────────────────────────────────────────────────────────────────────────
+  //
+  // Optional override for the per-layer `saveLayer` pass that the canvas-
+  // core committed painter does. The free pub.dev core uses Flutter's
+  // built-in `Canvas.saveLayer + ui.BlendMode` (8 standard blend modes).
+  // Consumers that installed `fluera_canvas_gpu` register a GPU compositor
+  // here that supports the full Photoshop-grade set (16 modes), layer
+  // masks via stencil, and high-dpi compositing. When unset (the pub.dev
+  // default) the canvas keeps using `Canvas.saveLayer`.
+
+  static LayerCompositor? _layerCompositor;
+
+  /// Register an override for the per-layer compositor. Pass `null` to
+  /// revert to the built-in Dart `Canvas.saveLayer` path.
+  static void setLayerCompositor(LayerCompositor? compositor) {
+    _layerCompositor = compositor;
+  }
+
+  /// Currently registered layer compositor, or `null` if none. The
+  /// committed-strokes painter checks this on every paint.
+  static LayerCompositor? get layerCompositor => _layerCompositor;
+}
+
+/// Optional override for the per-layer composite pass.
+///
+/// The committed-strokes painter calls [compositeLayer] once per visible
+/// layer that has on-screen strokes. Implementations are responsible for
+/// compositing the layer onto [canvas] with the correct opacity and blend
+/// mode; they MUST call [paintStrokes] exactly once to draw the stroke
+/// content into their own offscreen surface, then composite that surface
+/// onto [canvas] with the requested mixing.
+///
+/// The free pub.dev fallback (when no compositor is registered) is a
+/// straight `canvas.saveLayer(viewport, Paint()..color..blendMode); paintStrokes(canvas); canvas.restore();`.
+/// Commercial implementations may use GPU shaders to support
+/// Photoshop-grade modes and layer masks that `ui.BlendMode` can't
+/// express.
+abstract class LayerCompositor {
+  /// Composite a single layer onto [canvas].
+  ///
+  /// [paintStrokes] paints the on-screen strokes of the layer in
+  /// canvas-world coordinates (the camera transform is already applied
+  /// to [canvas]). Implementations must call this once.
+  ///
+  /// [opacity] is the per-layer alpha multiplier in `[0, 1]`.
+  ///
+  /// [blendMode] is the standard-set blend mode (one of the 17 modes
+  /// Flutter exposes via `ui.BlendMode`). The free core uses this
+  /// directly with `Canvas.saveLayer`.
+  ///
+  /// [extendedBlendModeCode] is non-null when the layer is set to one
+  /// of the 9 Photoshop-grade extended modes that `ui.BlendMode` cannot
+  /// express (LinearBurn, VividLight, LinearLight, PinLight, HardMix,
+  /// DarkerColor, LighterColor, Subtract, Divide). The free fallback
+  /// ignores this — the canvas-core has already substituted [blendMode]
+  /// with `FlueraBlendMode.closestStandard` so the layer still renders.
+  /// The commercial `fluera_canvas_gpu` compositor inspects the code and
+  /// dispatches to a custom fragment shader that compositing-accurately
+  /// reproduces the Photoshop result.
+  ///
+  /// [layerRect] is a bound that contains every visible stroke on the
+  /// layer under the current camera — pass it to `saveLayer` calls to
+  /// avoid full-screen alloc.
+  void compositeLayer(
+    ui.Canvas canvas, {
+    required double opacity,
+    required ui.BlendMode blendMode,
+    required ui.Rect layerRect,
+    required void Function(ui.Canvas) paintStrokes,
+    int? extendedBlendModeCode,
+    ui.Image? mask,
+  });
+
+  /// Composite a single layer that is on a Photoshop-grade extended
+  /// blend mode (one of codes 100..108 in `FlueraBlendMode`), with a
+  /// pre-computed [backdrop] snapshot of everything painted below this
+  /// layer.
+  ///
+  /// The painter calls this overload (instead of [compositeLayer])
+  /// only when:
+  ///   1. `extendedBlendModeCode != null`, and
+  ///   2. the registered compositor reports
+  ///      [supportsBackdropAwareBlend] as `true`.
+  ///
+  /// Why a separate method: the math for these modes (LinearBurn,
+  /// VividLight, …) needs both source and destination as shader
+  /// samplers. The plain [compositeLayer] hands the compositor only a
+  /// `paintStrokes` callback — it has no way to read the backdrop.
+  ///
+  /// The default implementation reuses [blendExtendedToImage] to keep
+  /// the user canvas blit and any internal bookkeeping in sync — that
+  /// way a compositor that wants both a "draw to canvas" path AND a
+  /// "give me the result image so I can chain extended layers
+  /// accurately" path only writes the shader dispatch once.
+  ///
+  /// [foregroundImageSize] is the pixel size of [backdrop]. The
+  /// compositor produces a foreground image of the same size.
+  void compositeLayerExtended(
+    ui.Canvas canvas, {
+    required double opacity,
+    required ui.Rect layerRect,
+    required void Function(ui.Canvas) paintStrokes,
+    required int extendedBlendModeCode,
+    required ui.Image backdrop,
+    required ui.Size foregroundImageSize,
+    required double devicePixelRatio,
+    ui.Image? mask,
+  }) {
+    final result = blendExtendedToImage(
+      opacity: opacity,
+      layerRect: layerRect,
+      paintStrokes: paintStrokes,
+      extendedBlendModeCode: extendedBlendModeCode,
+      backdrop: backdrop,
+      foregroundImageSize: foregroundImageSize,
+      devicePixelRatio: devicePixelRatio,
+      mask: mask,
+    );
+    // (mask was passed to blendExtendedToImage; the implementor honours
+    // it via the shader path. The default impl needs no further
+    // handling.)
+    if (result == null) {
+      throw UnimplementedError(
+        'Compositor opted into backdrop-aware blend but did not '
+        'override blendExtendedToImage / compositeLayerExtended.',
+      );
+    }
+    canvas.save();
+    canvas.translate(layerRect.left, layerRect.top);
+    canvas.scale(layerRect.width / foregroundImageSize.width);
+    canvas.drawImage(
+      result,
+      ui.Offset.zero,
+      ui.Paint()..color = ui.Color.fromRGBO(0, 0, 0, opacity),
+    );
+    canvas.restore();
+    result.dispose();
+  }
+
+  /// Run the extended-mode shader (codes 100..108) over [backdrop] +
+  /// the rasterised [paintStrokes] foreground and return the composited
+  /// image in pixel space.
+  ///
+  /// Returning the image — instead of drawing it directly — lets the
+  /// painter REUSE it as the running backdrop for a subsequent
+  /// extended-mode layer, so chaining two or more Photoshop-grade
+  /// blends in a row stays pixel-accurate. (Stage 2B used the
+  /// closest-standard `ui.BlendMode` to mirror the layer into the
+  /// running backdrop, which drifted the chain off the reference
+  /// math after the second extended layer.)
+  ///
+  /// Caller owns the returned image — call `.dispose()` when done.
+  /// The default implementation returns `null`; only compositors that
+  /// can run the shader in image-space override this. When `null`, the
+  /// painter falls back to [compositeLayerExtended] direct + a
+  /// closest-standard mirror for the running backdrop.
+  ui.Image? blendExtendedToImage({
+    required double opacity,
+    required ui.Rect layerRect,
+    required void Function(ui.Canvas) paintStrokes,
+    required int extendedBlendModeCode,
+    required ui.Image backdrop,
+    required ui.Size foregroundImageSize,
+    required double devicePixelRatio,
+    ui.Image? mask,
+  }) => null;
+
+  /// Whether this compositor can honour a Photoshop-grade extended
+  /// blend mode by reading the parent backdrop. Defaults to `false` —
+  /// the painter then routes extended layers through [compositeLayer]
+  /// (which falls back to the closest-standard `ui.BlendMode`).
+  ///
+  /// Set to `true` only after [compositeLayerExtended] is implemented
+  /// AND the underlying shader program has finished loading. The
+  /// painter probes this on every paint, so flipping it from `false`
+  /// to `true` once the GPU shader is ready (during async program
+  /// load) is supported.
+  bool get supportsBackdropAwareBlend => false;
 }
 
 /// Optional override for the committed-stroke renderer.

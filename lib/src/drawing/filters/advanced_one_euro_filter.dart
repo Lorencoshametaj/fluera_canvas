@@ -13,6 +13,9 @@ library;
 import 'dart:ui';
 import 'dart:math' as math;
 
+/// Velocity-aware low-pass filter for stylus input. Adaptive variant
+/// of `OneEuroFilter` with a filtered-derivative speed estimator —
+/// keeps slow strokes ultra-smooth and fast strokes responsive.
 class AdvancedOneEuroFilter {
   final double freq; // Frequenza di campionamento (Hz)
   final double minCutoff; // Cutoff minimo (more basso = more smooth)

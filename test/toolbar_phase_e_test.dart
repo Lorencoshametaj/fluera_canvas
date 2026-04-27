@@ -55,8 +55,9 @@ void main() {
       expect(find.text('Select'), findsNothing);
     });
 
-    testWidgets('true renders the Select segment in the segmented control',
-        (tester) async {
+    testWidgets('true renders the Select segment in the segmented control', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(canvasKey: key, showSelectionTool: true));
       expect(find.text('Select'), findsOneWidget);
@@ -83,8 +84,9 @@ void main() {
     // but other widgets may legitimately surface the same glyph),
     // tooltips on the IconButtons we render are unique strings.
 
-    testWidgets('hidden when selection is empty even with flag = true',
-        (tester) async {
+    testWidgets('hidden when selection is empty even with flag = true', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(canvasKey: key, showTransformActions: true));
       expect(find.byTooltip('Mirror horizontally'), findsNothing);
@@ -97,12 +99,14 @@ void main() {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(canvasKey: key, showTransformActions: true));
       final state = key.currentState!;
-      state.pushStroke(CanvasStroke(
-        points: List.unmodifiable(const [Offset(0, 0), Offset(10, 10)]),
-        pressures: const [0.5, 0.7],
-        color: const Color(0xFF000000),
-        baseWidth: 2.0,
-      ));
+      state.pushStroke(
+        CanvasStroke(
+          points: List.unmodifiable(const [Offset(0, 0), Offset(10, 10)]),
+          pressures: const [0.5, 0.7],
+          color: const Color(0xFF000000),
+          baseWidth: 2.0,
+        ),
+      );
       state.selectInRect(const Rect.fromLTWH(-100, -100, 1000, 1000));
       await tester.pump();
       expect(find.byTooltip('Mirror horizontally'), findsOneWidget);
@@ -111,17 +115,20 @@ void main() {
       expect(find.byTooltip('Clear selection'), findsOneWidget);
     });
 
-    testWidgets('mirror-H tap mirrors selection + history grows by 1',
-        (tester) async {
+    testWidgets('mirror-H tap mirrors selection + history grows by 1', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(canvasKey: key, showTransformActions: true));
       final state = key.currentState!;
-      state.pushStroke(CanvasStroke(
-        points: List.unmodifiable(const [Offset(0, 0), Offset(10, 10)]),
-        pressures: const [0.5, 0.7],
-        color: const Color(0xFF000000),
-        baseWidth: 2.0,
-      ));
+      state.pushStroke(
+        CanvasStroke(
+          points: List.unmodifiable(const [Offset(0, 0), Offset(10, 10)]),
+          pressures: const [0.5, 0.7],
+          color: const Color(0xFF000000),
+          baseWidth: 2.0,
+        ),
+      );
       state.selectInRect(const Rect.fromLTWH(-100, -100, 1000, 1000));
       await tester.pump();
       final beforeHistory = state.historyLength;
@@ -134,12 +141,14 @@ void main() {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(canvasKey: key, showTransformActions: true));
       final state = key.currentState!;
-      state.pushStroke(CanvasStroke(
-        points: List.unmodifiable(const [Offset(0, 0), Offset(10, 10)]),
-        pressures: const [0.5, 0.7],
-        color: const Color(0xFF000000),
-        baseWidth: 2.0,
-      ));
+      state.pushStroke(
+        CanvasStroke(
+          points: List.unmodifiable(const [Offset(0, 0), Offset(10, 10)]),
+          pressures: const [0.5, 0.7],
+          color: const Color(0xFF000000),
+          baseWidth: 2.0,
+        ),
+      );
       state.selectInRect(const Rect.fromLTWH(-100, -100, 1000, 1000));
       await tester.pump();
       expect(state.selection.isNotEmpty, isTrue);

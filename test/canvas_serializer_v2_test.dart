@@ -6,15 +6,15 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   CanvasStroke makeStroke(int seed) => CanvasStroke(
-        points: List<Offset>.unmodifiable([
-          Offset(seed.toDouble(), 0),
-          Offset(seed.toDouble() + 10, 5),
-          Offset(seed.toDouble() + 20, 15),
-        ]),
-        pressures: const [0.4, 0.6, 0.8],
-        color: Color(0xFF000000 + seed),
-        baseWidth: 1.5 + seed * 0.25,
-      );
+    points: List<Offset>.unmodifiable([
+      Offset(seed.toDouble(), 0),
+      Offset(seed.toDouble() + 10, 5),
+      Offset(seed.toDouble() + 20, 15),
+    ]),
+    pressures: const [0.4, 0.6, 0.8],
+    color: Color(0xFF000000 + seed),
+    baseWidth: 1.5 + seed * 0.25,
+  );
 
   /// Produce a v1 byte stream by hand so we lock the legacy decoder
   /// behaviour from outside the library (no dependency on internal v1
@@ -53,47 +53,59 @@ void main() {
   }
 
   group('CanvasSerializer FCV v2', () {
-    test('encode + decode round-trips strokes through the layer-aware path',
-        () {
-      final strokes = [makeStroke(1), makeStroke(2), makeStroke(3)];
-      final bytes = CanvasSerializer.encodeBytes(strokes);
-      final decoded = CanvasSerializer.decodeBytes(bytes);
-      expect(decoded, hasLength(3));
-      for (int i = 0; i < 3; i++) {
-        // Float32 round-trip drifts each scalar by ~1e-7 — the binary
-        // format has always used 32-bit floats, so test with tolerance.
-        expect(decoded[i].points.length, strokes[i].points.length);
-        for (int j = 0; j < decoded[i].points.length; j++) {
-          expect(decoded[i].points[j].dx,
-              closeTo(strokes[i].points[j].dx, 1e-5));
-          expect(decoded[i].points[j].dy,
-              closeTo(strokes[i].points[j].dy, 1e-5));
-          expect(decoded[i].pressures[j],
-              closeTo(strokes[i].pressures[j], 1e-5));
+    test(
+      'encode + decode round-trips strokes through the layer-aware path',
+      () {
+        final strokes = [makeStroke(1), makeStroke(2), makeStroke(3)];
+        final bytes = CanvasSerializer.encodeBytes(strokes);
+        final decoded = CanvasSerializer.decodeBytes(bytes);
+        expect(decoded, hasLength(3));
+        for (int i = 0; i < 3; i++) {
+          // Float32 round-trip drifts each scalar by ~1e-7 — the binary
+          // format has always used 32-bit floats, so test with tolerance.
+          expect(decoded[i].points.length, strokes[i].points.length);
+          for (int j = 0; j < decoded[i].points.length; j++) {
+            expect(
+              decoded[i].points[j].dx,
+              closeTo(strokes[i].points[j].dx, 1e-5),
+            );
+            expect(
+              decoded[i].points[j].dy,
+              closeTo(strokes[i].points[j].dy, 1e-5),
+            );
+            expect(
+              decoded[i].pressures[j],
+              closeTo(strokes[i].pressures[j], 1e-5),
+            );
+          }
+          expect(decoded[i].color.toARGB32(), strokes[i].color.toARGB32());
+          expect(decoded[i].baseWidth, closeTo(strokes[i].baseWidth, 1e-5));
         }
-        expect(decoded[i].color.toARGB32(), strokes[i].color.toARGB32());
-        expect(decoded[i].baseWidth, closeTo(strokes[i].baseWidth, 1e-5));
-      }
-    });
+      },
+    );
 
-    test('encodeBytes produces a v2 file with version byte 2', () {
+    test('encodeBytes produces a v6 file with version byte 6', () {
       final bytes = CanvasSerializer.encodeBytes([makeStroke(1)]);
-      // bytes[0..3] = magic, bytes[4..5] = version (uint16 LE)
+      // bytes[0..3] = magic, bytes[4..5] = version (uint16 LE).
+      // 0.8.0 promoted the writer to FCV v6 (text-node persistence);
+      // v5 / v4 / v3 / v2 / v1 readers continue to be supported by
+      // `decodeBytesFull` but new files always go out as v6.
       final version = bytes[4] | (bytes[5] << 8);
-      expect(version, 2,
-          reason: 'encodeBytes must emit the v2 layered format');
+      expect(version, 6, reason: 'encodeBytes must emit the v6 layered format');
     });
 
-    test('decodeBytesToLayers exposes the synthetic single-layer hierarchy',
-        () {
-      final strokes = [makeStroke(1), makeStroke(2)];
-      final bytes = CanvasSerializer.encodeBytes(strokes);
-      final root = CanvasSerializer.decodeBytesToLayers(bytes);
-      final layers = root.children.whereType<LayerNode>().toList();
-      expect(layers, hasLength(1));
-      expect(layers.single.children, hasLength(2));
-      expect(layers.single.children.first, isA<CanvasStrokeNode>());
-    });
+    test(
+      'decodeBytesToLayers exposes the synthetic single-layer hierarchy',
+      () {
+        final strokes = [makeStroke(1), makeStroke(2)];
+        final bytes = CanvasSerializer.encodeBytes(strokes);
+        final root = CanvasSerializer.decodeBytesToLayers(bytes);
+        final layers = root.children.whereType<LayerNode>().toList();
+        expect(layers, hasLength(1));
+        expect(layers.single.children, hasLength(2));
+        expect(layers.single.children.first, isA<CanvasStrokeNode>());
+      },
+    );
 
     test('legacy v1 byte stream decodes as a synthetic Layer 1', () {
       final strokes = [makeStroke(7), makeStroke(8)];
@@ -110,8 +122,7 @@ void main() {
       expect(flat[1].points, strokes[1].points);
     });
 
-    test('layer header round-trips visibility, lock, opacity, blend mode',
-        () {
+    test('layer header round-trips visibility, lock, opacity, blend mode', () {
       // Build a layered scene by hand and check the v2 round-trip
       // preserves the full layer state — not just the strokes inside.
       final root = LayerNode(id: const NodeId('root'), name: 'Root');
@@ -122,9 +133,7 @@ void main() {
         isVisible: false,
         isLocked: true,
       );
-      l1.add(
-        CanvasStrokeNode(id: const NodeId('s-1'), stroke: makeStroke(1)),
-      );
+      l1.add(CanvasStrokeNode(id: const NodeId('s-1'), stroke: makeStroke(1)));
       root.add(l1);
 
       final bytes = CanvasSerializer.encodeBytesFromLayers(root);

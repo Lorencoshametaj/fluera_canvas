@@ -102,14 +102,26 @@ void main() {
       final stroke = makeStroke();
       final node = CanvasStrokeNode(id: const NodeId('n-5'), stroke: stroke);
       final payload = node.toJson()['stroke'] as Map<String, dynamic>;
-      expect(payload.containsKey('s'), isFalse,
-          reason: 'smooth=true is the default; should be omitted');
-      expect(payload.containsKey('bt'), isFalse,
-          reason: 'brushType=0 is the default; should be omitted');
-      expect(payload.containsKey('pc'), isFalse,
-          reason: 'PencilConfig.defaults should be omitted');
-      expect(payload.containsKey('fc'), isFalse,
-          reason: 'FountainPenConfig.defaults should be omitted');
+      expect(
+        payload.containsKey('s'),
+        isFalse,
+        reason: 'smooth=true is the default; should be omitted',
+      );
+      expect(
+        payload.containsKey('bt'),
+        isFalse,
+        reason: 'brushType=0 is the default; should be omitted',
+      );
+      expect(
+        payload.containsKey('pc'),
+        isFalse,
+        reason: 'PencilConfig.defaults should be omitted',
+      );
+      expect(
+        payload.containsKey('fc'),
+        isFalse,
+        reason: 'FountainPenConfig.defaults should be omitted',
+      );
     });
   });
 }

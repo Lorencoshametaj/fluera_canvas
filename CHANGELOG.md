@@ -1,5 +1,605 @@
 # Changelog
 
+## 0.10.0 (Zero-config drop-in widgets — 2026-04-27)
+
+- **Lasso UX parity con Fluera flagship** (post-0.10.0 polish):
+  - **Tap-on-selection enters transform mode**: with `tool: lasso`
+    and a non-empty selection, a pen-down inside the selection's
+    bounding rect now enters move mode (and a pen-down on a handle
+    starts resize / rotate) — same priority chain as
+    `CanvasTool.select`. Pre-fix, every pen-down in lasso tool
+    started a fresh lasso path and silently wiped the selection,
+    forcing the user to manually switch tools to manipulate. Tap
+    OUTSIDE the bbox keeps the previous behaviour: clears the old
+    selection and starts a fresh lasso. Mirrors how the Fluera
+    flagship app handles it (verified against
+    `fluera_engine/.../lasso_tool.dart` + `_drawing_handlers.dart:448`).
+  - **Stricter hit-test**: dropped the `lassoBounds.overlaps(nodeBounds)`
+    catch-all from `_lassoHitsNode`. Pre-fix a "C"-shaped lasso
+    whose AABB engulfed a stroke sitting in the open mouth of the
+    "C" would mark the stroke selected even though no point of it
+    was ever encircled. Now strict containment: a node is selected
+    only when its centre OR any of its bounds corners falls inside
+    the closed polygon — same convention as Photoshop / Procreate /
+    Figma. The cheap bbox overlap is still used as an early reject
+    to skip the expensive `Path.contains` ray-casting on far-away
+    nodes.
+  - 4 new widget tests cover both behaviours
+    (`test/lasso_post_selection_test.dart`).
+
+
+
+- **`FlueraSketchApp`** — full `MaterialApp` wrapping a sketch
+  scaffold. `void main() => runApp(const FlueraSketchApp());` and
+  you have a complete drawing app: AppBar with undo / redo / clear /
+  export-PNG popup, full toolbar with every opt-in flag wired,
+  sensible Material 3 theme. Three preset shapes via the new
+  `FlueraSketchPreset` enum: `notes` (Notability-style minimal),
+  `whiteboard` (full kit with snap-to-grid + smart guides),
+  `signature` (single pen, no zoom, no shapes — drop-in
+  `signature` package replacement).
+- **`FlueraSketchScaffold`** — same scaffold without the wrapping
+  `MaterialApp`. Drop as a route inside an existing app. Optional
+  `onAutoSave` / `onAutoLoad` callbacks integrate any persistence
+  backend (`path_provider`, in-memory, network, secure-storage)
+  via a 2-second-default debounce. Optional `onExportPng` sink for
+  the AppBar export menu (falls back to clipboard data URL).
+- **`FlueraSketch`** — the bare canvas + toolbar, with internal
+  `tool` / `color` / `strokeWidth` state. Drop into any Scaffold
+  body without writing a single setState. Caller can still pass a
+  `GlobalKey<FlueraCanvasState>` for advanced control.
+- **No new dependencies**: the package stays pure Dart. Persistence
+  remains consumer-side via callbacks (`path_provider` continues to
+  be a dependency only of the example, not the package).
+- 9 new widget tests cover all three layers + every preset.
+- Demo gallery: new "Zero-config app (FlueraSketchApp)" demo with 3
+  tabs showcasing the three magic levels.
+
+> **Upgrading from 0.5.x?** See
+> [doc/migration-0.5-to-0.10.0.md](doc/migration-0.5-to-0.10.0.md) for a
+> consolidated, breaking-change-free upgrade path.
+
+## 0.9.3 (Smoothing pipeline + eraser polish + PNG export overhaul + edge-case hardening — 2026-04-27)
+
+- **Edge-case hardening pass.** Five focused fixes from a triple
+  parallel audit:
+  1. **FCV0 reader bounds checks** — every uint16 / uint32 length
+     field (`pointCount`, `layerCount`, image `blobLen`, layer
+     `idLen` / `nameLen`) is now validated against the remaining
+     buffer before allocating. Hostile or truncated files now throw
+     a clean `FormatException` instead of allocating gigabytes.
+  2. **`renderToImage` clamps**: `pixelRatio` rejected outside
+     `[0.05, 32.0]`, output dimensions rejected over 16 384 px per
+     side (GPU max). Prevents accidental 2 GB allocations from a
+     mis-typed parameter.
+  3. **Single-point stroke** (pen-down + pen-up without moving) now
+     commits a visible "dot" stroke instead of silently vanishing.
+     Triggered only for `draw` / `ellipse` tools — line / rect / shape
+     tools keep their current behaviour.
+  4. **Text editor hot-restart guard**: `_scheduleDispose` wraps
+     overlay-entry removal and focus-node disposal in try/catch so
+     a stale `_active` surviving a hot restart can't crash the next
+     editor open.
+- **PNG export overhauled — infinite-canvas-aware.** `renderToImage`
+  goes from a single WYSIWYG-of-the-viewport API to four explicit
+  bounds modes via the new `FlueraExportBounds` enum. The legacy
+  `renderToImage(width: w, height: h)` signature still works
+  unchanged (defaults to `bounds: viewport`).
+  1. **`viewport`** (default) — what the user sees on screen, baked
+     camera. Same as 0.5.0+.
+  2. **`allContent`** — union of every visible node's `worldBounds`.
+     Output dimensions auto-computed from content size × `pixelRatio`,
+     so the export always covers everything the canvas holds, even
+     nodes off-screen. Returns a 1×1 sentinel for empty canvases.
+  3. **`selection`** — bounds of the current selection. Sentinel
+     when nothing selected.
+  4. **`custom`** — explicit `Rect` in world coords (passed via the
+     new `region:` parameter).
+  Plus: `pixelRatio` (HiDPI / print export), `padding` (world-px
+  margin around the bounds), `transparent` (skip background fill +
+  pattern). New `FlueraCanvasState.contentBoundsWorld` and
+  `selectionBoundsWorld` getters expose the bounds math standalone
+  for "fit to content" camera animations.
+  Critical bug-fix in the same patch: the legacy `renderToImage`
+  iterated `_strokes` only and **silently dropped image, text,
+  shape and group nodes** — a freshly-imported sticker or typed
+  text would not appear in the exported PNG. The new polymorphic
+  walker (mirrored from the on-screen committed painter) honours
+  every `LayerNode` child type.
+- **Pixel eraser pressure-aware + velocity-aware + micro cleanup.**
+  Three additive UX improvements mutuated from desktop / iPad
+  pen-tablet apps (Procreate, Photoshop, Notability):
+  1. **Pressure-aware radius**: the eraser circle now scales linearly
+     between 40 % (precision / soft touch) and 100 % (firm press) of
+     the nominal `eraserRadius`, modulated by the live pen pressure.
+     Pressure 1.0 (the default for finger / non-pressure-aware
+     pointers) preserves the pre-0.9.x behaviour exactly.
+  2. **Velocity-aware sub-stamp growth**: when the cursor jumps far
+     between samples (slow input pipeline / fast drag), intermediate
+     stamps along the swept segment are inflated by up to 1.4× to
+     cover any residual gaps after the half-radius sub-stepping.
+     The terminal stamp (= the actual pointer position) is never
+     inflated, so the visible eraser circle still matches the cursor
+     exactly.
+  3. **Micro-survivor cleanup**: `splitAroundCircle` now drops
+     post-cut fragments whose total arc length is < 3 world-px.
+     These imperceptible "dot" residues used to litter the scene
+     graph, costing a spatial-index entry and a layer-cache
+     invalidation each.
+
+- **Pixel eraser repaints in real time during continuous drag.**
+  `_onDrawUpdate` now calls `_eraseAt(world)` BEFORE `_commitTick.notify()`
+  so the painter reads the freshly-mutated `_strokes` list (and the
+  invalidated `LayerPictureCache` entry) on the very next frame.
+  Previously the notify was scheduled against a stale snapshot and on
+  Impeller-Vulkan could be coalesced one stamp behind, making the eraser
+  feel "frozen" mid-drag even though the underlying model was correct.
+- **Live and committed strokes now share identical geometry.**
+  `simplifyEpsilon` default changed from `0.5` to `0` — the committed
+  stroke now uses the same raw point list the live painter renders
+  during the drag, so what the user sees while drawing is exactly what
+  gets persisted (no shape change at pen-up). `simplifyEpsilon: 0.5`
+  remains a valid opt-in for consumers that want the 40-60% point
+  reduction for compression / RAM.
+- **Stroke smoothing rebuilt to match the fluera_engine pipeline.**
+  Four stages, each addressing a different artefact:
+  1. **OneEuroFilter at point ingest** — every raw stylus sample is
+     run through an adaptive velocity-aware low-pass filter
+     (`minCutoff = 1.0`, `beta = 0.007`, the same constants the
+     commercial `fluera_engine` ships with) the moment it lands in
+     the live notifier. Tight smoothing at low speeds kills the
+     sub-pixel tremor every digitiser produces when writing slowly;
+     loose filtering on fast strokes preserves input fidelity.
+     Reinitialised at every pen-down so each stroke starts clean.
+  2. **Adaptive arc-length subdivision via Catmull-Rom interpolation.**
+     Any segment longer than ~4.5 world-px is subdivided into
+     anchors spaced ~3 px apart, with each new anchor computed via
+     the Catmull-Rom parametric form on the four-neighbour window
+     (p[i-1], p[i], p[i+1], p[i+2]) — NOT linear interpolation.
+     Linear inserts would be collinear with the original samples
+     and the EMA pass below would leave them on the line, so the
+     final cubic-bezier still degenerated into the very polyline
+     this stage exists to remove. Spline-interpolated inserts
+     already lie on a curve. Capped at 12 inserts per gap to bound
+     cost on extreme pen-up/down jumps.
+  3. **Two-pass EMA pre-smoothing** (forward + backward, alpha 0.3,
+     endpoints pinned) over the resampled point list as a final
+     polish before path construction.
+  4. **Predicted "ghost" tail anchor.** The Catmull-Rom formula
+     uses `p3` to compute the exit tangent at every interior
+     segment. For the terminal segment we used to clamp `p3` to
+     the last real sample, which made the closing tangent flat —
+     the curve would aim at the endpoint along the chord, looking
+     polygonal. We now extrapolate one step ahead via velocity +
+     half-acceleration of the last three samples and use that as
+     a virtual `p3`. The predicted point is **not** drawn — the
+     bezier still terminates exactly at the real endpoint — only
+     the tangent direction at the last anchor changes. Materially
+     reduces the perceived latency on platforms (Linux desktop)
+     where the pointer pipeline samples slowly.
+  5. **Catmull-Rom → Cubic Bezier with tau = 1/6.** Control points
+     are `C1 = P1 + (P2 - P0) / 6` and `C2 = P2 - (P3 - P1) / 6` —
+     the same constant fluera_engine uses for its fountain-pen
+     outline reconstruction. Tighter than the previous tau = 0.5,
+     so the spline hugs the smoothed points instead of flattening
+     into visibly straight segments when input samples are dense.
+  Affects every free-form stroke (live + committed); shapes
+  (line / rect / ellipse) still use straight `lineTo` segments
+  since their corners must stay sharp.
+- **Inline text editor: tap-outside catcher is now opaque.** A tap on
+  empty canvas while the editor is open commits + closes the overlay
+  WITHOUT propagating the tap down to `FlueraCanvas` (which previously
+  treated the same tap as "open a new TextNode here", spawning a fresh
+  empty editor on top of the just-committed one — making the original
+  text appear to "disappear").
+- **Keyboard shortcuts no longer hijack text editing.** Backspace,
+  Delete, Ctrl/Cmd+A, Ctrl/Cmd+D and the arrow nudges are now
+  short-circuited while `FlueraTextEditor.isEditing == true`, so
+  Backspace edits the buffer, arrows move the caret, and Ctrl+A
+  selects within the text — instead of clearing the canvas / nudging a
+  selection / select-all-on-canvas.
+- **Sticker drops land inside the canvas viewport.** `FlueraStickerPanel`
+  now anchors the new `ImageNode` at `state.viewportCenterWorld`
+  (newly-exposed getter on `FlueraCanvasState`) instead of at
+  `MediaQuery.size / 2`. On phones / bottom-sheet UI the screen centre
+  often fell underneath the open sticker panel, so the dropped image
+  was off-canvas and looked like the tap did nothing.
+- **New public API**: `FlueraCanvasState.viewportSize` and
+  `FlueraCanvasState.viewportCenterWorld`. Useful for any consumer
+  overlay that needs to drop something at the centre of the canvas
+  viewport (sticker / image / annotation / chat-bubble) without
+  reaching for `MediaQuery`.
+- **Code hygiene**: removed `final ctrl = state.controller` dead local
+  in `FlueraStickerPanel._commit`.
+
+## 0.9.1 (Bug fix pass post-smoke-test — 2026-04-27)
+
+- **Text editor: Enter now inserts a newline instead of committing.**
+  Removed `onEditingComplete` from the multiline `TextField`. Commit
+  still fires on focus-out (tap-outside / IME dismiss) and on Esc.
+  Previously the soft-keyboard "Return" closed the overlay before the
+  user could type a second line.
+- **Lasso hit-test now bounds-aware + live preview rendering.**
+  Selection includes any node whose centre, any bounds corner falls
+  inside the lasso path, OR whose bounds rect overlaps the lasso's
+  own bounds — catches large nodes that "span" the lasso. The
+  in-progress lasso path is now rendered live as a magenta dashed
+  polyline with translucent fill (Photoshop-style "marching ants")
+  via `SelectionPainter.lassoPath`.
+- **Pixel eraser: sub-stepping for fast drags.** `_eraseAt` now
+  interpolates intermediate stamps along the swept segment between
+  two pointer samples (half-radius cadence). Previously, fast drags
+  left "dot trail" gaps because points of the underlying stroke that
+  fell between two pointer samples were never tested against the
+  eraser circle. Stroke-mode and pixel-mode both benefit.
+- **Sticker demo fix.** `_TextStickerDemo` now uses
+  `kFlueraDefaultStickers` (the package's built-in 8 Material-icon
+  catalogue) instead of a `NetworkImage` SVG that `NetworkImage`
+  cannot decode. The package itself was always correct;
+  `sticker_panel_test.dart` confirms it.
+- **Doc clarity.** Programmatic + Selection demo subtitles rewritten
+  to spell out the use cases (replay / scripted animation / data-driven
+  art for Programmatic; scattered vs grid selection for Lasso vs
+  Select). README "Lasso free-form selection" recipe gained a
+  "when to use" guidance line.
+- **Code hygiene.** Removed direct `import 'dart:io' show Platform`
+  from `fluera_canvas_widget.dart`; all three call sites now use the
+  web-safe `PlatformGuard` helper. Forward-compat with WASM strict
+  mode where `dart:io` is unavailable at link time.
+
+## 0.9.0 (Perf wire-ups + lasso + keyboard + duplicate / Z-order + snap-to-grid + smart guides — 2026-04-26)
+
+**Pre-publish hardening** (post-0.9.0 spike, all five "bloccanti
+tecnici" addressed):
+- **A — `dart:io` conditional import** — `fluera_file_export_service`
+  now uses `import '_file_reader_stub.dart' if (dart.library.io)
+  '_file_reader_io.dart'` so web builds compile without the
+  unreachable `File()` symbol leaking into the JS module. Asset
+  embedding gracefully falls back to path-only on web.
+- **B — Live stroke chunked `PictureRecorder` cache** —
+  `_LiveStrokeNotifier` now bakes every 256 in-progress points into
+  a `ui.Picture` chunk via `maybeChunkAhead`. The painter replays
+  one `drawPicture` per chunk and only re-tessellates the trailing
+  uncached tail. Long handwriting strokes (5 k+ points) drop from
+  O(N) per-frame work to O(N/256). Chunks are disposed on
+  `clear()` / `setStroke()` / new `beginStroke()`.
+- **C — Multi-layer LayerPictureCache consumption** — the
+  multi-layer painter's `paintLayer(c)` closure now consults
+  `LayerPictureCache.get(layerId, version)` first; on miss it
+  records the entire layer's foreground (children only — opacity
+  / blend / mask wrap it from the outside) into a fresh
+  `ui.Picture`, stores, and replays. Every layer-state mutator
+  (`setLayerOpacity`, `setLayerVisible`, `setLayerLocked`,
+  `setLayerBlendMode`, `setLayerMask`, `setLayerFlueraBlendMode`)
+  now bumps the layer version. Cache disabled when
+  `_nodesWithTransform > 0` (the snapshot would freeze stale world
+  bounds).
+- **D — Default sticker catalogue** — `kFlueraDefaultStickers` is
+  no longer empty. Eight Material-icon stickers (star, heart,
+  check, close, arrow, idea, flag, pin) ship via the new
+  `FlueraIconStickerProvider` — an `ImageProvider` that renders an
+  `IconData` to a `ui.Image` on demand via `TextPainter`. Zero
+  asset bundling, zero licensing concerns. Override with
+  `stickers: const []` to opt out.
+- **E — Backgrounds demo** — new `_BackgroundsDemo` in the
+  example gallery showcases the four built-in `CanvasBackground`
+  patterns (solid / grid / dotted / lined) with live toggle from
+  the AppBar.
+
+**LayerPictureCache consumption** (post-0.9.0 spike): the
+single-layer fast path now actually consumes the cache infrastructure
+wired in earlier. When `_nodesWithTransform == 0` (the >99% case)
+the painter records the entire layer's children once into a
+`ui.Picture`, caches it keyed on `(layerId, layerVersion)`, and
+replays via a single `drawPicture` on every subsequent paint until
+a mutation bumps the version. Pan / zoom never bumps the version,
+so camera moves over a static scene drop from O(N strokes) per
+paint to O(1). Multi-layer / non-trivial-blend paths fall back to
+the existing per-paint walk. Live-stroke append-only via
+`PictureRecorder` chunks remains deferred — empirical perf shows
+the current `_paintStrokeSegments` single-draw path is already
+sub-100µs for typical (<500-pt) strokes; the chunking refactor's
+ROI is too small for the implementation cost.
+
+**Web / WASM smoke test** (post-0.9.0 spike): `flutter build web`
+on the example compiles cleanly + WASM dry-run succeeds. New
+`test/web_compat_test.dart` exercises every public API surface
+that a web consumer would touch (commit stroke, persistence
+round-trip, selection, transform, group/ungroup, duplicate,
+lasso/snap props) without `dart:io`. Run with
+`flutter test test/web_compat_test.dart -p chrome` for true
+in-browser execution. All `Platform.*` reads in the package are
+already gated by `kIsWeb || try/catch`, and the one `dart:io`
+`File()` call site (asset embedding in the Pro file-export
+service) is wrapped in `try/catch` so web hosts gracefully fall
+back to path-only embedding.
+
+**Group / ungroup** (post-0.9.0 spike): treat several selected
+nodes as one rigid bundle. New API on `FlueraCanvasState`:
+- `state.groupSelection() → NodeId?` — wraps 2+ selected nodes
+  (sharing the same parent layer) inside a fresh [GroupNode],
+  inserted at the position of the front-most member. Selection
+  swings to the new group; the group is now the unit of
+  selection / drag / rotate / scale / delete. Returns the group's
+  id, or `null` for empty / single-node / cross-layer selections.
+- `state.ungroupSelection() → int` — for every selected
+  [GroupNode], moves its children back to the parent layer at the
+  group's slot (preserving relative Z), then removes the group.
+  Selection swings to the freed children. Returns the count of
+  groups dissolved.
+- New history ops `_GroupOp` + `_UngroupBatchOp` so a single
+  undo restores the pre-mutation tree exactly (including the
+  original child indices and selection).
+
+`_rebuildSelectableIndex` updated: `GroupNode`s register as
+selectable units; their children are inert (not in the index)
+until ungrouped — matches Figma / Sketch convention. `LayerNode`
+remains a pure container.
+
+**Snap-to-grid + smart guides** (post-0.9.0 spike): Figma-style
+alignment during body-drag move. Two new `FlueraCanvas` props:
+- `snapToGrid` (double, default `0`) — when > 0, the dragged
+  selection's closest of 9 anchors (4 corners + 4 edge midpoints +
+  centre) snaps to the nearest grid multiple within the tolerance
+  band. Pure-Dart, zero deps.
+- `smartGuidesEnabled` (bool, default `false`) — when true, the
+  drag scans every other visible selectable node and aligns the
+  dragged anchor to the closest matching anchor on a nearby node
+  (corners / edges / centre — 9 candidates per node). Magenta
+  dashed guide lines render on the selection painter while the
+  snap is locked.
+- `smartGuidesTolerancePx` (double, default `6`) — logical-px band
+  for both snap modes. Scales with camera zoom so the snap "feels"
+  the same at every level.
+
+Holding the axis-lock modifier (Shift) during the drag bypasses
+both — a clean override path for pixel-precise positioning.
+
+## 0.9.0 (Perf wire-ups + lasso + keyboard + duplicate / Z-order — 2026-04-26)
+
+**Free-tier "imbattibile su pub.dev"**: 0.9.0 cables the
+performance optimisers that 0.8.x shipped but never called from the
+main flow, plus closes the remaining feature-completeness gap
+against design-tool / note-taking competitors. No PRO migration —
+everything stays free.
+
+**Perf wire-ups**
+- `PostStrokeOptimizer` (Douglas-Peucker) called on every pen-up
+  before commit. New `simplifyEpsilon` prop (default `0.5`) trims
+  40-60 % of redundant points without visual difference; pressures
+  stay aligned because the simplifier returns *kept indices* rather
+  than re-sampled points. Set `simplifyEpsilon = 0` to opt out.
+- `DirtyRegionTracker` instance per `FlueraCanvasState`. Every
+  mutation site (`_internalInsertStrokeAt`,
+  `_internalRemoveStroke`, `_writeLocalTransform`) marks its world
+  bbox dirty. Painter consumption is scheduled for 0.9.1 once the
+  multi-layer composite path (saveLayer + GPU compositor + layer
+  mask) is refactored to clip safely.
+- `LayerPictureCache` instance + per-layer `Map<NodeId, int>`
+  content version. Bumped on every layer mutation. Public via
+  `state.layerContentVersion` (`@visibleForTesting`) for GPU
+  consumers. Cache consumption inside the painter scheduled for
+  0.9.1 — same gating as the dirty tracker.
+- `WidgetsBindingObserver.didHaveMemoryPressure()` wired: drops
+  `LayerPictureCache`, resets the dirty tracker, disposes every
+  stroke's `ui.Picture`. Image-bytes cache preserved (re-decoding
+  would stall the gesture loop).
+
+**Feature completeness**
+- `state.duplicateSelection({offset})` — clones every selected
+  node via `cloneInternal()`, offsets each by `offset` (default
+  20×20 world px), replaces the selection with the clones. Single
+  undo step.
+- `state.bringToFront(id)` / `state.sendToBack(id)` — Z-order
+  tweaks within the parent layer's children list. New
+  `_ReorderChildOp` history op preserves the original index for
+  exact undo.
+- `CanvasTool.lasso` — free-form selection. Drag a path; on
+  pen-up every selectable node whose `worldBounds.center` falls
+  inside the closed polygon is selected. Concave shapes are
+  honoured (vs the rectangular marquee). Toolbar opt-in via
+  `showLassoTool: true`.
+- Keyboard shortcuts overhaul. Delete/Backspace becomes
+  selection-aware (clears selection if non-empty, else falls back
+  to the legacy "clear all"). New shortcuts:
+  - **Esc** — clear selection
+  - **Ctrl/Cmd+A** — select all on visible+unlocked layers
+  - **Ctrl/Cmd+D** — duplicate selection
+  - **Arrow keys** — nudge selection by 1 world px (Shift = 10)
+  Existing Ctrl/Cmd+Z / Y / Shift+Z preserved.
+
+**Benchmark suite**
+- `test/benchmarks/perf_baseline_test.dart` — 5 k stroke insert,
+  10 k hit-test on 5 k-stroke scene, 5 k-point stroke push.
+  Numbers stamped to stdout in `[bench] name=us` format for CI
+  scraping.
+
+**Migration impact**
+- 0.8.x → 0.9.0: zero breaking changes. `simplifyEpsilon` default
+  is conservative; opt-out via `0`. New keyboard shortcuts are
+  opt-in via the existing `enableKeyboardShortcuts: true` flag.
+  `CanvasTool.lasso` appended to the enum (not inserted).
+
+**Tests**: 274 / 274 green. **Pana**: 160 / 160. **0 analyze
+issues**. Phases 4 (IncrementalPaintMixin live append-only) and 7
+(RTree update on transform) deferred to 0.9.1 — current behaviour
+is correct via the existing fallback paths.
+
+## 0.8.0 (Text tool + Sticker panel — 2026-04-26)
+
+**Live text editing on the canvas** — tap empty canvas with the text
+tool to drop a fresh `TextNode` and open a Material `TextField`
+overlay caret-positioned over it; tap an existing text node to
+re-enter editing. The overlay rides the camera (pan / zoom) while
+the user types. Commit on Done / blur / Esc; empty-text commit on
+a fresh node rolls back the addition. Single undo per editing
+session.
+
+**Sticker / emoji / clip-art panel** — `FlueraStickerPanel` widget
+that browses a `List<FlueraSticker>` thumbnail catalogue and
+commits the chosen sticker as an `ImageNode` centered on the
+viewport. Reuses the cached `ui.Image` per sticker `id`, so the
+same sticker dropped twice shares the GPU handle.
+
+**Canvas-level text APIs**
+- `FlueraCanvasState.addTextNode(node)` — appends a TextNode to the
+  active layer with `_AddLayerChildOp` history.
+- `FlueraCanvasState.updateTextElement(id, element)` — in-place
+  swap of the wrapped `DigitalTextElement`, pushes a single
+  `_UpdateTextOp` so undo restores the previous text exactly.
+- `FlueraCanvasState.findNode(id)` — public lookup into the
+  selectable index without going through the test-only debug
+  getter.
+
+**`FlueraTextEditor`**
+- `start(state, existing: ..., worldPosition: ...)` opens an
+  overlay editor on the target node (or mints a fresh one).
+- `commit(state)` / `cancel(state)` close the session. Tap-outside
+  / focus loss / Done all funnel through commit.
+- Uses `OverlayEntry` mounted on the root overlay so it sits above
+  any custom canvas chrome.
+
+**`CanvasTool.text`** — new enum value, wires through the gesture
+detector: tap empty canvas → fresh text node + edit; tap text node
+→ edit existing.
+
+**FCV0 v6 — text-node persistence**
+- New `nodeType=1` for text. Layout: `nodeIdLen + nodeId + jsonLen +
+  jsonBytes + localTransform`. JSON-in-binary so future
+  `DigitalTextElement` field additions don't bump the format
+  version.
+- Reader: v6+ decodes nodeType=1; v5 readers throw cleanly on it
+  (forward-incompat). v5 / v4 / v3 / v2 / v1 backward-read
+  preserved.
+
+**Painter dispatch**
+- The committed-painter walks `layer.children` and dispatches per
+  type — strokes via `_drawStrokeWithTransform`, images via
+  `ImageNodePainter.paint`, **text via the cached `TextPainter`**
+  on `DigitalTextElement.layoutPainter`. Z-order is
+  insertion-order (chronological) on both the single-layer fast
+  path and the multi-layer slow path.
+
+**Toolbar flags**
+- `showTextTool: bool = false` — adds a `Text` segment to the
+  segmented control.
+- `showStickerPanel: bool = false` + `stickers: List<FlueraSticker>`
+  — adds an emoji-emotions IconButton that opens the sticker panel
+  in a Material bottom sheet.
+
+**Tests**: 252 / 252 green. **Pana**: 160 / 160.
+
+## 0.7.2 (Image annotations + OBB selection + perf — 2026-04-26)
+
+**Write directly on top of an image, with strokes that follow the
+image when you move / rotate / scale it.** New mental model:
+`ImageNode` is now a container for stroke "annotations" stored in
+image-local coordinates. A stroke that lands inside the image at
+pen-up gets rerouted from the active layer onto the image's
+`annotations` list; a stroke that crosses the boundary is split
+segment-by-segment so the inside parts ride the image while the
+outside parts stay free children of the layer. Move / rotate / scale
+the image and every annotation transforms with it as a rigid block.
+Mirror H/V flips both. The split is **only active for the freehand
+draw tool** — line / rectangle / ellipse keep emitting a single
+rigid figure regardless of overlap.
+
+**Image annotations**
+- `ImageNode.annotations: List<CanvasStrokeNode>` — strokes parented
+  to the image, stored in its local coord system.
+- `ImageNodePainter.paint` walks `node.annotations` after
+  `drawImageRect`, inside the same transform stack the bitmap uses,
+  so annotations inherit the image's `localTransform` + per-element
+  `position / rotation / scale` automatically.
+- New `_SplitStrokeOp` history op — single undo step for a stroke
+  whose pen-up gesture got fragmented into free + image-parented
+  pieces.
+- Stroke-mode AND pixel-mode eraser walk `image.annotations` too:
+  the probe is projected into image-local coords via
+  `_ImageHitFrame.worldToLocal` so the cut hits the right pixels
+  even on rotated / scaled images. Undo restores the originals.
+
+**FCV0 v5 — image annotations persistence**
+- Bumped binary format from v4 → v5. Image payload gains a trailing
+  `annotationCount: uint32` + array of stroke payloads (in
+  image-local coords).
+- v4 / v3 / v2 / v1 readers untouched. New writers always emit v5.
+
+**OBB selection frame for rotated nodes**
+- `CanvasSelection` carries `frameRect` + `frameTransform`. Single
+  rotated node → frameRect is `node.localBounds`, frameTransform is
+  `node.localTransform`; the selection painter draws the outline
+  through `canvas.transform(frameTransform)` so it visually rotates
+  with the image. Handles ride the world-transformed corners but
+  stay axis-aligned + 12 px screen-space.
+- Hit-test handle and body-drag containment project the world
+  pointer into the OBB local frame, so dragging a corner of a
+  rotated image scales along the image's own axes (not the
+  screen's).
+- Multi-node selections fall back to `frameTransform = identity`
+  and `frameRect = bounds` — bit-for-bit the pre-OBB behaviour.
+
+**Hit-test transform-aware**
+- `_transformedNodeIds` tracks every node with non-identity
+  `localTransform`. The RTree (which indexes pre-transform bbox)
+  skips them and a transform-aware pass intersects each node's
+  `worldBounds` instead. Strokes moved with the selection tool now
+  re-select correctly at their new visual position.
+
+**Painter Z-order fix**
+- The committed-painter walks `layer.children` in insertion order
+  and dispatches per type (stroke vs image) instead of the previous
+  two-pass loop (all strokes, then all images). Strokes drawn after
+  an image are now correctly rendered on top.
+
+**Performance optimisations**
+- A — incremental `_maxZ` counter: `_registerSelectable` stamps Z in
+  O(1) instead of folding over `_zOrderIndex.values` per insert.
+- B — `_nonStrokeSelectableIds` set: hit-test and onEvicted iterate
+  only the non-stroke subset (typically <100) instead of every
+  selectable node.
+- F — `_nodesWithTransform` counter: `_drawStrokeWithTransform`
+  short-circuits the per-stroke node lookup when no node carries a
+  non-identity transform (>99% common case on notes-app workloads).
+
+**Toolbar wiring**
+- Multi-canvas + autosave demo now exposes the full 0.6.0 / 0.7.0
+  toolbar feature set: `showSelectionTool`, `showImageTool`,
+  `showTransformActions`, `showLayers`.
+
+**Pana score**: 160 / 160. **Tests**: 249 / 249 green.
+
+## 0.7.1 (Image persistence FCV0 v4 — 2026-04-26)
+
+**Imported images now survive save / reload.** In 0.7.0 ImageNode
+became selectable + transformable but `toBytes()` skipped them
+silently — close the canvas, reopen, the image was gone. 0.7.1 ships
+the FCV0 v4 binary format that carries image asset bytes alongside
+the scene graph.
+
+**Bytes-aware image cache**
+- `ImageNodePainter.cacheWithBytes(path, image, bytes)` registers
+  the original encoded bytes (PNG / JPG / WebP / …) parallel to
+  the decoded `ui.Image` handle.
+- `ImageNodePainter.decodeAndCache(path, bytes)` runs the codec
+  asynchronously and registers both at completion. Used by the
+  serializer's load path.
+- `ImageNodePainter.bytesFor(path)` for save-time readback.
+
+**FCV0 v4 — image-node payload**
+- New `nodeType=2` on layer-children. Image payload: NodeId,
+  imagePath, position, scale, rotation, opacity, intrinsic size,
+  16-element `localTransform` storage, `bytesLen + bytes`.
+- Reader: `DecodeResult.imageBlobs: Map<String, Uint8List>` carries
+  the raw bytes; widget kicks off `decodeAndCache` fire-and-forget
+  per blob and triggers a repaint when each codec resolves.
+- ImageNodes whose source bytes were never registered are skipped
+  silently at save time.
+
+**Image tool wiring**
+- `FlueraImageTool.commitBytes` now calls `cacheWithBytes` so every
+  imported asset round-trips through `toBytes` automatically.
+
 ## 0.7.0 (Enterprise selection on `ImageNode` — 2026-04-26)
 
 **Selection / transform / delete generalised across the scene

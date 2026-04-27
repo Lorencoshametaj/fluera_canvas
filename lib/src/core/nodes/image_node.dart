@@ -3,6 +3,7 @@ import '../scene_graph/canvas_node.dart';
 import 'package:fluera_canvas/fluera_canvas.dart';
 import '../scene_graph/node_visitor.dart';
 import '../models/image_element.dart';
+import 'canvas_stroke_node.dart';
 
 /// Scene graph node that wraps an [ImageElement].
 ///
@@ -32,6 +33,17 @@ class ImageNode extends CanvasNode {
   /// Set the decoded image dimensions.
   set imageSize(Size size) => _imageSize = size;
   Size get imageSize => _imageSize;
+
+  /// Strokes drawn ON this image. Stored in the image's *local* coords
+  /// (i.e. as if the image were axis-aligned at its native position):
+  /// the painter walks them under `canvas.transform(localTransform)` so
+  /// they ride every move / rotate / scale applied to the image as a
+  /// single rigid block. Populated by `_onDrawEnd` whenever a stroke
+  /// (or stroke segment) lies inside this image's local bounds.
+  /// Live strokes that cross the image boundary get split: the inside
+  /// run lands here, the outside run stays a free child of the active
+  /// layer.
+  final List<CanvasStrokeNode> annotations = <CanvasStrokeNode>[];
 
   // ---------------------------------------------------------------------------
   // Bounds

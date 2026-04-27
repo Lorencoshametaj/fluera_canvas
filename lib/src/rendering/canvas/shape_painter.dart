@@ -30,6 +30,20 @@ class ShapePainter {
       paint.shader = shape.strokeGradient!.toShader(shapeBounds);
     }
 
+    // Honour `GeometricShape.rotation` (radians, around the bounding-
+    // box centre). Used by the smart-shape-recognition pipeline when
+    // the user sketches a tilted rectangle / arrow / diamond and the
+    // recognizer detects a non-zero rotation; the underlying
+    // start/end points stay axis-aligned and the renderer rotates
+    // around the centre at draw time.
+    final hasRotation = shape.rotation != 0.0;
+    if (hasRotation) {
+      canvas.save();
+      canvas.translate(shapeBounds.center.dx, shapeBounds.center.dy);
+      canvas.rotate(shape.rotation);
+      canvas.translate(-shapeBounds.center.dx, -shapeBounds.center.dy);
+    }
+
     switch (shape.type) {
       case ShapeType.freehand:
         // Do not gestito qui (è un stroke normale)
@@ -75,6 +89,8 @@ class ShapePainter {
         _drawHexagon(canvas, shape, paint);
         break;
     }
+
+    if (hasRotation) canvas.restore();
   }
 
   /// Draws a straight line

@@ -52,8 +52,7 @@ void main() {
       expect(find.byIcon(Icons.layers_rounded), findsNothing);
     });
 
-    testWidgets('true renders the trailing layers IconButton',
-        (tester) async {
+    testWidgets('true renders the trailing layers IconButton', (tester) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(canvasKey: key, showLayers: true));
       expect(find.byIcon(Icons.layers_rounded), findsOneWidget);
@@ -69,14 +68,11 @@ void main() {
       expect(find.text('Layers'), findsWidgets);
     });
 
-    testWidgets('layersBottomSheetTitle override is honoured',
-        (tester) async {
+    testWidgets('layersBottomSheetTitle override is honoured', (tester) async {
       final key = GlobalKey<FlueraCanvasState>();
-      await tester.pumpWidget(pump(
-        canvasKey: key,
-        showLayers: true,
-        title: 'My layers',
-      ));
+      await tester.pumpWidget(
+        pump(canvasKey: key, showLayers: true, title: 'My layers'),
+      );
       await tester.tap(find.byIcon(Icons.layers_rounded));
       await tester.pumpAndSettle();
       expect(find.text('My layers'), findsWidgets);

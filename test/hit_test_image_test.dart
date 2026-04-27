@@ -9,17 +9,16 @@ void main() {
     required double x,
     required double y,
     double size = 30,
-  }) =>
-      CanvasStroke(
-        points: List<Offset>.unmodifiable([
-          Offset(x, y),
-          Offset(x + size, y),
-          Offset(x + size, y + size),
-        ]),
-        pressures: const [0.5, 0.7, 0.9],
-        color: const Color(0xFF000000),
-        baseWidth: 2.0,
-      );
+  }) => CanvasStroke(
+    points: List<Offset>.unmodifiable([
+      Offset(x, y),
+      Offset(x + size, y),
+      Offset(x + size, y + size),
+    ]),
+    pressures: const [0.5, 0.7, 0.9],
+    color: const Color(0xFF000000),
+    baseWidth: 2.0,
+  );
 
   ImageNode makeImage(
     String id, {
@@ -41,14 +40,10 @@ void main() {
   }
 
   Widget pump(GlobalKey<FlueraCanvasState> key) => MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: 600,
-            height: 400,
-            child: FlueraCanvas(key: key),
-          ),
-        ),
-      );
+    home: Scaffold(
+      body: SizedBox(width: 600, height: 400, child: FlueraCanvas(key: key)),
+    ),
+  );
 
   group('selectInRect (marquee) on stroke + image mix', () {
     testWidgets('marquee covering an image picks it up', (tester) async {
@@ -65,8 +60,9 @@ void main() {
       expect(state.selection.ids, contains(image.id));
     });
 
-    testWidgets('marquee NOT covering the image leaves it unselected',
-        (tester) async {
+    testWidgets('marquee NOT covering the image leaves it unselected', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -79,8 +75,9 @@ void main() {
       expect(state.selection.isEmpty, isTrue);
     });
 
-    testWidgets('marquee covering both stroke and image picks both',
-        (tester) async {
+    testWidgets('marquee covering both stroke and image picks both', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -93,8 +90,9 @@ void main() {
       expect(state.selection.ids, contains(image.id));
     });
 
-    testWidgets('hidden layer is filtered out of marquee selection',
-        (tester) async {
+    testWidgets('hidden layer is filtered out of marquee selection', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;

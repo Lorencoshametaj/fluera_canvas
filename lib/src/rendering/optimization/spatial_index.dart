@@ -325,8 +325,9 @@ class RTree<T> {
   bool needsCompaction() {
     if (_count < 50) return false;
     if (_tombstoneCount > _count * _tombstoneCompactThreshold) return true;
-    if (_mutationsSinceRebuild > _count * _mutationRebuildThreshold)
+    if (_mutationsSinceRebuild > _count * _mutationRebuildThreshold) {
       return true;
+    }
     return false;
   }
 

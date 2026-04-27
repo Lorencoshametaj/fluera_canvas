@@ -6,25 +6,21 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   CanvasStroke makeStroke(int seed) => CanvasStroke(
-        points: List<Offset>.unmodifiable([
-          Offset(seed.toDouble() * 50, 0),
-          Offset(seed.toDouble() * 50 + 30, 0),
-          Offset(seed.toDouble() * 50 + 30, 30),
-        ]),
-        pressures: const [0.5, 0.7, 0.9],
-        color: Color(0xFF000000 + seed),
-        baseWidth: 2.0,
-      );
+    points: List<Offset>.unmodifiable([
+      Offset(seed.toDouble() * 50, 0),
+      Offset(seed.toDouble() * 50 + 30, 0),
+      Offset(seed.toDouble() * 50 + 30, 30),
+    ]),
+    pressures: const [0.5, 0.7, 0.9],
+    color: Color(0xFF000000 + seed),
+    baseWidth: 2.0,
+  );
 
   Widget pump(GlobalKey<FlueraCanvasState> key) => MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: 600,
-            height: 400,
-            child: FlueraCanvas(key: key),
-          ),
-        ),
-      );
+    home: Scaffold(
+      body: SizedBox(width: 600, height: 400, child: FlueraCanvas(key: key)),
+    ),
+  );
 
   group('mirrorSelection (Phase C2)', () {
     testWidgets('mirrorSelection returns 0 on empty selection', (tester) async {
@@ -34,8 +30,9 @@ void main() {
       expect(state.mirrorSelection(Axis.horizontal), 0);
     });
 
-    testWidgets('mirrorSelection horizontal flips around the bounds center',
-        (tester) async {
+    testWidgets('mirrorSelection horizontal flips around the bounds center', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -67,13 +64,16 @@ void main() {
 
       expect(state.undo(), isTrue);
       for (int i = 0; i < 16; i++) {
-        expect(node.localTransform.storage[i],
-            closeTo(beforeMatrix.storage[i], 1e-9));
+        expect(
+          node.localTransform.storage[i],
+          closeTo(beforeMatrix.storage[i], 1e-9),
+        );
       }
     });
 
-    testWidgets('mirrorSelection redo restores the post-mirror state',
-        (tester) async {
+    testWidgets('mirrorSelection redo restores the post-mirror state', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -86,8 +86,10 @@ void main() {
       state.undo();
       state.redo();
       for (int i = 0; i < 16; i++) {
-        expect(node.localTransform.storage[i],
-            closeTo(mirrored.storage[i], 1e-9));
+        expect(
+          node.localTransform.storage[i],
+          closeTo(mirrored.storage[i], 1e-9),
+        );
       }
     });
   });

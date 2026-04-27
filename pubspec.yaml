@@ -1,18 +1,28 @@
 name: fluera_canvas
 description: >
-  Document-grade infinite-canvas SDK for Flutter. Built for notes apps,
-  whiteboards and design tools — not signature pads. Multi-thousand
-  strokes at 60 FPS, drop-in toolbar, native GPU bridge.
-version: 0.7.0
+  Document-grade infinite-canvas SDK for Flutter — layered scene graph,
+  selection + transform, lasso, image annotations, text, keyboard shortcuts.
+version: 0.10.0
 homepage: https://engine.fluera.dev
 repository: https://github.com/Lorencoshametaj/fluera_canvas
 issue_tracker: https://github.com/Lorencoshametaj/fluera_canvas/issues
+documentation: https://pub.dev/documentation/fluera_canvas/latest/
 topics:
   - canvas
   - whiteboard
   - infinite-canvas
   - notes
   - graphics
+
+screenshots:
+  - description: 'Drop-in drawing toolbar — pen, shapes, eraser, color picker, stroke width slider.'
+    path: example/flutter_01.png
+  - description: 'Multi-layer scene with visibility / lock / opacity controls and blend modes.'
+    path: example/flutter_02.png
+  - description: 'Live text tool — caret editing inline on the canvas via Material TextField overlay.'
+    path: example/flutter_03.png
+  - description: 'Sticker panel + snap-to-grid + smart guides — design-tool UX out of the box.'
+    path: example/flutter_04.png
 
 environment:
   sdk: ^3.7.0

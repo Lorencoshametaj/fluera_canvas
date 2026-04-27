@@ -11,10 +11,7 @@ void main() {
           body: SizedBox(
             width: 600,
             height: 400,
-            child: FlueraCanvas(
-              key: key,
-              tool: tool ?? CanvasTool.draw,
-            ),
+            child: FlueraCanvas(key: key, tool: tool ?? CanvasTool.draw),
           ),
         ),
       );
@@ -30,18 +27,21 @@ void main() {
       final state = key.currentState!;
       // Random non-PNG bytes — `instantiateImageCodec` will reject; the
       // tool must catch and return null without surfacing an exception.
-      final node = await tester.runAsync(() => FlueraImageTool.commitBytes(
-            state,
-            bytes: Uint8List.fromList(const [0, 1, 2, 3, 4, 5]),
-          ));
+      final node = await tester.runAsync(
+        () => FlueraImageTool.commitBytes(
+          state,
+          bytes: Uint8List.fromList(const [0, 1, 2, 3, 4, 5]),
+        ),
+      );
       expect(node, isNull);
       expect(state.activeLayer.children, isEmpty);
     });
   });
 
   group('addImageNode (Phase D synchronous API)', () {
-    testWidgets('appends to active layer + pushes a single undo step',
-        (tester) async {
+    testWidgets('appends to active layer + pushes a single undo step', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -52,10 +52,7 @@ void main() {
         createdAt: DateTime.now(),
         pageIndex: 0,
       );
-      final node = ImageNode(
-        id: const NodeId('manual'),
-        imageElement: element,
-      );
+      final node = ImageNode(id: const NodeId('manual'), imageElement: element);
 
       state.addImageNode(node);
       expect(state.activeLayer.children, hasLength(1));
@@ -69,32 +66,37 @@ void main() {
       expect(state.activeLayer.children.single, same(node));
     });
 
-    testWidgets('two addImageNode calls produce two layer children',
-        (tester) async {
+    testWidgets('two addImageNode calls produce two layer children', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
       ImageNode make(String id) => ImageNode(
-            id: NodeId(id),
-            imageElement: ImageElement(
-              id: id,
-              imagePath: 'fluera-canvas://memory/$id',
-              position: Offset.zero,
-              createdAt: DateTime.now(),
-              pageIndex: 0,
-            ),
-          );
+        id: NodeId(id),
+        imageElement: ImageElement(
+          id: id,
+          imagePath: 'fluera-canvas://memory/$id',
+          position: Offset.zero,
+          createdAt: DateTime.now(),
+          pageIndex: 0,
+        ),
+      );
       state.addImageNode(make('a'));
       state.addImageNode(make('b'));
       expect(state.activeLayer.children, hasLength(2));
-      expect(state.historyLength, 2,
-          reason: 'each addImageNode pushes its own undo step');
+      expect(
+        state.historyLength,
+        2,
+        reason: 'each addImageNode pushes its own undo step',
+      );
     });
   });
 
   group('CanvasTool.image is a no-op gesture', () {
-    testWidgets('canvas accepts CanvasTool.image without crashing',
-        (tester) async {
+    testWidgets('canvas accepts CanvasTool.image without crashing', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key, tool: CanvasTool.image));
       final state = key.currentState!;

@@ -79,13 +79,17 @@ class VelocityCurve {
 
   double _solveForT(double x) {
     double t = x;
+    // Threshold 1e-5 — the velocity → width remap is consumed by the
+    // brush rasterizer at ~100-point precision, so tighter Newton
+    // convergence buys nothing and costs an extra iteration on the
+    // preview's per-frame sweep.
     for (int i = 0; i < 6; i++) {
       final error = _bezierX(t) - x;
       final deriv = _bezierXDerivative(t);
       if (deriv.abs() < 1e-10) break;
       t -= error / deriv;
       t = t.clamp(0.0, 1.0);
-      if (error.abs() < 1e-7) break;
+      if (error.abs() < 1e-5) break;
     }
     return t;
   }

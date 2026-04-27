@@ -14,7 +14,6 @@
 // and commercial `fluera_engine_pro` packages.
 // ════════════════════════════════════════════════════════════════════════════
 
-import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -27,18 +26,27 @@ import './canvas_background.dart';
 import './canvas_serializer.dart';
 import './infinite_canvas_controller.dart';
 import './infinite_canvas_gesture_detector.dart';
+import '../core/models/digital_text_element.dart';
 import '../core/nodes/canvas_stroke_node.dart';
 import '../core/nodes/group_node.dart';
 import '../core/nodes/image_node.dart';
 import '../core/nodes/layer_node.dart';
+import '../core/nodes/shape_node.dart';
+import '../core/nodes/text_node.dart';
+import 'tools/text_editor.dart';
 import '../core/scene_graph/canvas_node.dart';
 import '../core/scene_graph/node_id.dart';
+import '../rendering/canvas/digital_text_painter.dart';
 import '../rendering/canvas/image_node_painter.dart';
+import '../rendering/optimization/dirty_region_tracker.dart';
+import '../rendering/optimization/layer_picture_cache.dart';
 import '../drawing/brush_config.dart';
+import '../drawing/filters/one_euro_filter.dart' show OneEuroFilter;
 import '../rendering/native_stroke_overlay.dart';
 import '../rendering/gpu/gpu_stroke_backend.dart';
 import 'fluera_blend_mode.dart';
 import '../rendering/optimization/spatial_index.dart';
+import '../utils/platform_guard.dart' show PlatformGuard;
 import '../utils/uid.dart' show generateUid;
 import 'edge_pan_controller.dart';
 import 'selection/canvas_selection.dart';
@@ -167,6 +175,92 @@ class CanvasStroke {
     _cachedPicture = null;
   }
 
+  /// Lossless JSON serialization of every field that affects the
+  /// rasterised appearance — points, pressures, color, base width,
+  /// smooth flag, brush type, plus the shader tuning configs when they
+  /// deviate from defaults. Round-trips exactly through [fromJson].
+  ///
+  /// Used by `fluera_canvas_gpu` time-travel to persist canvas
+  /// mutations as compressed JSONL events.
+  Map<String, dynamic> toJson() {
+    final n = points.length;
+    final xs = List<double>.filled(n, 0);
+    final ys = List<double>.filled(n, 0);
+    for (int i = 0; i < n; i++) {
+      xs[i] = points[i].dx;
+      ys[i] = points[i].dy;
+    }
+    final out = <String, dynamic>{
+      'x': xs,
+      'y': ys,
+      'p': pressures,
+      'c': color.toARGB32(),
+      'w': baseWidth,
+    };
+    if (!smooth) out['s'] = false;
+    if (brushType != 0) out['bt'] = brushType;
+    if (pencilConfig != PencilConfig.defaults) {
+      out['pc'] = {
+        'bo': pencilConfig.baseOpacity,
+        'mo': pencilConfig.maxOpacity,
+        'mn': pencilConfig.minPressure,
+        'mx': pencilConfig.maxPressure,
+      };
+    }
+    if (fountainConfig != FountainPenConfig.defaults) {
+      out['fc'] = {
+        'th': fountainConfig.thinning,
+        'na': fountainConfig.nibAngleDeg,
+        'ns': fountainConfig.nibStrength,
+        'pr': fountainConfig.pressureRate,
+        'te': fountainConfig.taperEntry,
+      };
+    }
+    return out;
+  }
+
+  /// Inverse of [toJson]. Throws [FormatException] on malformed input
+  /// (mismatched array lengths). Tolerates missing optional fields by
+  /// substituting defaults.
+  static CanvasStroke fromJson(Map<String, dynamic> map) {
+    final xs = (map['x'] as List).cast<num>();
+    final ys = (map['y'] as List).cast<num>();
+    final ps = (map['p'] as List).cast<num>();
+    if (xs.length != ys.length || xs.length != ps.length) {
+      throw const FormatException('Stroke arrays length mismatch.');
+    }
+    return CanvasStroke(
+      points: List<Offset>.unmodifiable([
+        for (int i = 0; i < xs.length; i++)
+          Offset(xs[i].toDouble(), ys[i].toDouble()),
+      ]),
+      pressures: List<double>.unmodifiable(ps.map((e) => e.toDouble())),
+      color: Color((map['c'] as num).toInt()),
+      baseWidth: (map['w'] as num).toDouble(),
+      smooth: (map['s'] as bool?) ?? true,
+      brushType: (map['bt'] as int?) ?? 0,
+      pencilConfig:
+          map['pc'] is Map<String, dynamic>
+              ? PencilConfig(
+                baseOpacity: ((map['pc'] as Map)['bo'] as num).toDouble(),
+                maxOpacity: ((map['pc'] as Map)['mo'] as num).toDouble(),
+                minPressure: ((map['pc'] as Map)['mn'] as num).toDouble(),
+                maxPressure: ((map['pc'] as Map)['mx'] as num).toDouble(),
+              )
+              : PencilConfig.defaults,
+      fountainConfig:
+          map['fc'] is Map<String, dynamic>
+              ? FountainPenConfig(
+                thinning: ((map['fc'] as Map)['th'] as num).toDouble(),
+                nibAngleDeg: ((map['fc'] as Map)['na'] as num).toDouble(),
+                nibStrength: ((map['fc'] as Map)['ns'] as num).toDouble(),
+                pressureRate: ((map['fc'] as Map)['pr'] as num).toDouble(),
+                taperEntry: ((map['fc'] as Map)['te'] as num).toInt(),
+              )
+              : FountainPenConfig.defaults,
+    );
+  }
+
   /// Splits [stroke] into the contiguous pieces that lie OUTSIDE the
   /// circle `(center, r²)`. Returns the surviving sub-strokes —
   /// empty list if the entire stroke is inside the circle.
@@ -214,22 +308,37 @@ class CanvasStroke {
     }
 
     void flushRun() {
-      if (curPts != null && curPts!.length >= 2) {
-        survivors.add(
-          CanvasStroke(
-            points: List<Offset>.unmodifiable(curPts!),
-            pressures: List<double>.unmodifiable(curPrs!),
-            color: stroke.color,
-            baseWidth: stroke.baseWidth,
-            smooth: stroke.smooth,
-            brushType: stroke.brushType,
-            pencilConfig: stroke.pencilConfig,
-            fountainConfig: stroke.fountainConfig,
-          ),
-        );
-      }
+      final pts = curPts;
+      final prs = curPrs;
       curPts = null;
       curPrs = null;
+      if (pts == null || pts.length < 2) return;
+      // Drop micro-survivors: tiny fragments of < 3 world-px total
+      // arc length that the eraser produces along the cut boundary.
+      // These would otherwise litter the scene graph as
+      // visually-imperceptible "dots" that still cost a spatial-index
+      // entry and a layer-cache invalidation. 3 px matches the smoothing
+      // pipeline's `targetSpacing`.
+      double arcLen = 0.0;
+      for (var i = 1; i < pts.length; i++) {
+        final dx = pts[i].dx - pts[i - 1].dx;
+        final dy = pts[i].dy - pts[i - 1].dy;
+        arcLen += math.sqrt(dx * dx + dy * dy);
+        if (arcLen >= 3.0) break;
+      }
+      if (arcLen < 3.0) return;
+      survivors.add(
+        CanvasStroke(
+          points: List<Offset>.unmodifiable(pts),
+          pressures: List<double>.unmodifiable(prs!),
+          color: stroke.color,
+          baseWidth: stroke.baseWidth,
+          smooth: stroke.smooth,
+          brushType: stroke.brushType,
+          pencilConfig: stroke.pencilConfig,
+          fountainConfig: stroke.fountainConfig,
+        ),
+      );
     }
 
     bool isInside(Offset p) {
@@ -370,6 +479,48 @@ enum CanvasTool {
   /// [ImageNode] on the active layer. The enum value exists so the
   /// toolbar can show a dedicated segment / button for it.
   image,
+
+  /// Tap empty canvas to drop a fresh `TextNode` and open the live
+  /// editor on it; tap an existing `TextNode` to re-enter editing.
+  /// The editor is `FlueraTextEditor` — a Material `TextField`
+  /// overlay above the canvas that commits via
+  /// `FlueraCanvasState.updateTextElement` on Done / blur / Esc.
+  text,
+
+  /// Free-form selection: the user drags an arbitrary path across
+  /// the canvas; on pen-up every selectable node whose
+  /// `worldBounds.center` falls inside the closed path is
+  /// selected. Concave shapes work as expected (vs the marquee
+  /// tool, which is rectangular only). Sibling of [select].
+  lasso,
+}
+
+/// Bounds source for [FlueraCanvasState.renderToImage].
+///
+/// The canvas is infinite, so a single "render to PNG" semantics is
+/// not enough — different consumers need different rasterisation
+/// regions. This enum picks the world-space rect.
+enum FlueraExportBounds {
+  /// WYSIWYG export of what the user currently sees on screen
+  /// (the legacy 0.5.0+ behaviour). Output dimensions = the explicit
+  /// `width × height` (in logical pixels) passed to `renderToImage`.
+  /// Camera transform (pan / zoom / rotate) is baked in.
+  viewport,
+
+  /// Export the union of every visible node's `worldBounds`. Output
+  /// dimensions are auto-computed from the content size scaled by
+  /// `pixelRatio`. Ignores `width` / `height`. Returns a 1×1
+  /// sentinel image when the canvas is empty.
+  allContent,
+
+  /// Export the bounding rect of the current selection. Returns a
+  /// 1×1 sentinel image when nothing is selected.
+  selection,
+
+  /// Export an explicit world-space rect (passed via the `region`
+  /// parameter of `renderToImage`). Useful for "export this slice"
+  /// flows or scripted rendering.
+  custom,
 }
 
 /// A ready-to-use infinite canvas widget.
@@ -413,6 +564,7 @@ class FlueraCanvas extends StatefulWidget {
     this.historyCapacity = 100,
     this.enableKeyboardShortcuts = true,
     this.onStrokeCommitted,
+    this.onStrokeNodeCommitted,
     this.onStrokesErased,
     this.onNodesDeleted,
     this.enableNativeLiveStroke = true,
@@ -420,6 +572,10 @@ class FlueraCanvas extends StatefulWidget {
     this.brushType = 0,
     this.pencilConfig = PencilConfig.defaults,
     this.fountainConfig = FountainPenConfig.defaults,
+    this.simplifyEpsilon = 0,
+    this.snapToGrid = 0,
+    this.smartGuidesEnabled = false,
+    this.smartGuidesTolerancePx = 6,
   });
 
   /// Optional external controller. If null, an internal one is created and
@@ -465,6 +621,14 @@ class FlueraCanvas extends StatefulWidget {
 
   /// Fires every time the user lifts the pen after drawing a stroke.
   final void Function(CanvasStroke stroke)? onStrokeCommitted;
+
+  /// Same trigger as [onStrokeCommitted] but also carries the
+  /// [NodeId] of the freshly-created `CanvasStrokeNode` so listeners
+  /// can follow up with imperative ops on that node — e.g. the
+  /// commercial `fluera_canvas_gpu` shape-recognition pipeline calls
+  /// `state.replaceStrokeWithShape(nodeId, …)` from this hook.
+  final void Function(CanvasStroke stroke, NodeId nodeId)?
+      onStrokeNodeCommitted;
 
   /// Fires when the eraser tool removes one or more strokes. The argument
   /// is the unmodifiable list of strokes erased in this gesture (can be
@@ -516,12 +680,63 @@ class FlueraCanvas extends StatefulWidget {
   /// Ignored when [brushType] does not select the fountain pen.
   final FountainPenConfig fountainConfig;
 
+  /// Douglas-Peucker tolerance (in world pixels) applied to every
+  /// stroke at pen-up before commit.
+  ///
+  /// **Default `0`** — disabled. The committed stroke uses the same
+  /// raw point list the live painter renders during the drag, so what
+  /// the user sees while drawing is exactly what gets persisted (no
+  /// shape change at pen-up). Recommended for note-taking,
+  /// handwriting, and any UX that prizes input fidelity.
+  ///
+  /// Set `0.5` to opt into Douglas-Peucker simplification (~40-60%
+  /// point reduction with sub-pixel visual difference). Trades a tiny
+  /// pen-up shape shift for smaller `.fcv` files, less RAM, and
+  /// faster spatial-index queries. Higher values (1.0–2.0) are
+  /// aggressive — useful for ultra-low RAM scenarios at the cost of
+  /// mild corner rounding.
+  ///
+  /// ```dart
+  /// FlueraCanvas(simplifyEpsilon: 0.5); // opt-in compression
+  /// ```
+  final double simplifyEpsilon;
+
+  /// Grid snap step (in world pixels). When > 0 and a selection is
+  /// being translated via the body-drag move, the dragged frame's
+  /// closest anchor (corners + edges + centre, 9 candidates) snaps
+  /// to the nearest multiple of [snapToGrid] within
+  /// [smartGuidesTolerancePx] / scale. Default `0` (disabled).
+  ///
+  /// Typical values: `8` (compact), `16` (standard design-tool grid),
+  /// `24` (looser). Hold Shift while dragging to bypass the snap.
+  ///
+  /// ```dart
+  /// FlueraCanvas(snapToGrid: 16, smartGuidesEnabled: true);
+  /// ```
+  final double snapToGrid;
+
+  /// When `true`, drag-to-move on a selection scans every other
+  /// visible selectable node and snaps the dragged frame's anchors
+  /// to the closest matching anchor on a nearby node (Figma-style
+  /// alignment). Magenta dashed guide lines render via the selection
+  /// painter while a snap is locked. Default `false`.
+  ///
+  /// Hold Shift while dragging to bypass guides for a single drag
+  /// without reconfiguring the widget.
+  final bool smartGuidesEnabled;
+
+  /// Logical-px tolerance band around an anchor for both
+  /// [snapToGrid] and [smartGuidesEnabled]. The world-space
+  /// threshold is `smartGuidesTolerancePx / camera.scale`, so the
+  /// snap "feels" the same at every zoom level. Default `6`.
+  final double smartGuidesTolerancePx;
+
   @override
   State<FlueraCanvas> createState() => FlueraCanvasState();
 }
 
 class FlueraCanvasState extends State<FlueraCanvas>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   late final InfiniteCanvasController _controller;
   late final bool _ownsController;
   late final NativeStrokeOverlayController _nativeOverlay;
@@ -532,6 +747,62 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// `_controller` field. Mutating the controller from outside the
   /// canvas is supported — it already exposes its own setters.
   InfiniteCanvasController get controller => _controller;
+
+  /// World-space union of `worldBounds` of every selectable node in
+  /// every visible layer. `Rect.zero` when the canvas is empty.
+  /// Useful for "fit-to-content" camera animations and for the
+  /// `FlueraExportBounds.allContent` mode of [renderToImage]. O(N)
+  /// on the selectable index.
+  Rect get contentBoundsWorld {
+    Rect? acc;
+    for (final node in _selectableNodes.values) {
+      final parent = node.parent;
+      if (parent is LayerNode && !parent.isVisible) continue;
+      final b = node.worldBounds;
+      if (b.isEmpty) continue;
+      acc = acc == null ? b : acc.expandToInclude(b);
+    }
+    return acc ?? Rect.zero;
+  }
+
+  /// World-space union of `worldBounds` of every node in the current
+  /// selection. `Rect.zero` when the selection is empty. Useful for
+  /// the `FlueraExportBounds.selection` mode of [renderToImage].
+  Rect get selectionBoundsWorld {
+    final sel = _selectionController.value;
+    if (sel.isEmpty) return Rect.zero;
+    Rect? acc;
+    for (final id in sel.ids) {
+      final node = _selectableNodes[id];
+      if (node == null) continue;
+      final b = node.worldBounds;
+      if (b.isEmpty) continue;
+      acc = acc == null ? b : acc.expandToInclude(b);
+    }
+    return acc ?? Rect.zero;
+  }
+
+  /// Logical size of the canvas viewport (the area `FlueraCanvas` is
+  /// laid out into), in screen pixels. Captured by the inner
+  /// [LayoutBuilder] on every layout pass — `Size.zero` until the
+  /// first frame ships.
+  ///
+  /// Useful for computing screen-space → world-space drops that need
+  /// to land *inside the canvas viewport*, not at the centre of the
+  /// surrounding `MediaQuery.size` (which on phones / bottom sheets
+  /// can fall outside the canvas itself).
+  Size get viewportSize => _gestureViewportSize;
+
+  /// World-space coordinate of the centre of the visible viewport
+  /// right now. Equivalent to
+  /// `controller.screenToCanvas(Offset(viewportSize.width / 2,
+  /// viewportSize.height / 2))`. Returns `Offset.zero` when the
+  /// canvas has not laid out yet.
+  Offset get viewportCenterWorld {
+    final s = _gestureViewportSize;
+    if (s.isEmpty) return Offset.zero;
+    return _controller.screenToCanvas(Offset(s.width / 2, s.height / 2));
+  }
 
   /// Committed strokes, in draw order (back-to-front).
   ///
@@ -584,6 +855,41 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// rebuild, O(1) lookup at query time.
   final Map<NodeId, int> _zOrderIndex = <NodeId, int>{};
 
+  /// Highest Z-stamp currently issued. Maintained incrementally so
+  /// `_registerSelectable` can hand out the next stamp in O(1)
+  /// instead of folding over `_zOrderIndex.values` every insert.
+  /// `_rebuildSelectableIndex` resets it during DFS so the counter
+  /// stays bounded across long sessions; single-node mutations
+  /// just bump it.
+  int _maxZ = -1;
+
+  /// Subset of [_selectableNodes] containing only nodes that are NOT
+  /// CanvasStrokeNode (today: ImageNodes; future: text / shape).
+  /// Lets `_hitTestNode` and `_hitTestIdsInRect` skip the full
+  /// selectable-index scan when looking for non-stroke candidates —
+  /// strokes go through the spatial-index RTree, this set is the
+  /// fast path for everything else. Typically <100 entries on a real
+  /// canvas, vs N (potentially thousands) of strokes.
+  final Set<NodeId> _nonStrokeSelectableIds = <NodeId>{};
+
+  /// Counter of how many nodes currently have a non-identity
+  /// `localTransform`. While 0, the committed painter can blit
+  /// `s.picture()` directly without paying the per-stroke
+  /// `_strokeToNode[s]` map lookup — the >99% common case on
+  /// notes-app workloads. Maintained by transform op apply / revert
+  /// paths.
+  int _nodesWithTransform = 0;
+
+  /// IDs of nodes whose `localTransform` is currently non-identity.
+  /// The spatial-index RTree is keyed on each stroke's pre-transform
+  /// `bounds`; once a stroke is moved/rotated the RTree query at the
+  /// new position misses it. The hit-test path skips RTree results
+  /// from this set and instead intersects the worldBounds (which IS
+  /// transform-aware) of every entry. Maintained alongside
+  /// [_nodesWithTransform] — invariants: `_transformedNodeIds.length
+  /// == _nodesWithTransform`.
+  final Set<NodeId> _transformedNodeIds = <NodeId>{};
+
   /// Undo / redo stacks. `null` when [widget.historyCapacity] <= 0.
   _CanvasHistory? _history;
 
@@ -595,9 +901,44 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// pen-up so a whole swipe becomes a single undo step).
   final Set<CanvasStroke> _erasedThisGesture = <CanvasStroke>{};
 
+  /// Annotation strokes (image-parented) erased in the current
+  /// stroke-mode gesture. Pushed into the [_EraseOp] on pen-up so undo
+  /// re-attaches each one to its host image at the original index.
+  final List<_AnnotationEraseRecord> _erasedAnnotationsThisGesture =
+      <_AnnotationEraseRecord>[];
+
+  /// Annotation strokes (image-parented) split by the pixel-mode
+  /// eraser in the current gesture. Pushed into the [_PixelEraseOp]
+  /// on pen-up so undo can stitch the original back together.
+  final List<_PixelAnnotationEraseRecord> _pixelEraseAnnotationOriginals =
+      <_PixelAnnotationEraseRecord>[];
+
   /// Last eraser position in world coords — used to paint the hover circle.
   /// `null` when the eraser shouldn't be rendered (hover-off, other tool).
   Offset? _eraserPreviewWorld;
+
+  /// Last eraser position consumed by [_eraseAt] during the active
+  /// gesture. Used to interpolate sub-steps between two pointer
+  /// samples on fast drags so the eraser circle "stamps" continuously
+  /// along the path instead of leaving uncut gaps. Reset to `null` on
+  /// pen-up and on tool change.
+  Offset? _lastEraseAppliedWorld;
+
+  /// Pen pressure (0..1) of the last [_eraseAt] sample. Used to
+  /// linearly interpolate the eraser radius across the sub-stamps
+  /// between two pointer samples — without this, every intermediate
+  /// stamp would adopt the current sample's pressure and the
+  /// pressure-modulated radius would jump in discrete steps instead
+  /// of varying smoothly along the swept segment.
+  double _lastErasePressure = 1.0;
+
+  /// Adaptive smoother applied to every raw point as it arrives from
+  /// the pointer pipeline (pen / touch / stylus). Same filter the
+  /// commercial fluera_engine uses (`minCutoff = 1.0`, `beta = 0.007`)
+  /// — kills the sub-pixel tremor every digitiser produces while
+  /// staying responsive on fast strokes. Reinitialised at every
+  /// pen-down so each stroke starts from a clean state.
+  OneEuroFilter? _oneEuroFilter;
 
   /// Active selection (canvas 0.6.0+). Mutated through [select] /
   /// [selectInRect] / [clearSelection] / [deleteSelection] and observed
@@ -612,6 +953,13 @@ class FlueraCanvasState extends State<FlueraCanvas>
   Rect? _marqueeRectWorld;
   final _CommitNotifier _marqueeTick = _CommitNotifier();
 
+  /// Free-form lasso path being dragged out by the user with
+  /// `tool == CanvasTool.lasso`. World coords. Reused as the
+  /// marquee `_marqueeTick` listenable for paint repaints (the
+  /// selection painter draws either the rect outline or the lasso
+  /// polyline depending on which is non-null).
+  List<Offset>? _lassoPathWorld;
+
   // ── Transform gesture state (canvas 0.6.0+ Phase C2) ───────────────
   //
   // Populated by `_onDrawStart` when the user grabs a handle (or the
@@ -624,6 +972,25 @@ class FlueraCanvasState extends State<FlueraCanvas>
   Rect? _transformOriginalBounds;
   Offset? _transformAnchorWorld;
   Map<NodeId, Matrix4>? _transformBeforeMatrices;
+
+  /// Snapshot of the selection's [CanvasSelection.frameTransform] at
+  /// `_beginTransform`. Used by [_applyTransform] to express
+  /// scale/rotate deltas in the OBB's local frame so handles drag
+  /// the rotated corners (not the AABB corners). Identity when the
+  /// selection is multi-node or the single node has no rotation.
+  Matrix4? _transformOriginalFrame;
+
+  /// Smart-guide lines emitted by the most recent move tick when
+  /// `widget.smartGuidesEnabled == true`. The selection painter
+  /// reads this on every paint and renders dashed alignment lines.
+  /// Cleared on transform end / cancel and at the start of any
+  /// non-move gesture.
+  List<SmartGuideLine> _activeGuides = const <SmartGuideLine>[];
+
+  /// Public read-only view of [_activeGuides] for the selection
+  /// painter. Empty list = nothing to render. Updated on every
+  /// move tick.
+  List<SmartGuideLine> get activeSmartGuides => _activeGuides;
 
   /// Cached list of nodes the active transform applies to. Computed
   /// once at `_beginTransform` so the per-frame `_applyTransform`
@@ -701,6 +1068,57 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// committed strokes.
   final _CommitNotifier _commitTick = _CommitNotifier();
 
+  /// Tracks the world-space rectangles invalidated since the last
+  /// paint pass. Phase 2 (0.9.0) wire-up: every stroke / image /
+  /// text / annotation mutation marks its bbox dirty here.
+  /// Phase 3 (LayerPictureCache) consults the tracker to invalidate
+  /// only the affected layer caches instead of rebuilding all of
+  /// them. The painter clears it at the end of each paint pass.
+  final DirtyRegionTracker _dirtyTracker = DirtyRegionTracker();
+
+  /// Mark [worldBounds] as dirty. No-op when the rect is empty.
+  /// Convenience wrapper around [_dirtyTracker.markDirty] that's
+  /// invoked from every mutation site so wire-up changes one helper
+  /// instead of dozens of call-sites.
+  void _markDirty(Rect worldBounds) {
+    if (worldBounds.isEmpty) return;
+    _dirtyTracker.markDirty(worldBounds);
+  }
+
+  /// Per-layer content version, bumped on every mutation that
+  /// touches the layer's children (insert / remove / transform / Z
+  /// reorder). [LayerPictureCache] gates re-rasterization on this
+  /// number — a layer whose version hasn't changed since the last
+  /// paint reuses its cached `ui.Picture`. Public via
+  /// [layerContentVersion] so external GPU compositors / debuggers
+  /// can plug in.
+  final Map<NodeId, int> _layerVersions = <NodeId, int>{};
+
+  /// Process-wide picture cache for stable layers. Wired
+  /// infrastructurally in 0.9.0 (instance + version bumping +
+  /// public invalidate API ready); the committed-strokes painter
+  /// loop is scheduled to consume it in 0.9.1 once the multi-layer
+  /// composite path (saveLayer + GPU compositor + layer mask +
+  /// backdrop recorder) is refactored to record into a per-layer
+  /// PictureRecorder safely.
+  final LayerPictureCache _layerPictureCache = LayerPictureCache();
+
+  /// Bump the version of [layerId]. Idempotent for unknown layers
+  /// (they get their first version on next access). Invalidates the
+  /// cached picture immediately so the next paint records a fresh
+  /// one.
+  void _bumpLayerVersion(NodeId layerId) {
+    _layerVersions[layerId] = (_layerVersions[layerId] ?? 0) + 1;
+    _layerPictureCache.invalidate(layerId.value);
+  }
+
+  /// Read-only view of the per-layer content versions. Useful for
+  /// GPU consumers that want to gate their own caches off the same
+  /// counter.
+  @visibleForTesting
+  Map<NodeId, int> get layerContentVersion =>
+      Map<NodeId, int>.unmodifiable(_layerVersions);
+
   /// Stable committed-strokes painter. Created once in [initState] and
   /// reused for the lifetime of the State; reads `_strokes`,
   /// `_spatialIndex`, camera state, background and eraser preview
@@ -744,6 +1162,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
   @override
   void initState() {
     super.initState();
+    // Memory-pressure observer (0.9.0): drop GPU caches when the OS
+    // reports low memory so the host app stays alive instead of
+    // being reaped by the kernel.
+    WidgetsBinding.instance.addObserver(this);
     // Bootstrap the scene-graph: a single root carrying a default
     // "Layer 1". Doing this BEFORE anything that may push strokes
     // (initialBytes decode below) so `_addStrokeBoth` always finds an
@@ -773,6 +1195,13 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _liveStrokePainter = _LiveStrokePainter(
       strokeNotifier: _liveStroke,
       controller: _controller,
+      activeBlendMode: () => _activeLayer.blendMode,
+      activeOpacity: () => _activeLayer.opacity,
+      // `_commitTick` fires on every layer-state mutation
+      // (`setLayerBlendMode`, `setLayerOpacity`, `setActiveLayer`,
+      // …) so toggling those settings while a stroke is in flight
+      // refreshes the live preview.
+      layerSettingsTrigger: _commitTick,
     );
     _committedPainter = _CommittedStrokesPainter(
       canvasState: this,
@@ -782,6 +1211,8 @@ class FlueraCanvasState extends State<FlueraCanvas>
       selection: () => _selectionController.value,
       controller: _controller,
       marqueeRect: () => _marqueeRectWorld,
+      lassoPath: () => _lassoPathWorld,
+      smartGuides: () => _activeGuides,
       repaintTrigger: Listenable.merge(<Listenable>[
         _selectionController,
         _controller,
@@ -807,10 +1238,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
       }
     });
     if (widget.historyCapacity > 0) {
-      _history = _CanvasHistory(
-        capacity: widget.historyCapacity,
-        state: this,
-      );
+      _history = _CanvasHistory(capacity: widget.historyCapacity, state: this);
     }
     if (widget.enableKeyboardShortcuts) {
       _focusNode = FocusNode(debugLabel: 'FlueraCanvas');
@@ -823,6 +1251,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
         // files surface as a single synthetic layer.
         final result = CanvasSerializer.decodeBytesFull(initial);
         _replaceWithLayers(result.root, result.extendedCodes);
+        _hydrateImageBlobs(result.imageBlobs);
       } catch (_) {
         // Corrupt bytes — start with empty canvas.
       }
@@ -833,23 +1262,37 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// a native GPU path: Vulkan (Android), Metal (iOS/macOS), OpenGL (Linux),
   /// D3D11 (Windows), WebGPU (web). Each ships with the `fluera_canvas`
   /// package — no companion dependency needed.
-  static bool get _nativePlatformSupported {
-    if (kIsWeb) return true;
-    try {
-      return Platform.isAndroid ||
-          Platform.isIOS ||
-          Platform.isMacOS ||
-          Platform.isLinux ||
-          Platform.isWindows;
-    } catch (_) {
-      return false;
-    }
-  }
+  static bool get _nativePlatformSupported =>
+      kIsWeb ||
+      PlatformGuard.isAndroid ||
+      PlatformGuard.isIOS ||
+      PlatformGuard.isMacOS ||
+      PlatformGuard.isLinux ||
+      PlatformGuard.isWindows;
 
   late final bool _useNative;
 
+  /// OS-level low-memory event. Drop everything that's safe to
+  /// regenerate on demand: cached `ui.Picture` per layer, per-stroke
+  /// rasterizer caches, dirty-region accumulator. The image bytes
+  /// cache is preserved (re-decoding on the next paint would stall
+  /// the gesture loop), but unreferenced ImageNode handles are
+  /// already cleaned by the history evictor.
+  @override
+  void didHaveMemoryPressure() {
+    _layerPictureCache.invalidateAll();
+    _dirtyTracker.reset();
+    for (final s in _strokes) {
+      s.dispose();
+    }
+    super.didHaveMemoryPressure();
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _layerPictureCache.dispose();
+    _dirtyTracker.dispose();
     if (_ownsController) _controller.dispose();
     _nativeOverlay.dispose();
     _focusNode?.dispose();
@@ -909,10 +1352,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
     }
     if (oldWidget.historyCapacity != widget.historyCapacity) {
       if (widget.historyCapacity > 0) {
-        _history = (_history ??
-            _CanvasHistory(capacity: widget.historyCapacity, state: this))
-          ..capacity = widget.historyCapacity
-          ..state = this;
+        _history =
+            (_history ??
+                  _CanvasHistory(capacity: widget.historyCapacity, state: this))
+              ..capacity = widget.historyCapacity
+              ..state = this;
       } else {
         _history = null;
       }
@@ -980,6 +1424,8 @@ class FlueraCanvasState extends State<FlueraCanvas>
       case CanvasTool.draw:
       case CanvasTool.erase:
       case CanvasTool.erasePixel:
+      case CanvasTool.text:
+      case CanvasTool.lasso:
       case CanvasTool.select:
       case CanvasTool.image:
         return <Offset>[anchor, current];
@@ -995,14 +1441,22 @@ class FlueraCanvasState extends State<FlueraCanvas>
       // 8 handles or the rotate handle. Take that as the highest
       // priority — handle gestures supersede tap-select / marquee.
       if (sel.isNotEmpty) {
-        final handle =
-            TransformMath.hitTestHandle(sel.bounds, world, _controller.scale);
+        // Hit-test handles in the OBB's local frame so rotated images
+        // pick up grabs at their visually-rotated corners (not at the
+        // axis-aligned AABB corners, which are off-OBB after a turn).
+        final localPointer = _worldToFrameLocal(world, sel.frameTransform);
+        final handle = TransformMath.hitTestHandle(
+          sel.frameRect,
+          localPointer,
+          _controller.scale,
+        );
         if (handle != null) {
           _beginTransform(
             mode: TransformMath.modeForHandle(handle),
             handle: handle,
             anchor: world,
-            bounds: sel.bounds,
+            bounds: sel.frameRect,
+            frame: sel.frameTransform.clone(),
           );
           // Vsync ticker forces real-time repaints during the drag —
           // without it Impeller-Vulkan / Adreno coalesces the
@@ -1012,13 +1466,17 @@ class FlueraCanvasState extends State<FlueraCanvas>
           return;
         }
         // 2. Pen-down inside the bounding box → start a body-drag move
-        // on the existing selection (Figma-style drag).
-        if (sel.bounds.contains(world)) {
+        // on the existing selection (Figma-style drag). For rotated
+        // single-node selections, "inside" means inside the OBB —
+        // tested in local frame so the AABB excess doesn't catch
+        // empty corner triangles.
+        if (sel.frameRect.contains(localPointer)) {
           _beginTransform(
             mode: TransformMode.move,
             handle: null,
             anchor: world,
-            bounds: sel.bounds,
+            bounds: sel.frameRect,
+            frame: sel.frameTransform.clone(),
           );
           if (!_liveStrokeTicker.isActive) _liveStrokeTicker.start();
           return;
@@ -1037,11 +1495,13 @@ class FlueraCanvasState extends State<FlueraCanvas>
         _selectionController.set(_selectionFromIds(<NodeId>{hit}));
         // 4. Tap landed on a node — also enter move mode immediately
         // so the very same gesture can drag it (no second tap needed).
+        final freshSel = _selectionController.value;
         _beginTransform(
           mode: TransformMode.move,
           handle: null,
           anchor: world,
-          bounds: _selectionController.value.bounds,
+          bounds: freshSel.frameRect,
+          frame: freshSel.frameTransform.clone(),
         );
       } else {
         _selectionController.clear();
@@ -1058,12 +1518,77 @@ class FlueraCanvasState extends State<FlueraCanvas>
     // and skips the eraser when locked. Pre-existing strokes still
     // render — the lock only gates new mutations.
     if (_activeLayer.isLocked) return;
+    if (widget.tool == CanvasTool.text) {
+      // Tap on an existing TextNode → re-enter editing on it.
+      // Tap on empty canvas → drop a fresh TextNode at world and
+      // open the editor immediately. Either path goes through
+      // FlueraTextEditor so undo / redo and history are uniform.
+      final hit = _hitTestNode(world);
+      final hitNode = hit != null ? _selectableNodes[hit] : null;
+      if (hitNode is TextNode) {
+        FlueraTextEditor.start(this, existing: hit);
+      } else {
+        FlueraTextEditor.start(
+          this,
+          worldPosition: world,
+          color: widget.strokeColor,
+        );
+      }
+      return;
+    }
+    if (widget.tool == CanvasTool.lasso) {
+      // Same handle / body priority chain as `tool == select`, so a
+      // post-lasso selection behaves identically to a marquee one:
+      // tap a handle → resize / rotate, tap inside the bbox → drag,
+      // tap outside → start a new lasso (clearing the old selection).
+      final sel = _selectionController.value;
+      if (sel.isNotEmpty) {
+        final localPointer = _worldToFrameLocal(world, sel.frameTransform);
+        final handle = TransformMath.hitTestHandle(
+          sel.frameRect,
+          localPointer,
+          _controller.scale,
+        );
+        if (handle != null) {
+          _beginTransform(
+            mode: TransformMath.modeForHandle(handle),
+            handle: handle,
+            anchor: world,
+            bounds: sel.frameRect,
+            frame: sel.frameTransform.clone(),
+          );
+          if (!_liveStrokeTicker.isActive) _liveStrokeTicker.start();
+          return;
+        }
+        if (sel.frameRect.contains(localPointer)) {
+          _beginTransform(
+            mode: TransformMode.move,
+            handle: null,
+            anchor: world,
+            bounds: sel.frameRect,
+            frame: sel.frameTransform.clone(),
+          );
+          if (!_liveStrokeTicker.isActive) _liveStrokeTicker.start();
+          return;
+        }
+        // Tap outside the bbox → user wants a fresh lasso. Drop the
+        // previous selection so the new lasso owns the next one.
+        _selectionController.clear();
+        _marqueeTick.notify();
+      }
+      _lassoPathWorld = <Offset>[world];
+      _marqueeTick.notify();
+      if (!_liveStrokeTicker.isActive) _liveStrokeTicker.start();
+      return;
+    }
     if (widget.tool == CanvasTool.erase ||
         widget.tool == CanvasTool.erasePixel) {
       _erasedThisGesture.clear();
       _eraserPreviewWorld = world;
+      _lastEraseAppliedWorld = null;
+      _lastErasePressure = pressure.clamp(0.0, 1.0);
       _commitTick.notify();
-      _eraseAt(world);
+      _eraseAt(world, pressure);
       // Start the vsync ticker so the eraser preview circle keeps
       // tracking the pointer in real time on Impeller-Vulkan / Adreno.
       if (!_liveStrokeTicker.isActive) {
@@ -1097,7 +1622,15 @@ class FlueraCanvasState extends State<FlueraCanvas>
       if (!_liveStrokeTicker.isActive) _liveStrokeTicker.start();
       return;
     }
-    _livePoints = <Offset>[world];
+    // Reinitialise the per-stroke OneEuroFilter and pre-filter the
+    // pen-down sample (the first call returns the raw point because
+    // there is no prior sample to derive velocity from).
+    _oneEuroFilter = OneEuroFilter(minCutoff: 1.0, beta: 0.007);
+    final filteredStart = _oneEuroFilter!.filter(
+      world,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    _livePoints = <Offset>[filteredStart];
     _livePressures = <double>[pressure];
     _liveStroke.setStroke(_livePoints!, _livePressures!);
     if (!_useNative && !_liveStrokeTicker.isActive) {
@@ -1137,6 +1670,27 @@ class FlueraCanvasState extends State<FlueraCanvas>
     double tiltX,
     double tiltY,
   ) {
+    if (widget.tool == CanvasTool.lasso) {
+      // If `_onDrawStart` upgraded this gesture to a transform on the
+      // existing selection (handle drag / body drag), every update
+      // extends that transform — never appends to the lasso path.
+      if (_transformMode != null) {
+        _applyTransform(world, modifierActive: _transformModifierActive);
+        return;
+      }
+      final path = _lassoPathWorld;
+      if (path == null) return;
+      // Append only when the pointer moved meaningfully — caps the
+      // path length on slow drags. ~2 world-px granularity.
+      final last = path.last;
+      final dx = world.dx - last.dx;
+      final dy = world.dy - last.dy;
+      if (dx * dx + dy * dy >= 4) {
+        path.add(world);
+        _marqueeTick.notify();
+      }
+      return;
+    }
     if (widget.tool == CanvasTool.select) {
       // 1. If a transform gesture is in flight, every update extends
       // the transform — never falls through to marquee.
@@ -1175,8 +1729,14 @@ class FlueraCanvasState extends State<FlueraCanvas>
     if (widget.tool == CanvasTool.erase ||
         widget.tool == CanvasTool.erasePixel) {
       _eraserPreviewWorld = world;
+      // Apply the cut FIRST, then notify — the painter must read the
+      // updated `_strokes` (and the freshly-invalidated layer-picture
+      // cache) when it repaints. Notifying before mutating schedules
+      // a repaint against a stale snapshot, which on Impeller-Vulkan
+      // can be silently coalesced into the post-mutation tick and
+      // make the eraser feel one stamp behind during fast drags.
+      _eraseAt(world, pressure);
       _commitTick.notify();
-      _eraseAt(world);
       return;
     }
     if (widget.tool == CanvasTool.line ||
@@ -1190,7 +1750,17 @@ class FlueraCanvasState extends State<FlueraCanvas>
       return;
     }
     if (_livePoints == null) return;
-    _livePoints!.add(world);
+    // Adaptive smoothing on every raw sample. OneEuroFilter is
+    // velocity-aware: tight smoothing at low speeds (kills tremor when
+    // writing slowly) and loose filtering on fast strokes (preserves
+    // input fidelity). Same pipeline the commercial fluera_engine uses.
+    final filteredWorld =
+        _oneEuroFilter?.filter(
+          world,
+          DateTime.now().millisecondsSinceEpoch,
+        ) ??
+        world;
+    _livePoints!.add(filteredWorld);
     _livePressures!.add(pressure);
     _liveStroke.forceRepaint();
     if (_useNative) {
@@ -1203,8 +1773,72 @@ class FlueraCanvasState extends State<FlueraCanvas>
     }
   }
 
+  /// Returns `true` when [nodeBounds] should be considered selected by
+  /// a lasso closed over [lassoPath] (with [lassoBounds] = the lasso
+  /// path's own bounding rect, precomputed once per pen-up).
+  ///
+  /// Strict containment: the node's centre OR any corner of its bounds
+  /// must lie inside the closed polygon. The previous catch-all
+  /// `lassoBounds.overlaps(nodeBounds)` fallback caused over-selection
+  /// — e.g. a "C"-shaped lasso whose AABB engulfed a stroke sitting in
+  /// the open mouth of the C would mark the stroke selected even
+  /// though no point of it was ever encircled. Removed for parity with
+  /// Photoshop / Procreate / Figma. The cheap bbox overlap is still
+  /// used as an early reject to skip the expensive `Path.contains`
+  /// ray-casting for nodes nowhere near the lasso.
+  bool _lassoHitsNode(ui.Path lassoPath, Rect lassoBounds, Rect nodeBounds) {
+    if (!lassoBounds.overlaps(nodeBounds)) return false;
+    if (lassoPath.contains(nodeBounds.center)) return true;
+    if (lassoPath.contains(nodeBounds.topLeft)) return true;
+    if (lassoPath.contains(nodeBounds.topRight)) return true;
+    if (lassoPath.contains(nodeBounds.bottomLeft)) return true;
+    if (lassoPath.contains(nodeBounds.bottomRight)) return true;
+    return false;
+  }
+
   void _onDrawEnd(Offset _) {
+    if (widget.tool == CanvasTool.lasso) {
+      if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
+      // If this gesture was upgraded to a transform in `_onDrawStart`,
+      // close it through the transform pipeline instead of trying to
+      // resolve a (non-existent) lasso path.
+      if (_transformMode != null) {
+        _endTransform();
+        _marqueeTick.notify();
+        return;
+      }
+      final path = _lassoPathWorld;
+      _lassoPathWorld = null;
+      if (path != null && path.length >= 3) {
+        // Close the path and pick every selectable node that the
+        // lasso encloses or crosses. Photoshop / Procreate parity:
+        // a node is selected if its centre falls inside the lasso,
+        // OR any of its bounds corners is inside, OR its bounds
+        // rect intersects the lasso's own bounds (catches large
+        // nodes that "span" the lasso without any anchor falling
+        // inside the path).
+        final uiPath = ui.Path()..addPolygon(path, true);
+        final lassoBounds = uiPath.getBounds();
+        final ids = <NodeId>{};
+        for (final entry in _selectableNodes.entries) {
+          final node = entry.value;
+          final parent = node.parent;
+          if (parent is LayerNode && (!parent.isVisible || parent.isLocked)) {
+            continue;
+          }
+          if (_lassoHitsNode(uiPath, lassoBounds, node.worldBounds)) {
+            ids.add(entry.key);
+          }
+        }
+        _selectionController.set(_selectionFromIds(ids));
+      }
+      _marqueeTick.notify();
+      return;
+    }
     if (widget.tool == CanvasTool.select) {
+      // (helper used by the lasso hit-test above lives next to the
+      //  rest of the selection plumbing further down — see
+      //  `_lassoHitsNode`.)
       // Gesture is over — stop the vsync ticker that was kicked on
       // pen-down. No more forced frames needed.
       if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
@@ -1236,19 +1870,35 @@ class FlueraCanvasState extends State<FlueraCanvas>
     if (widget.tool == CanvasTool.erase ||
         widget.tool == CanvasTool.erasePixel) {
       if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
-      if (_erasedThisGesture.isNotEmpty || _pixelEraseOriginals.isNotEmpty) {
+      _lastEraseAppliedWorld = null;
+      if (_erasedThisGesture.isNotEmpty ||
+          _pixelEraseOriginals.isNotEmpty ||
+          _erasedAnnotationsThisGesture.isNotEmpty ||
+          _pixelEraseAnnotationOriginals.isNotEmpty) {
         final erased = _erasedThisGesture.toList(growable: false);
         if (widget.tool == CanvasTool.erasePixel) {
           _history?.push(
-            _PixelEraseOp(_pixelEraseOriginals, _pixelEraseReplacements),
+            _PixelEraseOp(
+              _pixelEraseOriginals,
+              _pixelEraseReplacements,
+              annotationRecords: _pixelEraseAnnotationOriginals,
+            ),
           );
         } else {
-          _history?.push(_EraseOp(erased, _lastEraseIndexes));
+          _history?.push(
+            _EraseOp(
+              erased,
+              _lastEraseIndexes,
+              annotations: _erasedAnnotationsThisGesture,
+            ),
+          );
         }
         _erasedThisGesture.clear();
         _lastEraseIndexes.clear();
         _pixelEraseOriginals.clear();
         _pixelEraseReplacements.clear();
+        _erasedAnnotationsThisGesture.clear();
+        _pixelEraseAnnotationOriginals.clear();
         if (erased.isNotEmpty) widget.onStrokesErased?.call(erased);
       }
       return;
@@ -1258,14 +1908,37 @@ class FlueraCanvasState extends State<FlueraCanvas>
       _nativeOverlay.takePoints();
     }
     _shapeAnchor = null;
-    if (_livePoints == null || _livePoints!.length < 2) {
+    _oneEuroFilter = null; // discard the per-stroke smoother state
+    // Empty input: nothing to commit.
+    if (_livePoints == null || _livePoints!.isEmpty) {
       if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
       _livePoints = null;
       _livePressures = null;
       _liveStroke.clear();
       return;
     }
-    final stroke = CanvasStroke(
+    // Single-point stroke (pen-down + pen-up without moving). Synthesise
+    // a 2-point "dot" stroke so the user gets visible ink (a round cap)
+    // instead of a silent commit-then-vanish. Skip for tools that mean
+    // something different on a tap (line / rect / ellipse → no shape on
+    // a single point) and for shape tools whose corners must stay sharp.
+    if (_livePoints!.length == 1 &&
+        (widget.tool == CanvasTool.draw ||
+            widget.tool == CanvasTool.ellipse)) {
+      final p = _livePoints!.first;
+      final pr = _livePressures!.first;
+      // 0.01 px offset is invisible but lets `drawPath` materialise the
+      // round-cap circle that gives the dot its shape.
+      _livePoints!.add(Offset(p.dx + 0.01, p.dy));
+      _livePressures!.add(pr);
+    } else if (_livePoints!.length < 2) {
+      if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
+      _livePoints = null;
+      _livePressures = null;
+      _liveStroke.clear();
+      return;
+    }
+    final raw = CanvasStroke(
       points: List<Offset>.unmodifiable(_livePoints!),
       pressures: List<double>.unmodifiable(_livePressures!),
       color: widget.strokeColor,
@@ -1275,14 +1948,265 @@ class FlueraCanvasState extends State<FlueraCanvas>
       pencilConfig: widget.pencilConfig,
       fountainConfig: widget.fountainConfig,
     );
+    // Apply Douglas-Peucker simplification BEFORE the split + commit.
+    // Default eps 0.5 trims 40-60% of redundant points without
+    // visible difference; consumers can opt out via `simplifyEpsilon
+    // = 0`. Image-annotation split + spatial-index insert all then
+    // operate on the smaller point list — RAM, paint cost, and hit
+    // -test latency all scale down with point count.
+    final stroke = _maybeSimplify(raw);
     if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
-    _internalInsertStrokeAt(_strokes.length, stroke);
+    _commitDrawnStroke(stroke);
     _livePoints = null;
     _livePressures = null;
     _commitTick.notify();
     _liveStroke.clear();
-    _history?.push(_AddOp(stroke, _strokes.length - 1));
     widget.onStrokeCommitted?.call(stroke);
+    final node = _strokeToNode[stroke];
+    if (node != null) widget.onStrokeNodeCommitted?.call(stroke, node.id);
+  }
+
+  /// Route the freshly-committed stroke to one or more containers:
+  /// every contiguous run of points fully inside the SAME front-most
+  /// image becomes a child of that image's `annotations` (in
+  /// Run Douglas-Peucker on [raw]'s points using
+  /// `widget.simplifyEpsilon`; the kept indices double as the
+  /// pressure index source so the pressure curve stays aligned
+  /// (no interpolation, no precision drift). Returns the original
+  /// stroke when the simplifier is disabled (`epsilon == 0`), the
+  /// stroke is too short to simplify, or no point can be dropped.
+  CanvasStroke _maybeSimplify(CanvasStroke raw) {
+    final eps = widget.simplifyEpsilon;
+    if (eps <= 0 || raw.points.length < 4) return raw;
+    final keep = _dpKeepIndices(raw.points, eps);
+    if (keep.length == raw.points.length) return raw;
+    final pts = <Offset>[for (final i in keep) raw.points[i]];
+    final prs = <double>[for (final i in keep) raw.pressures[i]];
+    return CanvasStroke(
+      points: List<Offset>.unmodifiable(pts),
+      pressures: List<double>.unmodifiable(prs),
+      color: raw.color,
+      baseWidth: raw.baseWidth,
+      smooth: raw.smooth,
+      brushType: raw.brushType,
+      pencilConfig: raw.pencilConfig,
+      fountainConfig: raw.fountainConfig,
+    );
+  }
+
+  /// Iterative Douglas-Peucker that returns the *kept indices* of
+  /// [points], so callers can pull matching pressures (or any other
+  /// per-point side-table) at the same indices without losing
+  /// alignment. Always keeps the first and last index.
+  List<int> _dpKeepIndices(List<Offset> points, double eps) {
+    final n = points.length;
+    if (n < 3) return List<int>.generate(n, (i) => i);
+    final keep = List<bool>.filled(n, false);
+    keep[0] = true;
+    keep[n - 1] = true;
+    final stack = <(int, int)>[(0, n - 1)];
+    while (stack.isNotEmpty) {
+      final (lo, hi) = stack.removeLast();
+      if (hi - lo < 2) continue;
+      final a = points[lo];
+      final b = points[hi];
+      final dx = b.dx - a.dx;
+      final dy = b.dy - a.dy;
+      final lenSq = dx * dx + dy * dy;
+      double maxDist = 0;
+      int maxI = -1;
+      for (int i = lo + 1; i < hi; i++) {
+        final p = points[i];
+        double dist;
+        if (lenSq == 0) {
+          final ex = p.dx - a.dx;
+          final ey = p.dy - a.dy;
+          dist = math.sqrt(ex * ex + ey * ey);
+        } else {
+          final num = ((p.dx - a.dx) * dy - (p.dy - a.dy) * dx).abs();
+          dist = num / math.sqrt(lenSq);
+        }
+        if (dist > maxDist) {
+          maxDist = dist;
+          maxI = i;
+        }
+      }
+      if (maxDist > eps && maxI > lo && maxI < hi) {
+        keep[maxI] = true;
+        stack.add((lo, maxI));
+        stack.add((maxI, hi));
+      }
+    }
+    final out = <int>[];
+    for (int i = 0; i < n; i++) {
+      if (keep[i]) out.add(i);
+    }
+    return out;
+  }
+
+  /// image-local coords); every other run becomes a free child of the
+  /// active layer (in world coords). When the stroke doesn't cross
+  /// any image boundary at all the legacy fast path runs — single
+  /// `_AddOp` push, no batch overhead.
+  ///
+  /// Shape tools (line / rectangle / ellipse) bypass the split: their
+  /// geometry is meant to be a single rigid figure and slicing it at
+  /// arbitrary image boundaries produces visually broken half-shapes.
+  /// They commit as one free stroke regardless of overlap.
+  void _commitDrawnStroke(CanvasStroke stroke) {
+    final isShape =
+        widget.tool == CanvasTool.line ||
+        widget.tool == CanvasTool.rectangle ||
+        widget.tool == CanvasTool.ellipse;
+    if (isShape) {
+      _internalInsertStrokeAt(_strokes.length, stroke);
+      _history?.push(_AddOp(stroke, _strokes.length - 1));
+      return;
+    }
+    final routed = _splitStrokeAcrossImages(stroke);
+    if (routed.length == 1 && routed.first.target == null) {
+      // Fast path: no image overlap, behaves exactly like 0.7.0.
+      _internalInsertStrokeAt(_strokes.length, stroke);
+      _history?.push(_AddOp(stroke, _strokes.length - 1));
+      return;
+    }
+
+    final segments = <_SplitSegment>[];
+    for (final r in routed) {
+      if (r.target == null) {
+        final idx = _strokes.length;
+        _internalInsertStrokeAt(idx, r.stroke);
+        // After insert the node is registered; pull it back out so we
+        // can replay redo with the same instance.
+        final node = _strokeToNode[r.stroke];
+        if (node == null) continue;
+        segments.add(
+          _SplitSegment(
+            stroke: r.stroke,
+            node: node,
+            target: null,
+            layerIndex: idx,
+          ),
+        );
+      } else {
+        final node = CanvasStrokeNode(
+          id: NodeId(generateUid()),
+          stroke: r.stroke,
+        );
+        r.target!.annotations.add(node);
+        segments.add(
+          _SplitSegment(
+            stroke: r.stroke,
+            node: node,
+            target: r.target,
+            layerIndex: null,
+          ),
+        );
+      }
+    }
+    if (segments.isNotEmpty) {
+      _history?.push(_SplitStrokeOp(segments));
+    }
+  }
+
+  /// Walk the stroke point-by-point and split it at every image
+  /// boundary crossing. Returns 1+ records describing where each piece
+  /// belongs. World→image-local mapping is computed once per candidate
+  /// image so the per-point classification stays cheap.
+  List<({CanvasStroke stroke, ImageNode? target})> _splitStrokeAcrossImages(
+    CanvasStroke source,
+  ) {
+    // Gather candidate images on the *active layer* whose worldBounds
+    // overlap the stroke's bbox. Restricting to the active layer
+    // matches the "draw on the layer you're on" mental model — a
+    // stroke committed while Layer 2 is active never binds to an
+    // image sitting on Layer 1, even when their bounds overlap on
+    // screen. Hidden / locked active layers are gated upstream by
+    // `_onDrawStart`, so we don't re-check those flags here.
+    final candidates = <_ImageHitFrame>[];
+    for (final id in _nonStrokeSelectableIds) {
+      final node = _selectableNodes[id];
+      if (node is! ImageNode) continue;
+      if (!identical(node.parent, _activeLayer)) continue;
+      if (!node.worldBounds.overlaps(source.bounds)) continue;
+      candidates.add(_ImageHitFrame.forNode(node, _zOrderIndex[id] ?? 0));
+    }
+    if (candidates.isEmpty) {
+      return [(stroke: source, target: null)];
+    }
+    // Higher Z first — front-most image wins when the point sits inside
+    // multiple overlapping bitmaps.
+    candidates.sort((a, b) => b.z.compareTo(a.z));
+
+    // Classify every point: which container does it belong to?
+    final n = source.points.length;
+    final containers = List<ImageNode?>.filled(n, null);
+    for (int i = 0; i < n; i++) {
+      final wp = source.points[i];
+      for (final c in candidates) {
+        if (c.contains(wp)) {
+          containers[i] = c.node;
+          break;
+        }
+      }
+    }
+
+    // Sweep into runs of same-container. Re-emit each run as its own
+    // CanvasStroke. World coords for free runs; image-local coords
+    // (computed via the image's inverse transform) for image runs.
+    final runs = <({CanvasStroke stroke, ImageNode? target})>[];
+    int i = 0;
+    while (i < n) {
+      final container = containers[i];
+      int j = i + 1;
+      while (j < n && containers[j] == container) {
+        j++;
+      }
+      // Need at least 2 points to draw a segment. Singletons are dropped
+      // — they'd render as a zero-length segment anyway.
+      if (j - i >= 2) {
+        final pts = <Offset>[];
+        final prs = <double>[];
+        if (container == null) {
+          for (int k = i; k < j; k++) {
+            pts.add(source.points[k]);
+            prs.add(source.pressures[k]);
+          }
+        } else {
+          // Map each world point through the image's inverse transform
+          // so the resulting stroke draws correctly under the image's
+          // own paint stack.
+          final inv =
+              candidates
+                  .firstWhere((c) => identical(c.node, container))
+                  .worldToLocal;
+          for (int k = i; k < j; k++) {
+            final wp = source.points[k];
+            final lp = MatrixUtils.transformPoint(inv, wp);
+            pts.add(lp);
+            prs.add(source.pressures[k]);
+          }
+        }
+        final seg = CanvasStroke(
+          points: List<Offset>.unmodifiable(pts),
+          pressures: List<double>.unmodifiable(prs),
+          color: source.color,
+          baseWidth: source.baseWidth,
+          smooth: source.smooth,
+          brushType: source.brushType,
+          pencilConfig: source.pencilConfig,
+          fountainConfig: source.fountainConfig,
+        );
+        runs.add((stroke: seg, target: container));
+      }
+      i = j;
+    }
+    if (runs.isEmpty) {
+      // Defensive: should never happen for n>=2 strokes, but make sure
+      // we always commit *something*. Fall back to the original path.
+      return [(stroke: source, target: null)];
+    }
+    return runs;
   }
 
   void _onDrawCancel() {
@@ -1292,9 +2216,14 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _lastSelectPointerScreen = null;
     _livePoints = null;
     _livePressures = null;
+    _lassoPathWorld = null;
     _liveStroke.clear();
     _erasedThisGesture.clear();
+    _erasedAnnotationsThisGesture.clear();
     _lastEraseIndexes.clear();
+    _pixelEraseOriginals.clear();
+    _pixelEraseReplacements.clear();
+    _pixelEraseAnnotationOriginals.clear();
     if (_marqueeAnchorWorld != null || _marqueeRectWorld != null) {
       _marqueeAnchorWorld = null;
       _marqueeRectWorld = null;
@@ -1309,8 +2238,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
         for (final node in targets) {
           final m = before[node.id];
           if (m == null) continue;
-          node.localTransform = m.clone();
-          node.invalidateTransformCache();
+          _writeLocalTransform(node, m.clone());
         }
         _refreshSelectionBoundsAfterTransform();
         _commitTick.notify();
@@ -1335,12 +2263,68 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// originals re-inserted.
   final List<CanvasStroke> _pixelEraseReplacements = <CanvasStroke>[];
 
-  void _eraseAt(Offset world) {
+  void _eraseAt(Offset world, double pressure) {
+    // Pressure-modulated radius: linear ramp from 40 % (precision /
+    // soft touch) to 100 % (firm press) of the nominal radius. At
+    // pressure 1.0 (the default for finger / non-pressure-aware
+    // pointers) the behaviour is identical to pre-0.9.x.
+    final p = pressure.clamp(0.0, 1.0);
+    final baseRadius = widget.eraserRadius / _controller.scale;
+    final currentRadius = baseRadius * (0.4 + 0.6 * p);
+
+    // Sub-step between the previous sample and the current one to
+    // avoid "dot trail" gaps on fast drags. Without this, points of
+    // an underlying stroke that fall between two pointer samples
+    // are not tested against the eraser circle and survive even when
+    // the user visually swept right over them.
+    final last = _lastEraseAppliedWorld;
+    if (last != null) {
+      final lastP = _lastErasePressure.clamp(0.0, 1.0);
+      final lastRadius = baseRadius * (0.4 + 0.6 * lastP);
+      final dx = world.dx - last.dx;
+      final dy = world.dy - last.dy;
+      final dist = math.sqrt(dx * dx + dy * dy);
+      // Half-(min)-radius stamping is the standard brush-engine
+      // cadence — every point along the swept segment lies within
+      // half of either stamp's radius, so nothing slips through the
+      // gaps even when the radius is shrinking under variable pen
+      // pressure.
+      final minRadius = math.min(lastRadius, currentRadius);
+      final step = math.max(minRadius * 0.5, 0.5);
+      if (dist > step) {
+        final n = (dist / step).floor();
+        // Velocity boost: when the cursor jumps far between samples
+        // (slow input pipeline / fast drag) inflate intermediate
+        // stamps slightly to cover residual gaps. Cap at 1.4× to
+        // avoid noticeable over-erase on pen-up/down jumps.
+        final velocityFactor =
+            (dist / (step * 8.0)).clamp(1.0, 1.4);
+        for (int i = 1; i <= n; i++) {
+          final t = i / (n + 1);
+          final mid = Offset(last.dx + dx * t, last.dy + dy * t);
+          // Linearly interpolate pressure → radius across the swept
+          // segment. With pressure-aware modulation enabled this
+          // gives a smooth taper from `lastRadius` to `currentRadius`.
+          final midRadius =
+              (lastRadius + (currentRadius - lastRadius) * t) *
+              velocityFactor;
+          _eraseAtSinglePoint(mid, midRadius);
+        }
+      }
+    }
+    _eraseAtSinglePoint(world, currentRadius);
+    _lastEraseAppliedWorld = world;
+    _lastErasePressure = p;
+  }
+
+  /// Apply the eraser tool at exactly [world] — single stamp, no
+  /// interpolation. Routes to either pixel-mode (split surrounding
+  /// strokes) or stroke-mode (drop whole strokes) per current tool.
+  void _eraseAtSinglePoint(Offset world, double radiusWorld) {
     if (widget.tool == CanvasTool.erasePixel) {
-      _eraseAtPixel(world);
+      _eraseAtPixelStamp(world, radiusWorld);
       return;
     }
-    final radiusWorld = widget.eraserRadius / _controller.scale;
     final probe = Rect.fromCircle(center: world, radius: radiusWorld);
     final candidates = _spatialIndex.queryVisible(probe, margin: 0);
     final r2 = radiusWorld * radiusWorld;
@@ -1351,16 +2335,77 @@ class FlueraCanvasState extends State<FlueraCanvas>
         toErase.add(s);
       }
     }
-    if (toErase.isEmpty) return;
-    for (final s in toErase) {
-      final idx = _strokes.indexOf(s);
-      if (idx < 0) continue;
-      _internalRemoveStroke(s);
-      s.dispose();
-      _erasedThisGesture.add(s);
-      _lastEraseIndexes[s] = idx;
+    bool anyChange = false;
+    if (toErase.isNotEmpty) {
+      for (final s in toErase) {
+        final idx = _strokes.indexOf(s);
+        if (idx < 0) continue;
+        _internalRemoveStroke(s);
+        s.dispose();
+        _erasedThisGesture.add(s);
+        _lastEraseIndexes[s] = idx;
+      }
+      anyChange = true;
     }
-    _commitTick.notify();
+    // Annotation pass: walk every visible image whose worldBounds
+    // touches the eraser probe and erase any annotation stroke whose
+    // image-local geometry intersects the circle. The eraser preview
+    // and stroke-mode UX is identical from the user's POV — they don't
+    // need to know whether a stroke was free or image-parented.
+    if (_eraseAnnotationsAt(world, radiusWorld)) {
+      anyChange = true;
+    }
+    if (anyChange) _commitTick.notify();
+  }
+
+  /// Stroke-mode erase pass that targets annotation strokes parented
+  /// to ImageNodes. Returns `true` when at least one annotation got
+  /// removed in this tick — the caller bumps the commit notifier.
+  bool _eraseAnnotationsAt(Offset world, double radiusWorld) {
+    bool changed = false;
+    final probe = Rect.fromCircle(center: world, radius: radiusWorld);
+    for (final id in _nonStrokeSelectableIds) {
+      final node = _selectableNodes[id];
+      if (node is! ImageNode) continue;
+      if (node.annotations.isEmpty) continue;
+      final parent = node.parent;
+      if (parent is LayerNode && (!parent.isVisible || parent.isLocked)) {
+        continue;
+      }
+      if (!node.worldBounds.overlaps(probe)) continue;
+      final frame = _ImageHitFrame.forNode(node, 0);
+      // Project the eraser centre into image-local coords. The
+      // eraser radius doesn't transform cleanly under non-uniform
+      // scale, so for the MVP we approximate with `radiusWorld` —
+      // accurate when the image is unscaled (the common case) and a
+      // few pixels off otherwise. Good enough for the first cut.
+      final centerLocal = MatrixUtils.transformPoint(frame.worldToLocal, world);
+      final r2Local = radiusWorld * radiusWorld;
+      final toErase = <CanvasStrokeNode>[];
+      for (final ann in node.annotations) {
+        if (_erasedThisGesture.contains(ann.stroke)) continue;
+        if (!ann.stroke.bounds.inflate(radiusWorld).contains(centerLocal)) {
+          // Cheap reject: skip strokes whose padded bbox doesn't
+          // contain the centre.
+          continue;
+        }
+        if (_strokeIntersectsCircle(ann.stroke, centerLocal, r2Local)) {
+          toErase.add(ann);
+        }
+      }
+      for (final ann in toErase) {
+        final idx = node.annotations.indexOf(ann);
+        if (idx < 0) continue;
+        node.annotations.removeAt(idx);
+        _erasedThisGesture.add(ann.stroke);
+        _erasedAnnotationsThisGesture.add(
+          _AnnotationEraseRecord(node: node, ann: ann, index: idx),
+        );
+        ann.stroke.dispose();
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   /// Pixel-mode erase: instead of removing whole strokes, split each
@@ -1368,9 +2413,12 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// Per-update cost is O(k · m) where k = strokes intersecting the
   /// eraser circle (typically <10) and m = points per stroke. Combined
   /// with the spatial-index viewport cull this stays well below 1ms
-  /// for typical scenes.
-  void _eraseAtPixel(Offset world) {
-    final radiusWorld = widget.eraserRadius / _controller.scale;
+  /// for typical scenes. As of 0.7.2 the same cut runs against image
+  /// annotation strokes via `_pixelEraseAnnotationsAt`.
+  ///
+  /// Single-stamp variant — [_eraseAt] interpolates multiple stamps
+  /// along the swept segment for fast drags.
+  void _eraseAtPixelStamp(Offset world, double radiusWorld) {
     final probe = Rect.fromCircle(center: world, radius: radiusWorld);
     final candidates = _spatialIndex.queryVisible(probe, margin: 0);
     final r2 = radiusWorld * radiusWorld;
@@ -1399,7 +2447,74 @@ class FlueraCanvasState extends State<FlueraCanvas>
       );
       anyChange = true;
     }
+    if (_pixelEraseAnnotationsAt(world, radiusWorld)) {
+      anyChange = true;
+    }
     if (anyChange) _commitTick.notify();
+  }
+
+  /// Pixel-mode pass over annotation strokes parented to ImageNodes.
+  /// Mirrors `_eraseAtPixel` but operates in image-local coords so the
+  /// circle hits the right pixels even on rotated / scaled images.
+  /// Returns `true` when at least one annotation was split.
+  bool _pixelEraseAnnotationsAt(Offset world, double radiusWorld) {
+    bool changed = false;
+    final probe = Rect.fromCircle(center: world, radius: radiusWorld);
+    for (final id in _nonStrokeSelectableIds) {
+      final node = _selectableNodes[id];
+      if (node is! ImageNode) continue;
+      if (node.annotations.isEmpty) continue;
+      final parent = node.parent;
+      if (parent is LayerNode && (!parent.isVisible || parent.isLocked)) {
+        continue;
+      }
+      if (!node.worldBounds.overlaps(probe)) continue;
+      final frame = _ImageHitFrame.forNode(node, 0);
+      // Project the eraser into image-local coords. Same MVP caveat
+      // as `_eraseAnnotationsAt`: radius doesn't transform under
+      // non-uniform scale but is accurate for the unscaled common case.
+      final centerLocal = MatrixUtils.transformPoint(frame.worldToLocal, world);
+      final r2Local = radiusWorld * radiusWorld;
+      // Snapshot the list — splitting mutates `node.annotations`.
+      final snapshot = List<CanvasStrokeNode>.from(node.annotations);
+      for (final ann in snapshot) {
+        if (!_strokeIntersectsCircle(ann.stroke, centerLocal, r2Local)) {
+          continue;
+        }
+        final survivors = CanvasStroke.splitAroundCircle(
+          ann.stroke,
+          centerLocal,
+          r2Local,
+        );
+        // No effective change — skip to avoid noise in the undo stack.
+        if (survivors.length == 1 &&
+            survivors.first.points.length == ann.stroke.points.length) {
+          continue;
+        }
+        final idx = node.annotations.indexOf(ann);
+        if (idx < 0) continue;
+        node.annotations.removeAt(idx);
+        final survivorNodes = <CanvasStrokeNode>[];
+        for (int i = 0; i < survivors.length; i++) {
+          final sn = CanvasStrokeNode(
+            id: NodeId(generateUid()),
+            stroke: survivors[i],
+          );
+          node.annotations.insert(idx + i, sn);
+          survivorNodes.add(sn);
+        }
+        _pixelEraseAnnotationOriginals.add(
+          _PixelAnnotationEraseRecord(
+            node: node,
+            original: ann,
+            index: idx,
+            survivors: survivorNodes,
+          ),
+        );
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   static bool _strokeIntersectsCircle(
@@ -1480,9 +2595,8 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// Read-only ordered view (back-to-front) of every [LayerNode] under
   /// the [rootLayer]. Useful for rendering a layers panel without
   /// reaching into the scene graph internals.
-  List<LayerNode> get layers => List.unmodifiable(
-        _rootLayer.children.whereType<LayerNode>(),
-      );
+  List<LayerNode> get layers =>
+      List.unmodifiable(_rootLayer.children.whereType<LayerNode>());
 
   /// Programmatically append a stroke. Pushes an undo step.
   void pushStroke(CanvasStroke stroke) {
@@ -1490,6 +2604,8 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _commitTick.notify();
     _history?.push(_AddOp(stroke, _strokes.length - 1));
     widget.onStrokeCommitted?.call(stroke);
+    final node = _strokeToNode[stroke];
+    if (node != null) widget.onStrokeNodeCommitted?.call(stroke, node.id);
   }
 
   /// Programmatically append a batch of strokes in one frame.
@@ -1503,9 +2619,15 @@ class FlueraCanvasState extends State<FlueraCanvas>
     }
     _commitTick.notify();
     _history?.push(_AddBatchOp(batch, indexes));
-    if (widget.onStrokeCommitted != null) {
+    final cb = widget.onStrokeCommitted;
+    final nodeCb = widget.onStrokeNodeCommitted;
+    if (cb != null || nodeCb != null) {
       for (final s in batch) {
-        widget.onStrokeCommitted!(s);
+        cb?.call(s);
+        if (nodeCb != null) {
+          final node = _strokeToNode[s];
+          if (node != null) nodeCb(s, node.id);
+        }
       }
     }
   }
@@ -1639,12 +2761,14 @@ class FlueraCanvasState extends State<FlueraCanvas>
         if (flatIdx < 0) flatIdx = null;
         erasedStrokes.add(node.stroke);
       }
-      snapshots.add(_DeletedNodeSnapshot(
-        node: node,
-        layerId: parent.id,
-        childIndex: childIdx,
-        flatStrokeIndex: flatIdx,
-      ));
+      snapshots.add(
+        _DeletedNodeSnapshot(
+          node: node,
+          layerId: parent.id,
+          childIndex: childIdx,
+          flatStrokeIndex: flatIdx,
+        ),
+      );
       removedNodes.add(node);
     }
     if (snapshots.isEmpty) return 0;
@@ -1694,7 +2818,32 @@ class FlueraCanvasState extends State<FlueraCanvas>
       final b = node.worldBounds;
       acc = acc == null ? b : acc.expandToInclude(b);
     }
-    return CanvasSelection(ids: ids, bounds: acc ?? Rect.zero);
+    return CanvasSelection(
+      ids: ids,
+      bounds: acc ?? Rect.zero,
+      frameRect: _frameRectFromIds(ids, acc ?? Rect.zero),
+      frameTransform: _frameTransformFromIds(ids),
+    );
+  }
+
+  /// Local-space rect of the OBB outline. For a single-node selection
+  /// this is the node's `localBounds`; for multi-node (or single
+  /// un-rotated nodes) it falls back to [worldAabb] so the painter
+  /// renders an axis-aligned rect.
+  Rect _frameRectFromIds(Set<NodeId> ids, Rect worldAabb) {
+    if (ids.length != 1) return worldAabb;
+    final node = _selectableNodes[ids.first];
+    if (node == null || node.isIdentityTransform) return worldAabb;
+    return node.localBounds;
+  }
+
+  /// Local-to-world transform of the OBB outline. Identity for
+  /// multi-node / un-rotated single-node selections.
+  Matrix4 _frameTransformFromIds(Set<NodeId> ids) {
+    if (ids.length != 1) return Matrix4.identity();
+    final node = _selectableNodes[ids.first];
+    if (node == null || node.isIdentityTransform) return Matrix4.identity();
+    return node.localTransform.clone();
   }
 
   /// Top-most selectable node whose `worldBounds` contains
@@ -1707,15 +2856,21 @@ class FlueraCanvasState extends State<FlueraCanvas>
     NodeId? best;
     int bestZ = -1;
 
-    // Stroke candidates via the RTree (fast path).
+    // Stroke candidates via the RTree (fast path). The RTree is keyed
+    // on each stroke's *pre-transform* `bounds`, so a stroke moved or
+    // rotated via `_applyTransform` is queried at its old position
+    // here; we skip those and pick them up in the transform-aware
+    // pass below.
     final probe = Rect.fromCircle(center: worldPoint, radius: tolerance);
     final strokeCandidates = _spatialIndex.queryVisible(probe, margin: 0);
     for (final s in strokeCandidates) {
       final node = _strokeToNode[s];
       if (node == null) continue;
+      if (_transformedNodeIds.contains(node.id)) continue;
       final parent = node.parent;
-      if (parent is LayerNode &&
-          (!parent.isVisible || parent.isLocked)) continue;
+      if (parent is LayerNode && (!parent.isVisible || parent.isLocked)) {
+        continue;
+      }
       final z = _zOrderIndex[node.id] ?? -1;
       if (z > bestZ) {
         bestZ = z;
@@ -1723,21 +2878,45 @@ class FlueraCanvasState extends State<FlueraCanvas>
       }
     }
 
-    // Non-stroke candidates: scan the index for nodes whose
-    // `worldBounds` contains the pointer. ImageNodes are the only
-    // non-stroke selectable type today; the predicate stays
-    // type-agnostic so future text / shape nodes hook in for free.
-    for (final entry in _selectableNodes.entries) {
-      final node = entry.value;
-      if (node is CanvasStrokeNode) continue; // handled above.
+    // Non-stroke candidates: iterate ONLY the non-stroke subset
+    // (typically <100 entries) instead of every selectable node
+    // (potentially thousands of strokes filtered+continued). The
+    // predicate stays type-agnostic so future text / shape nodes
+    // plug in via the same `_nonStrokeSelectableIds` set.
+    for (final id in _nonStrokeSelectableIds) {
+      final node = _selectableNodes[id];
+      if (node == null) continue;
       final parent = node.parent;
-      if (parent is LayerNode &&
-          (!parent.isVisible || parent.isLocked)) continue;
+      if (parent is LayerNode && (!parent.isVisible || parent.isLocked)) {
+        continue;
+      }
       if (!node.worldBounds.contains(worldPoint)) continue;
-      final z = _zOrderIndex[node.id] ?? -1;
+      final z = _zOrderIndex[id] ?? -1;
       if (z > bestZ) {
         bestZ = z;
-        best = node.id;
+        best = id;
+      }
+    }
+
+    // Transform-aware pass for nodes whose `localTransform` moved them
+    // off their indexed position. Iterates only the (typically tiny)
+    // set of transformed nodes and uses `worldBounds` — which honours
+    // the live transform — for containment.
+    for (final id in _transformedNodeIds) {
+      final node = _selectableNodes[id];
+      if (node == null) continue;
+      // Already covered by the non-stroke loop above; skip to avoid
+      // double work.
+      if (_nonStrokeSelectableIds.contains(id)) continue;
+      final parent = node.parent;
+      if (parent is LayerNode && (!parent.isVisible || parent.isLocked)) {
+        continue;
+      }
+      if (!node.worldBounds.contains(worldPoint)) continue;
+      final z = _zOrderIndex[id] ?? -1;
+      if (z > bestZ) {
+        bestZ = z;
+        best = id;
       }
     }
     return best;
@@ -1749,26 +2928,44 @@ class FlueraCanvasState extends State<FlueraCanvas>
   Set<NodeId> _hitTestIdsInRect(Rect worldRect) {
     final out = <NodeId>{};
 
-    // Strokes via the RTree.
+    // Strokes via the RTree. Skip transformed strokes — their indexed
+    // bounds are at the pre-transform position and the
+    // transform-aware pass below picks them up at the visual one.
     final strokeCandidates = _spatialIndex.queryVisible(worldRect, margin: 0);
     for (final s in strokeCandidates) {
       final node = _strokeToNode[s];
       if (node == null) continue;
+      if (_transformedNodeIds.contains(node.id)) continue;
       final parent = node.parent;
-      if (parent is LayerNode &&
-          (!parent.isVisible || parent.isLocked)) continue;
+      if (parent is LayerNode && (!parent.isVisible || parent.isLocked)) {
+        continue;
+      }
       out.add(node.id);
     }
 
-    // Non-stroke nodes: linear scan of the selectable index.
-    for (final entry in _selectableNodes.entries) {
-      final node = entry.value;
-      if (node is CanvasStrokeNode) continue;
+    // Non-stroke nodes: iterate ONLY the non-stroke subset.
+    for (final id in _nonStrokeSelectableIds) {
+      final node = _selectableNodes[id];
+      if (node == null) continue;
       final parent = node.parent;
-      if (parent is LayerNode &&
-          (!parent.isVisible || parent.isLocked)) continue;
+      if (parent is LayerNode && (!parent.isVisible || parent.isLocked)) {
+        continue;
+      }
       if (!node.worldBounds.overlaps(worldRect)) continue;
-      out.add(node.id);
+      out.add(id);
+    }
+
+    // Transform-aware pass for moved/rotated strokes.
+    for (final id in _transformedNodeIds) {
+      final node = _selectableNodes[id];
+      if (node == null) continue;
+      if (_nonStrokeSelectableIds.contains(id)) continue;
+      final parent = node.parent;
+      if (parent is LayerNode && (!parent.isVisible || parent.isLocked)) {
+        continue;
+      }
+      if (!node.worldBounds.overlaps(worldRect)) continue;
+      out.add(id);
     }
     return out;
   }
@@ -1780,6 +2977,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
     required SelectionHandle? handle,
     required Offset anchor,
     required Rect bounds,
+    Matrix4? frame,
   }) {
     final ids = _selectionController.value.ids;
     final before = <NodeId, Matrix4>{};
@@ -1797,8 +2995,32 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _transformHandle = handle;
     _transformAnchorWorld = anchor;
     _transformOriginalBounds = bounds;
+    _transformOriginalFrame = frame ?? Matrix4.identity();
     _transformBeforeMatrices = before;
     _transformTargets = targets;
+  }
+
+  /// Map a world-space pointer into the OBB's local frame so handle
+  /// hit-tests and scale math operate on the un-rotated rect.
+  /// `frame` is identity for multi-node / un-rotated selections, in
+  /// which case this is a no-op.
+  Offset _worldToFrameLocal(Offset world, Matrix4 frame) {
+    if (frame.isIdentity()) return world;
+    final inv = Matrix4.inverted(frame);
+    return MatrixUtils.transformPoint(inv, world);
+  }
+
+  /// Express a local-space delta `D` in world space by conjugating
+  /// through the OBB frame: `frame × D × frame⁻¹`. When `frame` is
+  /// identity this is a no-op (returns `D` unchanged), so the
+  /// multi-node / un-rotated path stays bit-for-bit identical to the
+  /// pre-OBB behaviour.
+  Matrix4 _conjugateFrame(Matrix4 localDelta, Matrix4 frame) {
+    if (frame.isIdentity()) return localDelta;
+    final inv = Matrix4.inverted(frame);
+    return frame.clone()
+      ..multiply(localDelta)
+      ..multiply(inv);
   }
 
   void _applyTransform(Offset pointer, {bool modifierActive = false}) {
@@ -1806,43 +3028,90 @@ class FlueraCanvasState extends State<FlueraCanvas>
     final before = _transformBeforeMatrices;
     final anchor = _transformAnchorWorld;
     final bounds = _transformOriginalBounds;
+    final frame = _transformOriginalFrame ?? Matrix4.identity();
     if (mode == null || before == null || anchor == null || bounds == null) {
       return;
     }
+    // Move stays in world space — translation commutes with the OBB
+    // frame and the user expects the body-drag to follow the pointer
+    // directly. Scale / rotate operate in the OBB's *local* frame so
+    // grabbing a corner of a rotated image scales along the image's
+    // own axes instead of the screen's. The local-space delta is then
+    // re-expressed in world space via `frame × delta_local × frame⁻¹`
+    // before being pre-multiplied onto each target's `localTransform`.
     Matrix4 delta;
     switch (mode) {
       case TransformMode.move:
-        delta = TransformMath.translation(
-          pointer.dx - anchor.dx,
-          pointer.dy - anchor.dy,
-          axisLock: modifierActive,
-        );
+        var dx = pointer.dx - anchor.dx;
+        var dy = pointer.dy - anchor.dy;
+        if (modifierActive) {
+          // Axis-lock: snap to dominant axis (Shift convention).
+          if (dx.abs() >= dy.abs()) {
+            dy = 0;
+          } else {
+            dx = 0;
+          }
+        }
+        // Snap-to-grid + smart guides apply ONLY for body-drag move
+        // (no handle), and only when the underlying selection has at
+        // least one node — both gated below by `_computeMoveSnap`.
+        // Skip when modifier (axis-lock) is active so the user has a
+        // clean override path.
+        if (!modifierActive) {
+          final snap = _computeMoveSnap(dx, dy, bounds, frame);
+          dx = snap.dx;
+          dy = snap.dy;
+        } else {
+          _activeGuides = const <SmartGuideLine>[];
+        }
+        delta = TransformMath.translation(dx, dy);
         break;
       case TransformMode.scaleCorner:
+        final localPointer = _worldToFrameLocal(pointer, frame);
         final r = TransformMath.cornerScale(
           originalBounds: bounds,
           grabbed: _transformHandle!,
-          pointer: pointer,
+          pointer: localPointer,
           uniform: !modifierActive,
         );
-        delta = TransformMath.scaleAroundAnchor(r.sx, r.sy, r.anchor);
+        final localDelta = TransformMath.scaleAroundAnchor(
+          r.sx,
+          r.sy,
+          r.anchor,
+        );
+        delta = _conjugateFrame(localDelta, frame);
         break;
       case TransformMode.scaleEdge:
+        final localPointer = _worldToFrameLocal(pointer, frame);
         final r = TransformMath.edgeScale(
           originalBounds: bounds,
           grabbed: _transformHandle!,
-          pointer: pointer,
+          pointer: localPointer,
         );
-        delta = TransformMath.scaleAroundAnchor(r.sx, r.sy, r.anchor);
+        final localDelta = TransformMath.scaleAroundAnchor(
+          r.sx,
+          r.sy,
+          r.anchor,
+        );
+        delta = _conjugateFrame(localDelta, frame);
         break;
       case TransformMode.rotate:
+        // Rotation is around the visual center of the OBB. Using the
+        // local-frame pivot keeps the math identical to the AABB
+        // case when frame is identity.
+        final localAnchor = _worldToFrameLocal(anchor, frame);
+        final localPointer = _worldToFrameLocal(pointer, frame);
         final theta = TransformMath.rotationDelta(
           center: bounds.center,
-          anchor: anchor,
-          pointer: pointer,
+          anchor: localAnchor,
+          pointer: localPointer,
           snap15: modifierActive,
         );
-        delta = TransformMath.rotationAroundPivot(theta, bounds.center);
+        final localDelta = TransformMath.rotationAroundPivot(
+          theta,
+          bounds.center,
+        );
+        delta = _conjugateFrame(localDelta, frame);
         break;
     }
     // Iterate the cached selection set (S items, typically 1-10)
@@ -1853,11 +3122,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
       for (final node in targets) {
         final m0 = before[node.id];
         if (m0 == null) continue;
-        node.localTransform = delta.clone()..multiply(m0);
-        // Direct field write bypasses the cached worldTransform /
-        // worldBounds; explicit invalidation ensures the selection
-        // painter sees the up-to-date geometry on the very next paint.
-        node.invalidateTransformCache();
+        // Funnel through `_writeLocalTransform` so the painter
+        // fast-path counter (`_nodesWithTransform`) stays in sync
+        // with the identity / non-identity transition.
+        _writeLocalTransform(node, delta.clone()..multiply(m0));
       }
     }
     _refreshSelectionBoundsAfterTransform();
@@ -1889,9 +3157,158 @@ class FlueraCanvasState extends State<FlueraCanvas>
         acc = acc == null ? b : acc.expandToInclude(b);
       }
     }
+    final aabb = acc ?? Rect.zero;
     _selectionController.set(
-      _selectionController.value.copyWith(bounds: acc ?? Rect.zero),
+      _selectionController.value.copyWith(
+        bounds: aabb,
+        frameRect: _frameRectFromIds(ids, aabb),
+        frameTransform: _frameTransformFromIds(ids),
+      ),
     );
+  }
+
+  /// Apply snap-to-grid + smart-guides correction to a raw move
+  /// delta `(dx, dy)`. Returns the (possibly-shifted) delta. Side
+  /// effect: writes [_activeGuides] with the visual lines to draw
+  /// while the snap is locked. Both behaviours are gated by the
+  /// widget props; with both off this is a no-op that just clears
+  /// the guides.
+  Offset _computeMoveSnap(double dx, double dy, Rect bounds, Matrix4 frame) {
+    final wantsGrid = widget.snapToGrid > 0;
+    final wantsGuides = widget.smartGuidesEnabled;
+    if (!wantsGrid && !wantsGuides) {
+      _activeGuides = const <SmartGuideLine>[];
+      return Offset(dx, dy);
+    }
+    // Compute the dragged frame's 9 anchor points in world space
+    // AFTER the raw delta, so snap math operates on the proposed
+    // post-drag position.
+    Offset toWorld(Offset local) {
+      final shifted = Offset(local.dx + dx, local.dy + dy);
+      if (frame.isIdentity()) return shifted;
+      return MatrixUtils.transformPoint(frame, shifted);
+    }
+
+    final anchorsWorld = <Offset>[
+      toWorld(bounds.topLeft),
+      toWorld(Offset(bounds.center.dx, bounds.top)),
+      toWorld(bounds.topRight),
+      toWorld(Offset(bounds.right, bounds.center.dy)),
+      toWorld(bounds.bottomRight),
+      toWorld(Offset(bounds.center.dx, bounds.bottom)),
+      toWorld(bounds.bottomLeft),
+      toWorld(Offset(bounds.left, bounds.center.dy)),
+      toWorld(bounds.center),
+    ];
+
+    final tolerance = widget.smartGuidesTolerancePx / _controller.scale;
+    var snapDx = 0.0;
+    var snapDy = 0.0;
+    var bestX = tolerance;
+    var bestY = tolerance;
+    final guides = <SmartGuideLine>[];
+
+    // ── Grid snap ────────────────────────────────────────────────
+    if (wantsGrid) {
+      final g = widget.snapToGrid;
+      for (final a in anchorsWorld) {
+        final gx = (a.dx / g).round() * g;
+        final gy = (a.dy / g).round() * g;
+        final dxToGrid = gx - a.dx;
+        final dyToGrid = gy - a.dy;
+        if (dxToGrid.abs() < bestX) {
+          bestX = dxToGrid.abs();
+          snapDx = dxToGrid;
+        }
+        if (dyToGrid.abs() < bestY) {
+          bestY = dyToGrid.abs();
+          snapDy = dyToGrid;
+        }
+      }
+    }
+
+    // ── Smart guides ─────────────────────────────────────────────
+    if (wantsGuides) {
+      // Don't align against the nodes that ARE the dragged selection.
+      final selectedIds = _selectionController.value.ids;
+      // Collect every visible non-selected node's 9 anchors.
+      final candidateAnchors = <Offset>[];
+      // Track the bbox extents so we can clip the guide line to a
+      // reasonable on-screen range (no infinite lines).
+      var minY = double.infinity;
+      var maxY = double.negativeInfinity;
+      var minX = double.infinity;
+      var maxX = double.negativeInfinity;
+      for (final entry in _selectableNodes.entries) {
+        if (selectedIds.contains(entry.key)) continue;
+        final node = entry.value;
+        final parent = node.parent;
+        if (parent is LayerNode && (!parent.isVisible || parent.isLocked)) {
+          continue;
+        }
+        final wb = node.worldBounds;
+        if (wb.isEmpty) continue;
+        candidateAnchors.add(wb.topLeft);
+        candidateAnchors.add(Offset(wb.center.dx, wb.top));
+        candidateAnchors.add(wb.topRight);
+        candidateAnchors.add(Offset(wb.right, wb.center.dy));
+        candidateAnchors.add(wb.bottomRight);
+        candidateAnchors.add(Offset(wb.center.dx, wb.bottom));
+        candidateAnchors.add(wb.bottomLeft);
+        candidateAnchors.add(Offset(wb.left, wb.center.dy));
+        candidateAnchors.add(wb.center);
+        if (wb.top < minY) minY = wb.top;
+        if (wb.bottom > maxY) maxY = wb.bottom;
+        if (wb.left < minX) minX = wb.left;
+        if (wb.right > maxX) maxX = wb.right;
+      }
+
+      Offset? matchX;
+      Offset? matchY;
+      for (final my in anchorsWorld) {
+        for (final other in candidateAnchors) {
+          final ddx = other.dx - my.dx;
+          final ddy = other.dy - my.dy;
+          if (ddx.abs() < bestX) {
+            bestX = ddx.abs();
+            snapDx = ddx;
+            matchX = other;
+          }
+          if (ddy.abs() < bestY) {
+            bestY = ddy.abs();
+            snapDy = ddy;
+            matchY = other;
+          }
+        }
+      }
+
+      // Emit guide lines for the chosen alignments. The guide
+      // extends across the bbox of all candidate nodes plus the
+      // dragged selection.
+      if (matchX != null) {
+        guides.add(
+          SmartGuideLine(
+            axis: Axis.vertical,
+            position: matchX.dx,
+            rangeStart: math.min(minY.isFinite ? minY : matchX.dy, matchX.dy),
+            rangeEnd: math.max(maxY.isFinite ? maxY : matchX.dy, matchX.dy),
+          ),
+        );
+      }
+      if (matchY != null) {
+        guides.add(
+          SmartGuideLine(
+            axis: Axis.horizontal,
+            position: matchY.dy,
+            rangeStart: math.min(minX.isFinite ? minX : matchY.dx, matchY.dx),
+            rangeEnd: math.max(maxX.isFinite ? maxX : matchY.dx, matchY.dx),
+          ),
+        );
+      }
+    }
+
+    _activeGuides = guides;
+    return Offset(dx + snapDx, dy + snapDy);
   }
 
   void _endTransform() {
@@ -1931,8 +3348,254 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _transformHandle = null;
     _transformAnchorWorld = null;
     _transformOriginalBounds = null;
+    _transformOriginalFrame = null;
     _transformBeforeMatrices = null;
     _transformTargets = null;
+    _activeGuides = const <SmartGuideLine>[];
+  }
+
+  /// Clone every selected node, offset by [offset] (default 20×20
+  /// world px), append to the active layer, replace the selection
+  /// with the clones. Single undo step (stack of `_AddLayerChildOp`
+  /// pushes coalesced via the history's atomic batch). Returns the
+  /// number of duplicated nodes (0 when the selection is empty).
+  ///
+  /// Bound to **Ctrl/Cmd+D** by default.
+  ///
+  /// ```dart
+  /// canvasKey.currentState?.duplicateSelection();
+  /// // …or with a custom offset:
+  /// canvasKey.currentState?.duplicateSelection(offset: const Offset(40, 0));
+  /// ```
+  int duplicateSelection({Offset offset = const Offset(20, 20)}) {
+    final sel = _selectionController.value;
+    if (sel.isEmpty) return 0;
+    final ids = sel.ids.toList(growable: false);
+    final clones = <CanvasNode>[];
+    for (final id in ids) {
+      final node = _selectableNodes[id];
+      if (node == null) continue;
+      final clone = node.cloneInternal();
+      // Offset the clone via translation. Compose `T(offset) ·
+      // node.localTransform` so the clone sits next to the original
+      // in world space regardless of the source's own transform.
+      final t =
+          Matrix4.identity()..translateByDouble(offset.dx, offset.dy, 0, 1);
+      clone.localTransform = t..multiply(clone.localTransform);
+      clone.invalidateTransformCache();
+      clones.add(clone);
+    }
+    if (clones.isEmpty) return 0;
+
+    // Route every clone through the appropriate add-* helper so the
+    // selectable index, history and notify-tick all stay in sync.
+    final newIds = <NodeId>{};
+    for (final clone in clones) {
+      if (clone is CanvasStrokeNode) {
+        _strokeToNode[clone.stroke] = clone;
+        _internalInsertStrokeAt(_strokes.length, clone.stroke);
+        _history?.push(_AddOp(clone.stroke, _strokes.length - 1));
+      } else if (clone is ImageNode) {
+        addImageNode(clone);
+      } else if (clone is TextNode) {
+        addTextNode(clone);
+      } else {
+        // Generic CanvasNode — direct attach + history.
+        final index = _activeLayer.children.length;
+        _activeLayer.add(clone);
+        _registerSelectable(clone);
+        _history?.push(_AddLayerChildOp(clone, _activeLayer.id, index));
+      }
+      newIds.add(clone.id);
+    }
+    _bumpLayerVersion(_activeLayer.id);
+    _selectionController.set(_selectionFromIds(newIds));
+    _commitTick.notify();
+    return clones.length;
+  }
+
+  /// Move [id]'s scene-graph node to the END of its parent layer's
+  /// children list — top of the Z-stack within that layer. No-op
+  /// when [id] is unknown or already at the end. Single undo step.
+  ///
+  /// ```dart
+  /// for (final id in canvasKey.currentState!.selection.ids) {
+  ///   canvasKey.currentState!.bringToFront(id);
+  /// }
+  /// ```
+  bool bringToFront(NodeId id) => _reorderChildToEdge(id, toFront: true);
+
+  /// Move [id]'s scene-graph node to the START of its parent layer's
+  /// children list — bottom of the Z-stack within that layer. No-op
+  /// when [id] is unknown or already at the start. Single undo step.
+  ///
+  /// ```dart
+  /// canvasKey.currentState?.sendToBack(stickerId);
+  /// ```
+  bool sendToBack(NodeId id) => _reorderChildToEdge(id, toFront: false);
+
+  bool _reorderChildToEdge(NodeId id, {required bool toFront}) {
+    final node = _selectableNodes[id];
+    if (node == null) return false;
+    final parent = node.parent;
+    if (parent is! LayerNode) return false;
+    final idx = parent.children.indexOf(node);
+    if (idx < 0) return false;
+    final targetIdx = toFront ? parent.children.length - 1 : 0;
+    if (idx == targetIdx) return false;
+    parent.remove(node);
+    if (toFront) {
+      parent.add(node);
+    } else {
+      parent.insertAt(0, node);
+    }
+    _markDirty(node.worldBounds);
+    _bumpLayerVersion(parent.id);
+    _rebuildSelectableIndex();
+    _history?.push(_ReorderChildOp(id, parent.id, idx, toFront));
+    _commitTick.notify();
+    return true;
+  }
+
+  /// Wrap every selected node in a fresh [GroupNode], attached to
+  /// the layer at the position of the front-most selected node.
+  /// The new group becomes the active selection so the user can
+  /// immediately drag / rotate / scale the bundle as one unit.
+  /// Single undo step. Returns the group's id, or `null` when the
+  /// selection is empty / single-node / spans multiple layers.
+  ///
+  /// Tap on any group member afterwards selects the group as a
+  /// single unit (Figma / Sketch convention). Use [ungroupSelection]
+  /// to break the bundle apart.
+  ///
+  /// ```dart
+  /// // user has 3 strokes selected via marquee or shift-click
+  /// final groupId = canvasKey.currentState?.groupSelection();
+  /// ```
+  NodeId? groupSelection() {
+    final sel = _selectionController.value;
+    if (sel.length < 2) return null;
+    // Snapshot every selected node + its parent layer + its index.
+    // We require all selected nodes to share the same layer (cross-
+    // layer grouping would silently move children around).
+    final entries = <_GroupMember>[];
+    LayerNode? sharedLayer;
+    int frontMostIdx = -1;
+    for (final id in sel.ids) {
+      final node = _selectableNodes[id];
+      if (node == null) continue;
+      final parent = node.parent;
+      if (parent is! LayerNode) return null;
+      sharedLayer ??= parent;
+      if (!identical(parent, sharedLayer)) return null;
+      final idx = parent.children.indexOf(node);
+      if (idx < 0) return null;
+      entries.add(_GroupMember(node: node, parent: parent, index: idx));
+      if (idx > frontMostIdx) frontMostIdx = idx;
+    }
+    if (sharedLayer == null || entries.isEmpty) return null;
+
+    // Promote `sharedLayer` to non-null for the rest of the body —
+    // null was only possible before any entry was processed and
+    // we've already returned early in that case.
+    final layer = sharedLayer;
+    // Sort by current index (descending) so we remove from the END
+    // first — keeps the indices we still need stable.
+    entries.sort((a, b) => b.index.compareTo(a.index));
+    for (final e in entries) {
+      layer.remove(e.node);
+    }
+    // Re-evaluate front-most slot after removals — `frontMostIdx`
+    // may now exceed the layer length.
+    final insertAt = frontMostIdx.clamp(0, layer.children.length);
+
+    final group = GroupNode(id: NodeId(generateUid()), name: 'Group');
+    // Re-add children in their original Z-order (entries was sorted
+    // desc; iterate ascending so first child is bottom of group's
+    // own Z-stack — preserves the visual Z within the group).
+    for (final e in entries.reversed) {
+      group.add(e.node);
+    }
+    if (insertAt >= layer.children.length) {
+      layer.add(group);
+    } else {
+      layer.insertAt(insertAt, group);
+    }
+
+    _bumpLayerVersion(layer.id);
+    _markDirty(group.worldBounds);
+    _rebuildSelectableIndex();
+    _selectionController.set(_selectionFromIds({group.id}));
+    _history?.push(
+      _GroupOp(
+        group: group,
+        layer: layer,
+        members: entries,
+        insertedAt: insertAt,
+      ),
+    );
+    _commitTick.notify();
+    return group.id;
+  }
+
+  /// For every selected [GroupNode], move its children back to the
+  /// parent layer at the group's index, preserving their relative
+  /// Z-order, then remove the now-empty group. Selection swings to
+  /// the freed children. No-op when no group is selected. Single
+  /// undo step covers every group ungrouped in one call.
+  int ungroupSelection() {
+    final sel = _selectionController.value;
+    if (sel.isEmpty) return 0;
+    final ops = <_UngroupOp>[];
+    final freedIds = <NodeId>{};
+    var count = 0;
+    for (final id in sel.ids) {
+      final node = _selectableNodes[id];
+      if (node is! GroupNode) continue;
+      final layer = node.parent;
+      if (layer is! LayerNode) continue;
+      final groupIdx = layer.children.indexOf(node);
+      if (groupIdx < 0) continue;
+      // Snapshot children BEFORE we mutate. Then properly DETACH
+      // each child from the group (clears the group's id index +
+      // child.parent ref) so re-parenting under the layer doesn't
+      // leave the group with stale bookkeeping. The undo path
+      // re-adds them to the still-allocated `node` group, which
+      // would otherwise hit a "duplicate child id" assert.
+      final snapshot = List<CanvasNode>.from(node.children);
+      for (final c in snapshot) {
+        node.remove(c);
+      }
+      layer.remove(node);
+      // Re-insert children into the layer at the group's slot.
+      // Snapshot is in original Z-order; iterate ascending so the
+      // first child ends up at `groupIdx` (bottom of the freed
+      // bundle), preserving relative Z within the group.
+      for (int i = 0; i < snapshot.length; i++) {
+        layer.insertAt(groupIdx + i, snapshot[i]);
+        freedIds.add(snapshot[i].id);
+      }
+      ops.add(
+        _UngroupOp(
+          group: node,
+          layer: layer,
+          groupIndex: groupIdx,
+          formerChildIds: snapshot.map((c) => c.id).toList(),
+        ),
+      );
+      _bumpLayerVersion(layer.id);
+      count++;
+    }
+    if (count == 0) return 0;
+    _rebuildSelectableIndex();
+    if (freedIds.isNotEmpty) {
+      _selectionController.set(_selectionFromIds(freedIds));
+    } else {
+      _selectionController.clear();
+    }
+    _history?.push(_UngroupBatchOp(ops));
+    _commitTick.notify();
+    return count;
   }
 
   /// Mirror every selected node around the selection bounds' [axis].
@@ -1946,9 +3609,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
     final after = <NodeId, Matrix4>{};
     final pivot =
         axis == Axis.horizontal ? sel.bounds.center.dx : sel.bounds.center.dy;
-    final delta = axis == Axis.horizontal
-        ? TransformMath.mirrorH(pivot)
-        : TransformMath.mirrorV(pivot);
+    final delta =
+        axis == Axis.horizontal
+            ? TransformMath.mirrorH(pivot)
+            : TransformMath.mirrorV(pivot);
     var count = 0;
     // Iterate the unified selectable index — picks up strokes,
     // images, and any future selectable node type that's part of the
@@ -1958,8 +3622,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
       if (node == null) continue;
       before[id] = node.localTransform.clone();
       final newM = delta.clone()..multiply(node.localTransform);
-      node.localTransform = newM;
-      node.invalidateTransformCache();
+      _writeLocalTransform(node, newM);
       after[id] = newM.clone();
       count++;
     }
@@ -1983,8 +3646,98 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _activeLayer.add(node);
     _registerSelectable(node);
     _history?.push(_AddLayerChildOp(node, _activeLayer.id, index));
+    _bumpLayerVersion(_activeLayer.id);
     _commitTick.notify();
     return node;
+  }
+
+  // ── Shape API (Phase 0.9.0) ───────────────────────────────────────────────
+
+  /// Append [node] to the active layer as a single undoable step. Used
+  /// by the commercial `fluera_canvas_gpu` shape-recognition pipeline
+  /// to materialize a `ShapeRecognitionResult` into a clean primitive
+  /// after the user accepts a snap suggestion. Also useful for paste /
+  /// drag-drop of shape clipboard payloads.
+  ShapeNode addShapeNode(ShapeNode node) {
+    final index = _activeLayer.children.length;
+    _activeLayer.add(node);
+    _registerSelectable(node);
+    _history?.push(_AddLayerChildOp(node, _activeLayer.id, index));
+    _bumpLayerVersion(_activeLayer.id);
+    _commitTick.notify();
+    return node;
+  }
+
+  // ── Text API (Phase 0.8.0) ────────────────────────────────────────────────
+
+  /// Append [node] to the active layer as a single undoable step. The
+  /// canvas-level seam underneath `FlueraTextEditor.start(...)`; also
+  /// useful for paste / clipboard / programmatic-text flows.
+  ///
+  /// ```dart
+  /// final node = TextNode(
+  ///   element: DigitalTextElement(text: 'Hello', position: Offset(120, 80)),
+  /// );
+  /// canvasKey.currentState!.addTextNode(node);
+  /// ```
+  ///
+  /// To open the inline editor for live caret editing instead of
+  /// committing static text, use `CanvasTool.text` and let the user
+  /// tap — `FlueraTextEditor` calls this method internally.
+  TextNode addTextNode(TextNode node) {
+    final index = _activeLayer.children.length;
+    _activeLayer.add(node);
+    _registerSelectable(node);
+    _history?.push(_AddLayerChildOp(node, _activeLayer.id, index));
+    _bumpLayerVersion(_activeLayer.id);
+    _commitTick.notify();
+    return node;
+  }
+
+  /// Detach a TextNode that was just added by [addTextNode] and
+  /// drop the matching `_AddLayerChildOp` from the top of the undo
+  /// stack — used by `FlueraTextEditor` when the user dismisses the
+  /// editor on a fresh node without typing anything. Surgical:
+  /// touches only the matching op, never `state.undo()` (which would
+  /// nuke unrelated history).
+  void removeFreshTextNode(TextNode node) {
+    final layer = node.parent;
+    if (layer is! LayerNode) return;
+    layer.remove(node);
+    _unregisterSelectable(node.id);
+    _history?.popMatching(
+      (op) => op is _AddLayerChildOp && identical(op.node, node),
+    );
+    _commitTick.notify();
+  }
+
+  /// Replace the [DigitalTextElement] of an existing [TextNode] in
+  /// place, pushing a single `_UpdateTextOp` so undo restores the
+  /// previous element exactly. Returns `true` when the node was found
+  /// and updated, `false` when [id] does not point to a TextNode.
+  bool updateTextElement(NodeId id, DigitalTextElement next) {
+    final node = _selectableNodes[id];
+    if (node is! TextNode) return false;
+    final before = node.textElement;
+    if (identical(before, next)) return false;
+    node.textElement = next;
+    // Force layout re-measure on the next paint by clearing the
+    // cached size — `DigitalTextPainter` will re-fill it on first
+    // paint since the underlying TextPainter inside
+    // `DigitalTextElement` is invalidated through `copyWith`.
+    node.cachedTextSize = Size.zero;
+    _history?.push(_UpdateTextOp(id, before, next));
+    // Bump the parent layer's content version so the LayerPictureCache
+    // discards its cached `ui.Picture` (which still draws the old
+    // text). Without this, the painter keeps replaying the stale
+    // cache and the new text only appears the next time some other
+    // mutation (stroke push, layer change) bumps the version.
+    final parent = node.parent;
+    if (parent is LayerNode) {
+      _bumpLayerVersion(parent.id);
+    }
+    _commitTick.notify();
+    return true;
   }
 
   /// Test-only view of the selectable-node index. Mirrors the
@@ -1993,6 +3746,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// invariants after mutations.
   @visibleForTesting
   Set<NodeId> get debugSelectableIds => _selectableNodes.keys.toSet();
+
+  /// Look up a selectable node (stroke, image, text, …) by [id]
+  /// without exposing the private index. Returns `null` when the id
+  /// is unknown or the node is no longer attached.
+  CanvasNode? findNode(NodeId id) => _selectableNodes[id];
 
   /// Test-only Z-order snapshot. Higher value = front-most. Holes are
   /// allowed (single-insert paths bump the max; rebuilds compact).
@@ -2020,7 +3778,8 @@ class FlueraCanvasState extends State<FlueraCanvas>
   // registered `LayerCompositor`. Free core falls back to
   // `flueraMode.closestStandard` when no compositor is registered.
 
-  final Map<NodeId, FlueraBlendMode> _extendedBlendModes = <NodeId, FlueraBlendMode>{};
+  final Map<NodeId, FlueraBlendMode> _extendedBlendModes =
+      <NodeId, FlueraBlendMode>{};
 
   /// Per-layer mask images (`ui.Image` in straight-alpha space, R-channel
   /// is read as the canonical alpha by the GPU compositor and as
@@ -2095,6 +3854,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
     if (previous != null && previous != mask) {
       previous.dispose();
     }
+    _bumpLayerVersion(id);
     _commitTick.notify();
     return true;
   }
@@ -2111,6 +3871,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
       _extendedBlendModes.remove(id);
       layer.blendMode = mode.flutterBlendMode!;
     }
+    _bumpLayerVersion(id);
     _commitTick.notify();
     return true;
   }
@@ -2148,8 +3909,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
       isLocked: locked,
     );
     _rootLayer.add(layer);
-    final insertedIndex =
-        _rootLayer.children.whereType<LayerNode>().toList().indexOf(layer);
+    final insertedIndex = _rootLayer.children
+        .whereType<LayerNode>()
+        .toList()
+        .indexOf(layer);
     _history?.push(_AddLayerOp(layer, insertedIndex));
     _commitTick.notify();
     return layer;
@@ -2226,6 +3989,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
     layer.opacity = opacity;
     if (before != layer.opacity) {
       _history?.push(_LayerOpacityOp(id, before, layer.opacity));
+      _bumpLayerVersion(id);
     }
     _commitTick.notify();
     return true;
@@ -2240,6 +4004,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
     layer.isVisible = visible;
     if (before != visible) {
       _history?.push(_LayerVisibleOp(id, before, visible));
+      _bumpLayerVersion(id);
     }
     _commitTick.notify();
     return true;
@@ -2254,6 +4019,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
     layer.isLocked = locked;
     if (before != locked) {
       _history?.push(_LayerLockedOp(id, before, locked));
+      // Lock state doesn't change pixels but it gates draw / erase
+      // behaviour; bumping the version is harmless and keeps the
+      // cache invariant trivially correct.
+      _bumpLayerVersion(id);
     }
     _commitTick.notify();
     return true;
@@ -2271,6 +4040,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
     layer.blendMode = blendMode;
     if (before != blendMode) {
       _history?.push(_LayerBlendModeOp(id, before, blendMode));
+      _bumpLayerVersion(id);
     }
     _commitTick.notify();
     return true;
@@ -2414,7 +4184,9 @@ class FlueraCanvasState extends State<FlueraCanvas>
     // (upper is gone; lower keeps its own mode unchanged).
     _extendedBlendModes.remove(upper.id);
 
-    _history?.push(_MergeDownOp(upper, upperIdx, flatSnapshots, activeWasUpper));
+    _history?.push(
+      _MergeDownOp(upper, upperIdx, flatSnapshots, activeWasUpper),
+    );
     _commitTick.notify();
     return true;
   }
@@ -2465,11 +4237,9 @@ class FlueraCanvasState extends State<FlueraCanvas>
           _strokeToNode.remove(snap.stroke);
         }
       }
-      snapshots.add(_FlattenLayerSnapshot(
-        layer: src,
-        originalIndex: i,
-        strokes: srcSnaps,
-      ));
+      snapshots.add(
+        _FlattenLayerSnapshot(layer: src, originalIndex: i, strokes: srcSnaps),
+      );
       // Track extended-mode entry so undo can re-register it.
       final extOnSrc = _extendedBlendModes.remove(src.id);
       if (extOnSrc != null) flueraOnDrop[src.id] = extOnSrc;
@@ -2593,11 +4363,9 @@ class FlueraCanvasState extends State<FlueraCanvas>
       if (c is CanvasStrokeNode) {
         final flatIdx = indexByStroke[c.stroke] ?? -1;
         if (flatIdx >= 0) {
-          out.add(_LayerStrokeSnapshot(
-            stroke: c.stroke,
-            node: c,
-            flatIndex: flatIdx,
-          ));
+          out.add(
+            _LayerStrokeSnapshot(stroke: c.stroke, node: c, flatIndex: flatIdx),
+          );
         }
       }
     }
@@ -2624,9 +4392,9 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// history, the background pattern and the live stroke are runtime
   /// state and are NOT included.
   Uint8List toBytes() => CanvasSerializer.encodeBytesFromLayers(
-        _rootLayer,
-        extendedCodes: _extendedBlendModes,
-      );
+    _rootLayer,
+    extendedCodes: _extendedBlendModes,
+  );
 
   /// Replace the current scene with the layers decoded from [bytes].
   /// The undo history is cleared. Throws [FormatException] on bad input.
@@ -2637,6 +4405,24 @@ class FlueraCanvasState extends State<FlueraCanvas>
   void loadFromBytes(Uint8List bytes) {
     final result = CanvasSerializer.decodeBytesFull(bytes);
     _replaceWithLayers(result.root, result.extendedCodes);
+    _hydrateImageBlobs(result.imageBlobs);
+  }
+
+  /// Kick off async decode of every image blob carried by a v4+ file.
+  /// `ImageNodePainter.decodeAndCache` registers the resulting
+  /// `ui.Image` in the process-wide cache; we trigger one repaint per
+  /// completed decode so the canvas re-renders with the freshly-bound
+  /// asset. Fire-and-forget on purpose — `loadFromBytes` keeps a sync
+  /// signature and the visual delay is at most one frame per image.
+  void _hydrateImageBlobs(Map<String, Uint8List> blobs) {
+    if (blobs.isEmpty) return;
+    for (final entry in blobs.entries) {
+      ImageNodePainter.decodeAndCache(entry.key, entry.value).then((image) {
+        if (image == null) return;
+        if (!mounted) return;
+        _commitTick.notify();
+      });
+    }
   }
 
   /// Serialize the current stroke list to a JSON string. Larger than
@@ -2693,11 +4479,13 @@ class FlueraCanvasState extends State<FlueraCanvas>
     // every existing reference to `_rootLayer` keeps pointing at a live
     // node. The serializer doesn't preserve the root's NodeId — only
     // the per-layer hierarchy below it — so adopting children is safe.
-    final loadedLayers =
-        loadedRoot.children.whereType<LayerNode>().toList(growable: false);
+    final loadedLayers = loadedRoot.children.whereType<LayerNode>().toList(
+      growable: false,
+    );
     // Drop our existing default layer(s) but keep `_rootLayer` itself.
-    final existing =
-        _rootLayer.children.whereType<LayerNode>().toList(growable: false);
+    final existing = _rootLayer.children.whereType<LayerNode>().toList(
+      growable: false,
+    );
     for (final l in existing) {
       _rootLayer.remove(l);
     }
@@ -2708,9 +4496,9 @@ class FlueraCanvasState extends State<FlueraCanvas>
       // Re-strip any stroke children: we own the flat-mirror invariant
       // and rebuild it via _internalInsertStrokeAt below, so the layer
       // arrives empty and we re-insert each stroke-node onto it.
-      final preloadedStrokes = l.children
-          .whereType<CanvasStrokeNode>()
-          .toList(growable: false);
+      final preloadedStrokes = l.children.whereType<CanvasStrokeNode>().toList(
+        growable: false,
+      );
       for (final n in preloadedStrokes) {
         l.remove(n);
       }
@@ -2757,31 +4545,232 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _history?.clear();
   }
 
-  /// Rasterize the current canvas (all strokes) into a PNG byte array sized
-  /// [width]×[height] pixels. Respects the current camera for WYSIWYG export.
+  /// Rasterize the canvas to a `ui.Image`, with infinite-canvas-aware
+  /// bounds resolution.
+  ///
+  /// **Bounds modes**:
+  /// - [FlueraExportBounds.viewport] (default, legacy) — rasterize
+  ///   exactly what the user sees on screen. Output dimensions =
+  ///   `width × height` (in logical pixels). `width` / `height` MUST
+  ///   be passed; `pixelRatio` and `padding` are ignored.
+  /// - [FlueraExportBounds.allContent] — rasterize the union of every
+  ///   visible node's `worldBounds`. Output dimensions are auto-computed
+  ///   from the content size × `pixelRatio`. Returns a 1×1 sentinel
+  ///   image when the canvas is empty.
+  /// - [FlueraExportBounds.selection] — rasterize the bounding rect of
+  ///   the current selection. Returns a 1×1 sentinel image when the
+  ///   selection is empty.
+  /// - [FlueraExportBounds.custom] — rasterize the world-space rect
+  ///   passed via [region].
+  ///
+  /// **Common parameters** (apply to non-viewport modes):
+  /// - [pixelRatio] (default `1.0`) — output is `worldRect × pixelRatio`
+  ///   pixels. Use `2.0` / `3.0` for HiDPI / print export.
+  /// - [padding] (default `0`, world-px) — extra margin around the
+  ///   resolved world rect before rasterising.
+  /// - [transparent] (default `false`) — when `true`, skip the
+  ///   solid-colour background fill AND any background pattern
+  ///   (grid / dotted / lined). Useful when exporting with a
+  ///   transparent PNG alpha channel.
   Future<ui.Image> renderToImage({
-    required int width,
-    required int height,
+    int? width,
+    int? height,
+    FlueraExportBounds bounds = FlueraExportBounds.viewport,
+    Rect? region,
+    double pixelRatio = 1.0,
+    double padding = 0,
+    bool transparent = false,
   }) async {
+    // Sanity clamp on pixelRatio. 0.001 would round subwoofer outputs
+    // to zero; > 32 with even a moderate viewport would allocate
+    // gigabytes (a 1920×1080 viewport at ratio 32 is 1.97 GB just for
+    // the bitmap). Hard cap at 32 — that's already 4×-print-DPI for a
+    // 1080p source.
+    if (pixelRatio < 0.05 || pixelRatio > 32.0) {
+      throw ArgumentError(
+        'renderToImage: pixelRatio $pixelRatio out of range [0.05, 32.0].',
+      );
+    }
+    // ── Resolve the world rect to rasterise + the output pixel size.
+    late Rect worldRect;
+    late int outW;
+    late int outH;
+    switch (bounds) {
+      case FlueraExportBounds.viewport:
+        if (width == null || height == null) {
+          throw ArgumentError(
+            'renderToImage(bounds: viewport, …) requires both `width` '
+            'and `height`.',
+          );
+        }
+        // Camera-aware: map the screen viewport back into world coords.
+        // The legacy code path bakes the camera transform into the
+        // canvas — we keep the same behaviour by snapshotting world
+        // coordinates that, after the scale/translate below, paint
+        // exactly the same pixels the user sees.
+        final scale = _controller.scale;
+        final off = _controller.offset;
+        worldRect = Rect.fromLTWH(
+          -off.dx / scale,
+          -off.dy / scale,
+          width / scale,
+          height / scale,
+        );
+        outW = width;
+        outH = height;
+        break;
+      case FlueraExportBounds.allContent:
+        var content = contentBoundsWorld;
+        if (content.isEmpty) {
+          // Sentinel: canvas is empty. Return a 1×1 transparent / bg
+          // image so callers don't have to special-case null.
+          return _emptyExportImage(transparent);
+        }
+        if (padding > 0) content = content.inflate(padding);
+        worldRect = content;
+        outW = math.max(1, (content.width * pixelRatio).round());
+        outH = math.max(1, (content.height * pixelRatio).round());
+        break;
+      case FlueraExportBounds.selection:
+        var sel = selectionBoundsWorld;
+        if (sel.isEmpty) {
+          return _emptyExportImage(transparent);
+        }
+        if (padding > 0) sel = sel.inflate(padding);
+        worldRect = sel;
+        outW = math.max(1, (sel.width * pixelRatio).round());
+        outH = math.max(1, (sel.height * pixelRatio).round());
+        break;
+      case FlueraExportBounds.custom:
+        if (region == null || region.isEmpty) {
+          throw ArgumentError(
+            'renderToImage(bounds: custom, …) requires a non-empty '
+            '`region` (world-space Rect).',
+          );
+        }
+        var r = region;
+        if (padding > 0) r = r.inflate(padding);
+        worldRect = r;
+        outW = math.max(1, (r.width * pixelRatio).round());
+        outH = math.max(1, (r.height * pixelRatio).round());
+        break;
+    }
+
+    // Reject pathological output sizes BEFORE allocating the texture
+    // (16 384 px is the GPU max on most platforms). A user request for
+    // 1 GB+ of bitmap is almost certainly a configuration bug.
+    const maxDim = 16384;
+    if (outW > maxDim || outH > maxDim) {
+      throw ArgumentError(
+        'renderToImage: requested output size $outW×$outH exceeds '
+        'GPU max ($maxDim per side). Lower pixelRatio or shrink region.',
+      );
+    }
+
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
-    // Reuse the same paint logic the live painter uses, but iterate
-    // every committed stroke (no viewport cull — the export must
-    // contain everything).
-    canvas.drawRect(
-      Offset.zero & Size(width.toDouble(), height.toDouble()),
-      Paint()..color = widget.background.fill,
-    );
-    canvas.save();
-    canvas.translate(_controller.offset.dx, _controller.offset.dy);
-    canvas.scale(_controller.scale);
-    widget.background.paint(canvas, Rect.largest, _controller.scale);
-    for (final s in _strokes) {
-      _drawStrokeWithTransform(canvas, s);
+
+    // Background fill + pattern (skip when caller wants transparency).
+    if (!transparent) {
+      canvas.drawRect(
+        Offset.zero & Size(outW.toDouble(), outH.toDouble()),
+        Paint()..color = widget.background.fill,
+      );
     }
+
+    // Map world coords directly onto the output bitmap. Order:
+    //   1. scale to fit world rect into output pixels,
+    //   2. translate so worldRect.topLeft sits at output (0, 0).
+    canvas.save();
+    canvas.scale(outW / worldRect.width, outH / worldRect.height);
+    canvas.translate(-worldRect.left, -worldRect.top);
+
+    if (!transparent) {
+      // Background pattern (grid / dotted / lined / paper) honours the
+      // exported world rect, not the camera-aligned full screen.
+      widget.background.paint(canvas, worldRect, outW / worldRect.width);
+    }
+
+    // Polymorphic walk: dispatch every layer's children through the
+    // same painters the on-screen committed painter uses, so image,
+    // text, shape and grouped nodes are honoured (the legacy
+    // implementation iterated `_strokes` only and silently dropped
+    // every non-stroke node).
+    _paintAllNodesInto(canvas);
+
     canvas.restore();
     final picture = recorder.endRecording();
-    return picture.toImage(width, height);
+    return picture.toImage(outW, outH);
+  }
+
+  /// 1×1 sentinel returned by `renderToImage` when the requested
+  /// bounds resolve to an empty rect (empty canvas / empty selection).
+  /// Lets callers safely await + decode the image without a null check.
+  Future<ui.Image> _emptyExportImage(bool transparent) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    if (!transparent) {
+      canvas.drawRect(
+        const Rect.fromLTWH(0, 0, 1, 1),
+        Paint()..color = widget.background.fill,
+      );
+    }
+    final picture = recorder.endRecording();
+    return picture.toImage(1, 1);
+  }
+
+  /// Walk every visible layer's children and dispatch each node to
+  /// its painter. Mirror of `_CommittedStrokesPainter._paintLayerChildren`
+  /// without the viewport cull and without the LayerPictureCache —
+  /// the export needs every node and a clean record (a stale cached
+  /// `ui.Picture` would leak).
+  void _paintAllNodesInto(Canvas canvas) {
+    for (final layer in _rootLayer.children.whereType<LayerNode>()) {
+      if (!layer.isVisible) continue;
+      final needsLayer =
+          layer.opacity < 1.0 || layer.blendMode != ui.BlendMode.srcOver;
+      if (needsLayer) {
+        canvas.saveLayer(
+          null,
+          Paint()
+            ..color = Color.fromRGBO(0, 0, 0, layer.opacity)
+            ..blendMode = layer.blendMode,
+        );
+      }
+      for (final child in layer.children) {
+        if (child is CanvasStrokeNode) {
+          _drawStrokeWithTransform(canvas, child.stroke);
+        } else if (child is ImageNode) {
+          ImageNodePainter.paint(canvas, child);
+        } else if (child is TextNode) {
+          paintTextNodeInto(canvas, child);
+        }
+        // Other CanvasNode subtypes (ShapeNode, GroupNode without
+        // text/image children) are not painted by the free core
+        // painter — they're scene-graph primitives consumed by the
+        // commercial canvas_gpu pipeline. Skip silently to keep the
+        // export deterministic.
+      }
+      if (needsLayer) {
+        canvas.restore();
+      }
+    }
+  }
+
+  /// Public seam for painting a [TextNode] at its current
+  /// `localTransform`. Used by [renderToImage] (via
+  /// [_paintAllNodesInto]) and by the on-screen painter
+  /// (`_CommittedStrokesPainter._paintTextNode`) — they MUST stay
+  /// pixel-identical so the export matches what the user sees.
+  void paintTextNodeInto(Canvas canvas, TextNode node) {
+    final tp = node.textElement.layoutPainter;
+    canvas.save();
+    canvas.transform(node.localTransform.storage);
+    tp.paint(canvas, node.textElement.position);
+    canvas.restore();
+    if (node.cachedTextSize != tp.size) {
+      node.cachedTextSize = tp.size;
+    }
   }
 
   /// Paint [s] into [canvas], honouring its scene-graph node's
@@ -2789,7 +4778,47 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// painter — the identity check spares a `save/transform/restore`
   /// triple for the >99% common case where strokes haven't been
   /// transformed yet.
+  /// Mutate [node]'s `localTransform`, invalidate its cache, and
+  /// keep [_nodesWithTransform] in sync with the identity-state
+  /// transition. Single funnel for every transform mutation
+  /// (`_applyTransform`, `mirrorSelection`, `_TransformNodesOp` undo /
+  /// redo, `_onDrawCancel` rollback) so the painter fast path stays
+  /// correct.
+  void _writeLocalTransform(CanvasNode node, Matrix4 newMatrix) {
+    // The node is leaving its previous worldBounds and arriving at a
+    // new one — both regions are dirty (the old slot needs to clear,
+    // the new slot needs to draw). Capture BEFORE invalidating so
+    // worldBounds reflects the pre-transform state on the first read.
+    _markDirty(node.worldBounds);
+    final wasIdentity = node.isIdentityTransform;
+    node.localTransform = newMatrix;
+    node.invalidateTransformCache();
+    _markDirty(node.worldBounds);
+    final parent = node.parent;
+    if (parent is LayerNode) {
+      _bumpLayerVersion(parent.id);
+    }
+    final nowIdentity = node.isIdentityTransform;
+    if (wasIdentity && !nowIdentity) {
+      _nodesWithTransform++;
+      _transformedNodeIds.add(node.id);
+    } else if (!wasIdentity && nowIdentity) {
+      _nodesWithTransform--;
+      _transformedNodeIds.remove(node.id);
+    }
+  }
+
   void _drawStrokeWithTransform(Canvas canvas, CanvasStroke s) {
+    // Hot path: when zero strokes carry a non-identity transform
+    // (the >99% common case on notes-app workloads), skip the
+    // `_strokeToNode[s]` map lookup entirely. The counter is
+    // maintained by `_applyTransform` / `_endTransform` /
+    // `mirrorSelection` / `_TransformNodesOp` / `_onDrawCancel` so
+    // the invariant is "0 ⇒ no node has localTransform != identity".
+    if (_nodesWithTransform == 0) {
+      canvas.drawPicture(s.picture());
+      return;
+    }
     final node = _strokeToNode[s];
     if (node == null || node.isIdentityTransform) {
       canvas.drawPicture(s.picture());
@@ -2886,7 +4915,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
     // ONLY into the small builder return, not the whole tree.
     Widget detector = LayoutBuilder(
       builder: (ctx, constraints) {
-        _gestureViewportSize = Size(constraints.maxWidth, constraints.maxHeight);
+        _gestureViewportSize = Size(
+          constraints.maxWidth,
+          constraints.maxHeight,
+        );
         return InfiniteCanvasGestureDetector(
           controller: _controller,
           onDrawStart: _onDrawStart,
@@ -2906,11 +4938,9 @@ class FlueraCanvasState extends State<FlueraCanvas>
     final isDesktopLike =
         kIsWeb ||
         (() {
-          try {
-            return Platform.isLinux || Platform.isWindows || Platform.isMacOS;
-          } catch (_) {
-            return false;
-          }
+          return PlatformGuard.isLinux ||
+              PlatformGuard.isWindows ||
+              PlatformGuard.isMacOS;
         })();
     if (isDesktopLike) {
       detector = MouseRegion(
@@ -2942,7 +4972,55 @@ class FlueraCanvasState extends State<FlueraCanvas>
       focusNode: _focusNode!,
       onUndo: undo,
       onRedo: redo,
-      onClear: clear,
+      onDeleteOrClear: () {
+        // Selection-aware Delete: if something is selected, drop the
+        // selection (idiomatic Notability / Figma); otherwise fall
+        // back to the legacy "Delete clears the canvas" behaviour
+        // (preserved for 0.5.x → 0.9.0 backward-compat).
+        if (_selectionController.value.isNotEmpty) {
+          deleteSelection();
+        } else {
+          clear();
+        }
+      },
+      onEscape: () => _selectionController.clear(),
+      onSelectAll: () {
+        // Marquee everything visible by selecting all selectable
+        // ids whose worldBounds aren't degenerate.
+        final ids = <NodeId>{};
+        for (final entry in _selectableNodes.entries) {
+          final node = entry.value;
+          final parent = node.parent;
+          if (parent is LayerNode && (!parent.isVisible || parent.isLocked)) {
+            continue;
+          }
+          ids.add(entry.key);
+        }
+        if (ids.isNotEmpty) {
+          _selectionController.set(_selectionFromIds(ids));
+        }
+      },
+      onDuplicate: () => duplicateSelection(),
+      onNudge: (dx, dy) {
+        if (_selectionController.value.isEmpty) return;
+        final delta = TransformMath.translation(dx, dy);
+        final ids = _selectionController.value.ids;
+        final before = <NodeId, Matrix4>{};
+        final after = <NodeId, Matrix4>{};
+        for (final id in ids) {
+          final node = _selectableNodes[id];
+          if (node == null) continue;
+          before[id] = node.localTransform.clone();
+          final newM = delta.clone()..multiply(node.localTransform);
+          _writeLocalTransform(node, newM);
+          after[id] = newM.clone();
+        }
+        if (before.isNotEmpty) {
+          _refreshSelectionBoundsAfterTransform();
+          _commitTick.notify();
+          _history?.push(_TransformNodesOp(before, after));
+        }
+      },
       child: detector,
     );
   }
@@ -2959,7 +5037,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
         return SystemMouseCursors.none; // preview circle *is* the cursor
       case CanvasTool.select:
       case CanvasTool.image:
+      case CanvasTool.lasso:
         return SystemMouseCursors.basic;
+      case CanvasTool.text:
+        return SystemMouseCursors.text;
     }
   }
 
@@ -2978,22 +5059,48 @@ class FlueraCanvasState extends State<FlueraCanvas>
   void _rebuildSelectableIndex() {
     _selectableNodes.clear();
     _zOrderIndex.clear();
+    _nonStrokeSelectableIds.clear();
+    _transformedNodeIds.clear();
+    _nodesWithTransform = 0;
     var z = 0;
     void visit(CanvasNode node) {
-      // Layers themselves aren't selectable (they're containers); only
-      // their concrete children are. We still walk into them so the
-      // Z counter increments DFS-style.
-      if (node is! GroupNode) {
-        _selectableNodes[node.id] = node;
-        _zOrderIndex[node.id] = z++;
-      }
-      if (node is GroupNode) {
+      // Layers are pure containers — never selectable, always recurse
+      // into them. Group nodes ARE selectable (the user selects a
+      // group as a single unit, drag the whole thing); their children
+      // become inert until ungrouped.
+      if (node is LayerNode) {
         for (final c in node.children) {
           visit(c);
         }
+        return;
+      }
+      if (node is GroupNode) {
+        // Register the group itself, then DO NOT recurse — children
+        // are addressable via the GroupNode.children but not via the
+        // selectable index while grouped.
+        _selectableNodes[node.id] = node;
+        _zOrderIndex[node.id] = z++;
+        _nonStrokeSelectableIds.add(node.id);
+        if (!node.isIdentityTransform) {
+          _transformedNodeIds.add(node.id);
+          _nodesWithTransform++;
+        }
+        return;
+      }
+      // Leaf selectable node (stroke / image / text / shape …).
+      _selectableNodes[node.id] = node;
+      _zOrderIndex[node.id] = z++;
+      if (node is! CanvasStrokeNode) {
+        _nonStrokeSelectableIds.add(node.id);
+      }
+      if (!node.isIdentityTransform) {
+        _transformedNodeIds.add(node.id);
+        _nodesWithTransform++;
       }
     }
+
     visit(_rootLayer);
+    _maxZ = z - 1;
   }
 
   /// Cheap incremental: register [node] as selectable and stamp its
@@ -3003,13 +5110,17 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// consistent.
   void _registerSelectable(CanvasNode node) {
     _selectableNodes[node.id] = node;
-    final maxZ = _zOrderIndex.values.fold<int>(-1, (a, b) => a > b ? a : b);
-    _zOrderIndex[node.id] = maxZ + 1;
+    _maxZ += 1;
+    _zOrderIndex[node.id] = _maxZ;
+    if (node is! CanvasStrokeNode) {
+      _nonStrokeSelectableIds.add(node.id);
+    }
   }
 
   void _unregisterSelectable(NodeId id) {
     _selectableNodes.remove(id);
     _zOrderIndex.remove(id);
+    _nonStrokeSelectableIds.remove(id);
   }
 
   void _internalInsertStrokeAt(int index, CanvasStroke s) {
@@ -3017,7 +5128,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
     if (index > _strokes.length) index = _strokes.length;
     _strokes.insert(index, s);
     _spatialIndex.insert(s);
-    final node = _strokeToNode[s] ??
+    _markDirty(s.bounds);
+    _bumpLayerVersion(_activeLayer.id);
+    final node =
+        _strokeToNode[s] ??
         CanvasStrokeNode(id: NodeId(generateUid()), stroke: s);
     _strokeToNode[s] = node;
     _registerSelectable(node);
@@ -3042,15 +5156,37 @@ class FlueraCanvasState extends State<FlueraCanvas>
   }
 
   void _internalRemoveStroke(CanvasStroke s) {
+    _markDirty(s.bounds);
     _strokes.remove(s);
     _spatialIndex.remove(s);
     final node = _strokeToNode.remove(s);
     if (node != null) {
       _unregisterSelectable(node.id);
       if (node.parent is LayerNode) {
-        (node.parent! as LayerNode).remove(node);
+        final layer = node.parent! as LayerNode;
+        layer.remove(node);
+        _bumpLayerVersion(layer.id);
       }
     }
+  }
+
+  /// Remove the stroke node with the given [strokeNodeId]. Returns `true`
+  /// if a matching stroke was found and removed; the canvas is repainted.
+  ///
+  /// This is the symmetric counterpart to [pushStroke] keyed by node id —
+  /// it's used by `fluera_canvas_gpu` time-travel replay to apply
+  /// `strokeRemoved` events without keeping a live `CanvasStroke`
+  /// reference. Consumer code should generally rely on the higher-level
+  /// erase / undo paths instead.
+  bool removeStrokeById(NodeId strokeNodeId) {
+    for (final entry in _strokeToNode.entries) {
+      if (entry.value.id == strokeNodeId) {
+        _internalRemoveStroke(entry.key);
+        _commitTick.notify();
+        return true;
+      }
+    }
+    return false;
   }
 
   void _internalClear() {
@@ -3111,25 +5247,164 @@ void _paintStrokeSegments(
   final strokeWidth = baseWidth * (0.3 + avgPressure * 0.9);
 
   // Path construction:
-  //   • smooth = true  → quadratic-bezier through midpoints (default
-  //     for free-form strokes; removes polyline kinks).
   //   • smooth = false → straight `lineTo` segments. Used for shapes
   //     whose corners must stay sharp (rectangles, polygons).
-  final path = Path()..moveTo(points[0].dx, points[0].dy);
+  //   • smooth = true  → adaptive arc-length resampling (densifies
+  //     long segments produced by fast strokes) → two-pass EMA
+  //     pre-smoothing → Catmull-Rom → cubic-bezier chain.
+  //
+  // Why three stages: raw stylus input is a mix of (a) tremor at
+  // slow speed (pixel-scale jitter every sample) AND (b) sparse
+  // samples at high speed (10-30 px gaps between consecutive
+  // points). One-Euro at the ingest stage tames (a). But (b) is the
+  // killer — even a perfect spline through 5 widely-spaced points
+  // looks like a polyline because there are simply not enough
+  // anchors for the curve to bend through. The arc-length
+  // resampling stage subdivides any gap larger than `_targetSpacing`
+  // by linearly interpolating new anchors, then the EMA + Catmull-
+  // Rom passes turn those collinear inserts into a smooth curve.
   if (n == 2 || !smooth) {
+    final path = Path()..moveTo(points[0].dx, points[0].dy);
     for (int i = 1; i < n; i++) {
       path.lineTo(points[i].dx, points[i].dy);
     }
-  } else {
-    for (int i = 1; i < n - 1; i++) {
-      final ctrl = points[i];
-      final end = Offset(
-        (points[i].dx + points[i + 1].dx) * 0.5,
-        (points[i].dy + points[i + 1].dy) * 0.5,
-      );
-      path.quadraticBezierTo(ctrl.dx, ctrl.dy, end.dx, end.dy);
+    final paint =
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..strokeWidth = strokeWidth;
+    canvas.drawPath(path, paint);
+    return;
+  }
+
+  // ── Stage 1: arc-length subdivision via Catmull-Rom interpolation.
+  // For every long gap between consecutive raw samples we insert new
+  // anchors that lie ON the Catmull-Rom spline (derived from the
+  // four neighbours p[i-1], p[i], p[i+1], p[i+2]), NOT on the
+  // straight chord between them. This is the critical difference vs
+  // a linear resample: linear inserts are collinear with the
+  // existing samples, so the EMA pass below leaves them on the line
+  // and the final cubic-bezier degenerates into the very polyline
+  // we are trying to avoid. Spline-interpolated inserts already lie
+  // on a curve, so the EMA + Catmull-Rom finishing passes refine an
+  // already-smooth path. Endpoints preserved exactly. Cap inserts
+  // per gap at 12 to bound cost on extreme jumps (pen-up/down).
+  const double targetSpacing = 3.0;
+  final dense = <Offset>[points[0]];
+  for (int i = 0; i < n - 1; i++) {
+    final p0 = points[i == 0 ? 0 : i - 1];
+    final p1 = points[i];
+    final p2 = points[i + 1];
+    final p3 = points[i + 2 < n ? i + 2 : n - 1];
+    final dx = p2.dx - p1.dx;
+    final dy = p2.dy - p1.dy;
+    final dist = math.sqrt(dx * dx + dy * dy);
+    if (dist > targetSpacing * 1.5) {
+      var inserts = (dist / targetSpacing).floor() - 1;
+      if (inserts > 12) inserts = 12;
+      for (int k = 1; k <= inserts; k++) {
+        final t = k / (inserts + 1);
+        final t2 = t * t;
+        final t3 = t2 * t;
+        // Standard uniform Catmull-Rom parametric form. At t=0 the
+        // formula returns p1; at t=1 it returns p2 — so we only
+        // emit the strict interior (k = 1..inserts) here and let
+        // the next iteration of the loop append p2 (which is the
+        // p1 of that next iteration, written below as `dense.add(p2)`).
+        final cx = 0.5 *
+            (2 * p1.dx +
+                (-p0.dx + p2.dx) * t +
+                (2 * p0.dx - 5 * p1.dx + 4 * p2.dx - p3.dx) * t2 +
+                (-p0.dx + 3 * p1.dx - 3 * p2.dx + p3.dx) * t3);
+        final cy = 0.5 *
+            (2 * p1.dy +
+                (-p0.dy + p2.dy) * t +
+                (2 * p0.dy - 5 * p1.dy + 4 * p2.dy - p3.dy) * t2 +
+                (-p0.dy + 3 * p1.dy - 3 * p2.dy + p3.dy) * t3);
+        dense.add(Offset(cx, cy));
+      }
     }
-    path.lineTo(points[n - 1].dx, points[n - 1].dy);
+    dense.add(p2);
+  }
+  final m = dense.length;
+
+  // ── Stage 2: two-pass EMA pre-smoothing (forward + backward).
+  // Endpoints are pinned so the stroke starts and ends exactly where
+  // the user lifted/dropped the pointer. The forward pass introduces
+  // a directional bias (the smoothed line trails behind the input);
+  // the backward pass cancels it.
+  const double alpha = 0.3;
+  final smoothed = List<Offset>.filled(m, Offset.zero);
+  smoothed[0] = dense[0];
+  for (int i = 1; i < m; i++) {
+    smoothed[i] = Offset(
+      smoothed[i - 1].dx * alpha + dense[i].dx * (1.0 - alpha),
+      smoothed[i - 1].dy * alpha + dense[i].dy * (1.0 - alpha),
+    );
+  }
+  smoothed[m - 1] = dense[m - 1];
+  for (int i = m - 2; i > 0; i--) {
+    smoothed[i] = Offset(
+      smoothed[i + 1].dx * alpha + smoothed[i].dx * (1.0 - alpha),
+      smoothed[i + 1].dy * alpha + smoothed[i].dy * (1.0 - alpha),
+    );
+  }
+
+  // ── Stage 4: predicted "ghost" anchor for the terminal segment.
+  // The Catmull-Rom formula uses `p3` to compute the exit tangent
+  // at `p2`. For every interior segment `p3` is a real future
+  // sample and the tangent is correct. For the LAST segment we
+  // would normally clamp `p3 = smoothed[m-1]`, which makes the
+  // final tangent flat (the curve aims at the endpoint along the
+  // chord). Extrapolating one step ahead via velocity + half-
+  // acceleration gives the spline a natural "pointer-following"
+  // tangent that materially reduces the perceived latency on
+  // platforms (Linux) where the input pipeline samples slowly.
+  // The predicted point is NOT drawn — `cubicTo` still ends
+  // exactly at the real `p2` — only the tangent at the last
+  // anchor changes.
+  Offset? predictedTail;
+  if (m >= 3) {
+    final pn1 = smoothed[m - 1];
+    final pn2 = smoothed[m - 2];
+    final pn3 = smoothed[m - 3];
+    final vx = pn1.dx - pn2.dx;
+    final vy = pn1.dy - pn2.dy;
+    final ax = pn1.dx - 2 * pn2.dx + pn3.dx;
+    final ay = pn1.dy - 2 * pn2.dy + pn3.dy;
+    predictedTail = Offset(pn1.dx + vx + 0.5 * ax, pn1.dy + vy + 0.5 * ay);
+  }
+
+  // ── Stage 5: Catmull-Rom → Cubic Bezier with tau = 1/6 (the
+  // tension fluera_engine's fountain-pen outline builder uses).
+  // C1 = P1 + (P2 - P0) / 6, C2 = P2 - (P3 - P1) / 6 — the spline
+  // passes through every smoothed point and is C¹-continuous
+  // regardless of input density.
+  const tau = 1.0 / 6.0;
+  final path = Path()..moveTo(smoothed[0].dx, smoothed[0].dy);
+  for (int i = 0; i < m - 1; i++) {
+    final p0 = smoothed[i == 0 ? 0 : i - 1];
+    final p1 = smoothed[i];
+    final p2 = smoothed[i + 1];
+    // For every interior segment use the real next-next sample.
+    // For the terminal segment substitute the predicted ghost so
+    // the closing tangent points along the pointer's trajectory
+    // instead of flattening into the chord.
+    final p3 =
+        i + 2 < m
+            ? smoothed[i + 2]
+            : (predictedTail ?? smoothed[m - 1]);
+    final c1 = Offset(
+      p1.dx + (p2.dx - p0.dx) * tau,
+      p1.dy + (p2.dy - p0.dy) * tau,
+    );
+    final c2 = Offset(
+      p2.dx - (p3.dx - p1.dx) * tau,
+      p2.dy - (p3.dy - p1.dy) * tau,
+    );
+    path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, p2.dx, p2.dy);
   }
 
   final paint =
@@ -3163,6 +5438,49 @@ class _CommittedStrokesPainter extends CustomPainter {
   }) : super(repaint: repaintTrigger);
 
   final FlueraCanvasState canvasState;
+
+  /// Walk a layer's children once and dispatch each to the right
+  /// per-type painter. When [visibleSet] is `null`, every stroke is
+  /// rendered (no viewport cull) — used by the LayerPictureCache
+  /// recording path that captures the full layer once. When
+  /// [visibleSet] is non-null, only strokes present in the set are
+  /// drawn (the legacy fast path used while a transform is active
+  /// or no cache is desired).
+  void _paintLayerChildren(
+    Canvas target,
+    LayerNode layer,
+    FlueraCanvasState state, {
+    required Set<CanvasStroke>? visibleSet,
+  }) {
+    for (final child in layer.children) {
+      if (child is CanvasStrokeNode) {
+        if (visibleSet == null || visibleSet.contains(child.stroke)) {
+          state._drawStrokeWithTransform(target, child.stroke);
+        }
+      } else if (child is ImageNode) {
+        ImageNodePainter.paint(target, child);
+      } else if (child is TextNode) {
+        _paintTextNode(target, child);
+      }
+    }
+  }
+
+  /// Paint a [TextNode] honouring its `localTransform` so the live
+  /// select / drag / rotate / scale pipeline (which mutates the
+  /// matrix only) actually moves the visible glyphs. Without the
+  /// `canvas.transform(...)` wrapper the text would always render
+  /// at `textElement.position` regardless of selection-driven
+  /// transforms.
+  void _paintTextNode(Canvas target, TextNode node) {
+    final tp = node.textElement.layoutPainter;
+    target.save();
+    target.transform(node.localTransform.storage);
+    tp.paint(target, node.textElement.position);
+    target.restore();
+    if (node.cachedTextSize != tp.size) {
+      node.cachedTextSize = tp.size;
+    }
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -3198,23 +5516,58 @@ class _CommittedStrokesPainter extends CustomPainter {
       viewport,
       margin: 200,
     );
-    final layers = canvasState._rootLayer.children.whereType<LayerNode>().toList();
-    final hasNonTrivialLayer = layers.length != 1 ||
+    final layers =
+        canvasState._rootLayer.children.whereType<LayerNode>().toList();
+    final hasNonTrivialLayer =
+        layers.length != 1 ||
         !layers.first.isVisible ||
         layers.first.opacity != 1.0 ||
         layers.first.blendMode != ui.BlendMode.srcOver;
     if (!hasNonTrivialLayer) {
-      for (final s in visibleStrokes) {
-        canvasState._drawStrokeWithTransform(canvas, s);
+      // Single trivial layer fast path. The LayerPictureCache kicks in
+      // when no node carries a non-identity transform (the >99% case
+      // on notes-app workloads): we replay one cached `ui.Picture`
+      // instead of re-walking every child each paint. Pan / zoom
+      // doesn't bump the layer version so the cache survives camera
+      // moves entirely.
+      final layer = layers.first;
+      final layerVersion = canvasState._layerVersions[layer.id] ?? 0;
+      final canCache = canvasState._nodesWithTransform == 0;
+
+      ui.Picture? cached;
+      if (canCache) {
+        cached = canvasState._layerPictureCache.get(
+          layer.id.value,
+          layerVersion,
+        );
       }
-      // ImageNodes (and future non-stroke node types) live on the
-      // active layer too; render them after strokes so images appear
-      // on top of strokes inside the same layer (matches the layer
-      // children Z-order — stroke commits append, image commits
-      // append, so the relative order in `layer.children` is the
-      // chronological commit order).
-      for (final child in layers.first.children) {
-        if (child is ImageNode) ImageNodePainter.paint(canvas, child);
+      if (cached != null) {
+        canvas.drawPicture(cached);
+      } else if (canCache) {
+        // Cache miss — record the WHOLE layer (no viewport cull) into
+        // a fresh PictureRecorder, store, then replay. Subsequent
+        // paints take the fast path above. Skia clips out off-screen
+        // pixels at GPU rasterisation, so recording the full layer
+        // is a one-time cost amortised across many frames.
+        final recorder = ui.PictureRecorder();
+        final recordCanvas = ui.Canvas(recorder);
+        _paintLayerChildren(recordCanvas, layer, canvasState, visibleSet: null);
+        final picture = recorder.endRecording();
+        canvasState._layerPictureCache.put(
+          layer.id.value,
+          layerVersion,
+          picture,
+        );
+        canvas.drawPicture(picture);
+      } else {
+        // At least one node has a non-identity transform — caching
+        // would snapshot stale world bounds, so fall back to the
+        // viewport-culled walk.
+        final visibleSet = <CanvasStroke>{};
+        for (final s in visibleStrokes) {
+          visibleSet.add(s);
+        }
+        _paintLayerChildren(canvas, layer, canvasState, visibleSet: visibleSet);
       }
     } else {
       // Bucket the on-screen strokes by their owning layer so we paint
@@ -3242,7 +5595,8 @@ class _CommittedStrokesPainter extends CustomPainter {
       // blend mode AND the compositor opted into the backdrop-aware
       // path. Only then do we pay for the parallel "running backdrop"
       // recorder — otherwise stay on the cheap single-canvas path.
-      final useBackdropPath = compositor != null &&
+      final useBackdropPath =
+          compositor != null &&
           compositor.supportsBackdropAwareBlend &&
           _anyExtendedLayer(layers, canvasState);
 
@@ -3266,28 +5620,79 @@ class _CommittedStrokesPainter extends CustomPainter {
 
       for (final layer in layers) {
         if (!layer.isVisible) continue;
-        // Find strokes belonging to this layer by walking its children
-        // (CanvasStrokeNode → underlying CanvasStroke). The strokes are
-        // small, the layers are few — linear scan is fine.
-        final layerStrokes = <CanvasStroke>[];
-        final layerImages = <ImageNode>[];
+        // Walk children in insertion order so chronological Z-order is
+        // honoured (a stroke added AFTER an image renders on top of
+        // it). Skip layers with no visible content via an emptiness
+        // probe over the same iteration.
+        bool hasVisibleContent = false;
         for (final child in layer.children) {
-          if (child is CanvasStrokeNode &&
-              visibleSet[child.stroke] == true) {
-            layerStrokes.add(child.stroke);
-          } else if (child is ImageNode) {
-            layerImages.add(child);
+          if (child is CanvasStrokeNode && visibleSet[child.stroke] == true) {
+            hasVisibleContent = true;
+            break;
+          }
+          if (child is ImageNode || child is TextNode) {
+            hasVisibleContent = true;
+            break;
           }
         }
-        if (layerStrokes.isEmpty && layerImages.isEmpty) continue;
+        if (!hasVisibleContent) continue;
+        // Cache the layer's foreground (children only — opacity /
+        // blend / mask happen in the SAVELAYER wrapping this) into
+        // a `ui.Picture` keyed on (layerId, layerVersion). Any
+        // mutation that would change the foreground bumps the
+        // version (insert/remove stroke, image, text, transform).
+        // Camera changes never bump → cache survives pan/zoom.
+        // Disabled when at least one node is currently transformed
+        // (the snapshot would capture stale world bounds).
+        final canCacheLayer = canvasState._nodesWithTransform == 0;
+        ui.Picture? buildOrFetchCached() {
+          if (!canCacheLayer) return null;
+          final ver = canvasState._layerVersions[layer.id] ?? 0;
+          final cached = canvasState._layerPictureCache.get(
+            layer.id.value,
+            ver,
+          );
+          if (cached != null) return cached;
+          final recorder = ui.PictureRecorder();
+          final recCanvas = ui.Canvas(recorder);
+          // Record the FULL layer (no viewport cull) — Skia clips
+          // off-screen pixels at GPU rasterisation, so paying the
+          // recording cost once is amortised across many paints.
+          for (final child in layer.children) {
+            if (child is CanvasStrokeNode) {
+              canvasState._drawStrokeWithTransform(recCanvas, child.stroke);
+            } else if (child is ImageNode) {
+              ImageNodePainter.paint(recCanvas, child);
+            } else if (child is TextNode) {
+              _paintTextNode(recCanvas, child);
+            }
+          }
+          final picture = recorder.endRecording();
+          canvasState._layerPictureCache.put(layer.id.value, ver, picture);
+          return picture;
+        }
+
         void paintLayer(ui.Canvas c) {
-          for (final s in layerStrokes) {
-            canvasState._drawStrokeWithTransform(c, s);
+          final cached = buildOrFetchCached();
+          if (cached != null) {
+            c.drawPicture(cached);
+            return;
           }
-          for (final n in layerImages) {
-            ImageNodePainter.paint(c, n);
+          // Fallback: a transformed node is in flight, walk children
+          // with the legacy viewport-culled dispatch.
+          for (final child in layer.children) {
+            if (child is CanvasStrokeNode) {
+              if (visibleSet[child.stroke] == true) {
+                canvasState._drawStrokeWithTransform(c, child.stroke);
+              }
+            } else if (child is ImageNode) {
+              ImageNodePainter.paint(c, child);
+            } else if (child is TextNode) {
+              _paintTextNode(c, child);
+            }
           }
         }
+
         // Resolve the optional alpha mask. The compositor takes mask
         // in the GPU shader path; for the canvas-core fallback we
         // wrap `paintLayer` in a saveLayer + `BlendMode.dstIn` blit
@@ -3315,6 +5720,7 @@ class _CommittedStrokesPainter extends CustomPainter {
           );
           c.restore();
         }
+
         // Resolve the FlueraBlendMode from the canvas-state side-table.
         // When the layer is on a standard mode the side-table is empty
         // and we forward `null` for `extendedBlendModeCode`; when it is
@@ -3539,31 +5945,97 @@ ui.Paint _alphaPaint(double opacity, [ui.BlendMode? blendMode]) {
 /// `super(repaint:)` listens to BOTH the stroke notifier and the camera
 /// controller so pan/zoom while drawing repaints the live stroke too.
 class _LiveStrokePainter extends CustomPainter {
-  _LiveStrokePainter({required this.strokeNotifier, required this.controller})
-    : super(
-        repaint: Listenable.merge(<Listenable>[strokeNotifier, controller]),
+  _LiveStrokePainter({
+    required this.strokeNotifier,
+    required this.controller,
+    required this.activeBlendMode,
+    required this.activeOpacity,
+    required Listenable layerSettingsTrigger,
+  }) : super(
+        repaint: Listenable.merge(<Listenable>[
+          strokeNotifier,
+          controller,
+          layerSettingsTrigger,
+        ]),
       );
 
   final _LiveStrokeNotifier strokeNotifier;
   final InfiniteCanvasController controller;
+
+  /// Live ref-cell for the active layer's blend mode. Read at paint
+  /// time so toggling `setLayerBlendMode` while a stroke is in flight
+  /// updates the in-progress preview immediately.
+  final ValueGetter<ui.BlendMode> activeBlendMode;
+
+  /// Live ref-cell for the active layer's opacity (0..1).
+  final ValueGetter<double> activeOpacity;
 
   @override
   void paint(Canvas canvas, Size size) {
     final pts = strokeNotifier.points;
     final prs = strokeNotifier.pressures;
     if (pts.length < 2 || prs.length != pts.length) return;
+
+    // Honour the active layer's blend mode + opacity so the live
+    // preview matches what the committed stroke will look like once
+    // the user lifts the pen. Without this, drawing a `multiply` /
+    // `screen` / etc. layer shows pure srcOver in flight and snaps
+    // to the correct blend only at pen-up.
+    final blend = activeBlendMode();
+    final opacity = activeOpacity().clamp(0.0, 1.0);
+    final needsLayer = blend != ui.BlendMode.srcOver || opacity < 1.0;
+    if (needsLayer) {
+      canvas.saveLayer(
+        null,
+        Paint()
+          ..blendMode = blend
+          ..color = Color.fromRGBO(0, 0, 0, opacity),
+      );
+    }
+
     canvas.save();
     canvas.translate(controller.offset.dx, controller.offset.dy);
     canvas.scale(controller.scale);
-    _paintStrokeSegments(
-      canvas,
-      pts,
-      prs,
-      strokeNotifier.color,
-      strokeNotifier.baseWidth,
-      smooth: strokeNotifier.smooth,
-    );
+
+    // Bake any newly-arrived points into the cache. The closure is
+    // invoked once per pending chunk by `maybeChunkAhead`.
+    strokeNotifier.maybeChunkAhead((recCanvas, from, toInclusive) {
+      final endExclusive = (toInclusive + 1).clamp(0, pts.length);
+      final chunkPts = pts.sublist(from, endExclusive);
+      final chunkPrs = prs.sublist(from, endExclusive);
+      _paintStrokeSegments(
+        recCanvas,
+        chunkPts,
+        chunkPrs,
+        strokeNotifier.color,
+        strokeNotifier.baseWidth,
+        smooth: strokeNotifier.smooth,
+      );
+    });
+
+    // Replay each cached chunk — one drawPicture per chunkSize range.
+    for (final chunk in strokeNotifier.chunks) {
+      canvas.drawPicture(chunk);
+    }
+
+    // Render the trailing uncached tail (shares its first point with
+    // the last chunk so there is no visual seam). When no chunks
+    // have been baked yet, this paints the whole stroke.
+    final tailStart = strokeNotifier.chunkedThru;
+    if (tailStart < pts.length - 1) {
+      _paintStrokeSegments(
+        canvas,
+        pts.sublist(tailStart),
+        prs.sublist(tailStart),
+        strokeNotifier.color,
+        strokeNotifier.baseWidth,
+        smooth: strokeNotifier.smooth,
+      );
+    }
     canvas.restore();
+    if (needsLayer) {
+      canvas.restore(); // close the saveLayer
+    }
   }
 
   // The painter instance is stable; repaint is driven entirely by
@@ -3599,6 +6071,27 @@ class _LiveStrokeNotifier extends ChangeNotifier {
   double baseWidth = 1.0;
   bool smooth = true;
 
+  /// Append-only cache of the in-progress stroke. Once the stroke
+  /// grows past [_chunkSize] new points, the painter calls
+  /// [maybeChunkAhead] which records that range into a `ui.Picture`
+  /// and appends to [_chunks]. Subsequent paints replay each chunk
+  /// via `drawPicture` and only re-tessellate the trailing
+  /// (uncached) tail. For long handwriting strokes this drops
+  /// per-frame work from O(N) segments to O(K) where K = chunkSize.
+  final List<ui.Picture> _chunks = <ui.Picture>[];
+  int _chunkedThru = 0;
+  static const int _chunkSize = 256;
+
+  /// Read-only handle on the recorded chunks. The painter consumes
+  /// them in order, then renders the trailing uncached points.
+  List<ui.Picture> get chunks => _chunks;
+
+  /// Index up to which the points list has been baked into
+  /// [_chunks]. The tail (`points[chunkedThru..end]`) is rendered
+  /// dynamically each paint. The shared boundary point keeps the
+  /// stroke visually seamless across the cache split.
+  int get chunkedThru => _chunkedThru;
+
   void beginStroke({
     required Color color,
     required double baseWidth,
@@ -3607,9 +6100,11 @@ class _LiveStrokeNotifier extends ChangeNotifier {
     this.color = color;
     this.baseWidth = baseWidth;
     this.smooth = smooth;
+    _flushChunks();
   }
 
   void setStroke(List<Offset> pts, List<double> prs) {
+    _flushChunks();
     points = pts;
     pressures = prs;
     notifyListeners();
@@ -3619,9 +6114,43 @@ class _LiveStrokeNotifier extends ChangeNotifier {
   void forceRepaint() => notifyListeners();
 
   void clear() {
+    _flushChunks();
     points = const <Offset>[];
     pressures = const <double>[];
     notifyListeners();
+  }
+
+  void _flushChunks() {
+    for (final p in _chunks) {
+      p.dispose();
+    }
+    _chunks.clear();
+    _chunkedThru = 0;
+  }
+
+  /// Drive the chunking. Called by the painter on every paint —
+  /// when the points list has grown past [_chunkSize] beyond
+  /// [_chunkedThru], record the next chunk via [recordRange] and
+  /// advance the cursor. Loops until fewer than [_chunkSize] new
+  /// points remain (multiple chunks can flush in one tick if the
+  /// painter was idle for a while).
+  void maybeChunkAhead(
+    void Function(ui.Canvas canvas, int fromInclusive, int toInclusive)
+    recordRange,
+  ) {
+    while (points.length - _chunkedThru > _chunkSize) {
+      final from = _chunkedThru;
+      // Cache `chunkSize` segments by capturing
+      // `points[from..from+chunkSize]` (inclusive of both ends).
+      // Sharing the boundary point with the next chunk / tail keeps
+      // smoothing splines + variable-width polygons continuous.
+      final toInclusive = from + _chunkSize;
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(recorder);
+      recordRange(canvas, from, toInclusive);
+      _chunks.add(recorder.endRecording());
+      _chunkedThru = toInclusive;
+    }
   }
 }
 
@@ -3637,28 +6166,32 @@ class _RedoIntent extends Intent {
   const _RedoIntent();
 }
 
-class _ClearIntent extends Intent {
-  const _ClearIntent();
-}
-
 class _KeyboardShortcuts extends StatelessWidget {
   const _KeyboardShortcuts({
     required this.focusNode,
     required this.onUndo,
     required this.onRedo,
-    required this.onClear,
+    required this.onDeleteOrClear,
+    required this.onEscape,
+    required this.onSelectAll,
+    required this.onDuplicate,
+    required this.onNudge,
     required this.child,
   });
 
   final FocusNode focusNode;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
-  final VoidCallback onClear;
+  final VoidCallback onDeleteOrClear;
+  final VoidCallback onEscape;
+  final VoidCallback onSelectAll;
+  final VoidCallback onDuplicate;
+  final void Function(double dx, double dy) onNudge;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final isMac = !kIsWeb && (Platform.isMacOS || Platform.isIOS);
+    final isMac = PlatformGuard.isMacOS || PlatformGuard.isIOS;
     return Shortcuts(
       shortcuts: <ShortcutActivator, Intent>{
         SingleActivator(LogicalKeyboardKey.keyZ, control: !isMac, meta: isMac):
@@ -3672,9 +6205,46 @@ class _KeyboardShortcuts extends StatelessWidget {
             const _RedoIntent(),
         SingleActivator(LogicalKeyboardKey.keyY, control: !isMac, meta: isMac):
             const _RedoIntent(),
-        const SingleActivator(LogicalKeyboardKey.delete): const _ClearIntent(),
+        const SingleActivator(LogicalKeyboardKey.delete):
+            const _DeleteOrClearIntent(),
         const SingleActivator(LogicalKeyboardKey.backspace):
-            const _ClearIntent(),
+            const _DeleteOrClearIntent(),
+        const SingleActivator(LogicalKeyboardKey.escape): const _EscapeIntent(),
+        SingleActivator(LogicalKeyboardKey.keyA, control: !isMac, meta: isMac):
+            const _SelectAllIntent(),
+        SingleActivator(LogicalKeyboardKey.keyD, control: !isMac, meta: isMac):
+            const _DuplicateIntent(),
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): const _NudgeIntent(
+          -1,
+          0,
+        ),
+        const SingleActivator(
+          LogicalKeyboardKey.arrowRight,
+        ): const _NudgeIntent(1, 0),
+        const SingleActivator(LogicalKeyboardKey.arrowUp): const _NudgeIntent(
+          0,
+          -1,
+        ),
+        const SingleActivator(LogicalKeyboardKey.arrowDown): const _NudgeIntent(
+          0,
+          1,
+        ),
+        const SingleActivator(
+          LogicalKeyboardKey.arrowLeft,
+          shift: true,
+        ): const _NudgeIntent(-10, 0),
+        const SingleActivator(
+          LogicalKeyboardKey.arrowRight,
+          shift: true,
+        ): const _NudgeIntent(10, 0),
+        const SingleActivator(
+          LogicalKeyboardKey.arrowUp,
+          shift: true,
+        ): const _NudgeIntent(0, -10),
+        const SingleActivator(
+          LogicalKeyboardKey.arrowDown,
+          shift: true,
+        ): const _NudgeIntent(0, 10),
       },
       child: Actions(
         actions: <Type, Action<Intent>>{
@@ -3690,9 +6260,42 @@ class _KeyboardShortcuts extends StatelessWidget {
               return null;
             },
           ),
-          _ClearIntent: CallbackAction<_ClearIntent>(
+          // Gate every action that would otherwise hijack a keystroke
+          // the user is sending to the inline text editor. Backspace
+          // / Delete must edit the buffer, not delete the canvas;
+          // arrows must move the caret, not nudge a selection;
+          // Ctrl+A must select-all-in-text, not all-on-canvas.
+          _DeleteOrClearIntent: CallbackAction<_DeleteOrClearIntent>(
             onInvoke: (_) {
-              onClear();
+              if (FlueraTextEditor.isEditing) return null;
+              onDeleteOrClear();
+              return null;
+            },
+          ),
+          _EscapeIntent: CallbackAction<_EscapeIntent>(
+            onInvoke: (_) {
+              onEscape();
+              return null;
+            },
+          ),
+          _SelectAllIntent: CallbackAction<_SelectAllIntent>(
+            onInvoke: (_) {
+              if (FlueraTextEditor.isEditing) return null;
+              onSelectAll();
+              return null;
+            },
+          ),
+          _DuplicateIntent: CallbackAction<_DuplicateIntent>(
+            onInvoke: (_) {
+              if (FlueraTextEditor.isEditing) return null;
+              onDuplicate();
+              return null;
+            },
+          ),
+          _NudgeIntent: CallbackAction<_NudgeIntent>(
+            onInvoke: (intent) {
+              if (FlueraTextEditor.isEditing) return null;
+              onNudge(intent.dx, intent.dy);
               return null;
             },
           ),
@@ -3711,6 +6314,56 @@ class _KeyboardShortcuts extends StatelessWidget {
       ),
     );
   }
+}
+
+class _DeleteOrClearIntent extends Intent {
+  const _DeleteOrClearIntent();
+}
+
+class _EscapeIntent extends Intent {
+  const _EscapeIntent();
+}
+
+class _SelectAllIntent extends Intent {
+  const _SelectAllIntent();
+}
+
+class _DuplicateIntent extends Intent {
+  const _DuplicateIntent();
+}
+
+class _NudgeIntent extends Intent {
+  const _NudgeIntent(this.dx, this.dy);
+  final double dx;
+  final double dy;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Snap-to-grid + smart guides (0.9.x) — design-tool primitives that gate
+// translate-mode delta correction during a body-drag move. Both opt-in via
+// `FlueraCanvas.snapToGrid` / `FlueraCanvas.smartGuidesEnabled`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One alignment line emitted by the smart-guide engine. Drawn by
+/// the selection painter as a dashed colored guide while the user
+/// is dragging a selection to align it with another visible node.
+///
+/// `axis` is the line's orientation: `Axis.vertical` lines extend
+/// up/down (constant `position` on the X axis); `Axis.horizontal`
+/// lines extend left/right (constant `position` on the Y axis).
+/// `[rangeStart, rangeEnd]` is the world-space extent on the
+/// non-axis dimension.
+class SmartGuideLine {
+  const SmartGuideLine({
+    required this.axis,
+    required this.position,
+    required this.rangeStart,
+    required this.rangeEnd,
+  });
+  final Axis axis;
+  final double position;
+  final double rangeStart;
+  final double rangeEnd;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3743,6 +6396,146 @@ class _AddOp extends _CanvasOp {
   void redo(FlueraCanvasState s) => s._internalInsertStrokeAt(index, stroke);
 }
 
+/// Captures `TextNode.textElement` mutation across an editing session
+/// so undo can restore the previous element exactly. The node identity
+/// is the [NodeId]; both [before] and [after] are immutable snapshots
+/// (DigitalTextElement uses copyWith semantics, so they don't share
+/// mutable state with the live node).
+class _UpdateTextOp extends _CanvasOp {
+  _UpdateTextOp(this.id, this.before, this.after);
+  final NodeId id;
+  final DigitalTextElement before;
+  final DigitalTextElement after;
+
+  void _apply(FlueraCanvasState s, DigitalTextElement element) {
+    final node = s._selectableNodes[id];
+    if (node is! TextNode) return;
+    node.textElement = element;
+    node.cachedTextSize = ui.Size.zero;
+    s._commitTick.notify();
+  }
+
+  @override
+  void undo(FlueraCanvasState s) => _apply(s, before);
+
+  @override
+  void redo(FlueraCanvasState s) => _apply(s, after);
+}
+
+/// Pen-up commit when the user's stroke crossed image boundaries.
+/// Stores per-segment routing — some pieces become free children of
+/// the active layer (`target == null`), others ride a specific
+/// [ImageNode]'s `annotations` list and follow every move/rotate/scale
+/// applied to the host image. Single op for the whole gesture so undo
+/// reverts the user's pen-up holistically (no half-erased segments).
+class _SplitStrokeOp extends _CanvasOp {
+  _SplitStrokeOp(this.segments);
+
+  final List<_SplitSegment> segments;
+
+  @override
+  void undo(FlueraCanvasState s) {
+    for (final seg in segments) {
+      if (seg.target == null) {
+        s._internalRemoveStroke(seg.stroke);
+      } else {
+        seg.target!.annotations.remove(seg.node);
+        s._commitTick.notify();
+      }
+    }
+  }
+
+  @override
+  void redo(FlueraCanvasState s) {
+    for (final seg in segments) {
+      if (seg.target == null) {
+        s._internalInsertStrokeAt(seg.layerIndex!, seg.stroke);
+      } else {
+        seg.target!.annotations.add(seg.node);
+      }
+    }
+    s._commitTick.notify();
+  }
+}
+
+/// Cached "is this world point inside this image?" probe, with the
+/// image's inverse-rendering matrix pre-computed so per-point
+/// classification across N stroke samples doesn't pay the matrix
+/// inversion N times. Built once per candidate image at split time.
+class _ImageHitFrame {
+  _ImageHitFrame._({
+    required this.node,
+    required this.z,
+    required this.worldToLocal,
+    required this.localRect,
+  });
+
+  factory _ImageHitFrame.forNode(ImageNode node, int z) {
+    final el = node.imageElement;
+    final w = node.imageSize.width > 0 ? node.imageSize.width : 200.0;
+    final h = node.imageSize.height > 0 ? node.imageSize.height : 200.0;
+    // Forward (image-local → world) — mirrors the order in
+    // `ImageNodePainter.paint`.
+    final m =
+        Matrix4.identity()
+          ..multiply(node.localTransform)
+          ..translateByDouble(el.position.dx, el.position.dy, 0, 1);
+    if (el.rotation != 0.0) {
+      m
+        ..translateByDouble(w * el.scale * 0.5, h * el.scale * 0.5, 0, 1)
+        ..rotateZ(el.rotation)
+        ..translateByDouble(-w * el.scale * 0.5, -h * el.scale * 0.5, 0, 1);
+    }
+    if (el.scale != 1.0) {
+      m.scaleByDouble(el.scale, el.scale, 1, 1);
+    }
+    final inverse = Matrix4.inverted(m);
+    return _ImageHitFrame._(
+      node: node,
+      z: z,
+      worldToLocal: inverse,
+      localRect: Rect.fromLTWH(0, 0, w, h),
+    );
+  }
+
+  final ImageNode node;
+  final int z;
+  final Matrix4 worldToLocal;
+  final Rect localRect;
+
+  bool contains(Offset world) {
+    final lp = MatrixUtils.transformPoint(worldToLocal, world);
+    return localRect.contains(lp);
+  }
+}
+
+class _SplitSegment {
+  _SplitSegment({
+    required this.stroke,
+    required this.node,
+    required this.target,
+    required this.layerIndex,
+  });
+
+  /// The stroke geometry — in *world* coords for free segments,
+  /// in image-local coords for image-parented segments.
+  final CanvasStroke stroke;
+
+  /// Node wrapping [stroke]. For image-parented segments this lives
+  /// in `target.annotations`; for free segments it's the same node
+  /// `_internalInsertStrokeAt` would have produced and the index
+  /// inside `_strokes` is captured in [layerIndex] so redo replays.
+  final CanvasStrokeNode node;
+
+  /// Host image when the segment was routed to image-local coords;
+  /// `null` when the segment is a free layer child.
+  final ImageNode? target;
+
+  /// Index in `_strokes` for free segments, captured at first apply
+  /// so redo can re-insert at the same Z slot.
+  final int? layerIndex;
+}
+
 class _AddBatchOp extends _CanvasOp {
   _AddBatchOp(this.strokes, this.indexes);
   final List<CanvasStroke> strokes;
@@ -3764,10 +6557,18 @@ class _AddBatchOp extends _CanvasOp {
 }
 
 class _EraseOp extends _CanvasOp {
-  _EraseOp(this.strokes, Map<CanvasStroke, int> indexes)
-    : indexes = Map.of(indexes);
+  _EraseOp(
+    this.strokes,
+    Map<CanvasStroke, int> indexes, {
+    List<_AnnotationEraseRecord>? annotations,
+  }) : indexes = Map.of(indexes),
+       annotations =
+           annotations == null
+               ? const <_AnnotationEraseRecord>[]
+               : List<_AnnotationEraseRecord>.from(annotations);
   final List<CanvasStroke> strokes;
   final Map<CanvasStroke, int> indexes;
+  final List<_AnnotationEraseRecord> annotations;
 
   @override
   void undo(FlueraCanvasState s) {
@@ -3778,6 +6579,16 @@ class _EraseOp extends _CanvasOp {
     for (final stroke in sorted) {
       s._internalInsertStrokeAt(indexes[stroke] ?? 0, stroke);
     }
+    // Re-attach annotation strokes to their host images at the
+    // original index — sorted ascending so adjacent indices land in
+    // order even when multiple anns from the same image were erased.
+    final sortedAnn = List<_AnnotationEraseRecord>.from(annotations)
+      ..sort((a, b) => a.index.compareTo(b.index));
+    for (final r in sortedAnn) {
+      final idx = r.index.clamp(0, r.node.annotations.length);
+      r.node.annotations.insert(idx, r.ann);
+    }
+    if (annotations.isNotEmpty) s._commitTick.notify();
   }
 
   @override
@@ -3785,7 +6596,25 @@ class _EraseOp extends _CanvasOp {
     for (final stroke in strokes) {
       s._internalRemoveStroke(stroke);
     }
+    for (final r in annotations) {
+      r.node.annotations.remove(r.ann);
+    }
+    if (annotations.isNotEmpty) s._commitTick.notify();
   }
+}
+
+/// Bookkeeping for a single annotation stroke removed by the live
+/// eraser. Used by [_EraseOp.undo] to re-parent the stroke onto its
+/// host image at the original index.
+class _AnnotationEraseRecord {
+  _AnnotationEraseRecord({
+    required this.node,
+    required this.ann,
+    required this.index,
+  });
+  final ImageNode node;
+  final CanvasStrokeNode ann;
+  final int index;
 }
 
 class _ClearOp extends _CanvasOp {
@@ -3818,11 +6647,19 @@ class _PixelEraseRecord {
 }
 
 class _PixelEraseOp extends _CanvasOp {
-  _PixelEraseOp(List<_PixelEraseRecord> records, List<CanvasStroke> survivors)
-    : _records = List<_PixelEraseRecord>.from(records),
-      _survivors = List<CanvasStroke>.from(survivors);
+  _PixelEraseOp(
+    List<_PixelEraseRecord> records,
+    List<CanvasStroke> survivors, {
+    List<_PixelAnnotationEraseRecord>? annotationRecords,
+  }) : _records = List<_PixelEraseRecord>.from(records),
+       _survivors = List<CanvasStroke>.from(survivors),
+       _annotationRecords =
+           annotationRecords == null
+               ? const <_PixelAnnotationEraseRecord>[]
+               : List<_PixelAnnotationEraseRecord>.from(annotationRecords);
   final List<_PixelEraseRecord> _records;
   final List<CanvasStroke> _survivors;
+  final List<_PixelAnnotationEraseRecord> _annotationRecords;
 
   @override
   void undo(FlueraCanvasState s) {
@@ -3836,6 +6673,21 @@ class _PixelEraseOp extends _CanvasOp {
     for (final r in sorted) {
       s._internalInsertStrokeAt(r.index, r.original);
     }
+    // Annotation pass: pull every survivor off its host image, then
+    // re-attach the original at the captured slot. Iterating in
+    // ascending order keeps adjacent annotations stable.
+    final sortedAnn = List<_PixelAnnotationEraseRecord>.from(_annotationRecords)
+      ..sort((a, b) => a.index.compareTo(b.index));
+    for (final r in _annotationRecords) {
+      for (final survivor in r.survivors) {
+        r.node.annotations.remove(survivor);
+      }
+    }
+    for (final r in sortedAnn) {
+      final idx = r.index.clamp(0, r.node.annotations.length);
+      r.node.annotations.insert(idx, r.original);
+    }
+    if (_annotationRecords.isNotEmpty) s._commitTick.notify();
   }
 
   @override
@@ -3848,7 +6700,31 @@ class _PixelEraseOp extends _CanvasOp {
       // multiple ops; Z-order is approximated.
       s._internalInsertStrokeAt(s._strokes.length, survivor);
     }
+    for (final r in _annotationRecords) {
+      r.node.annotations.remove(r.original);
+      for (final survivor in r.survivors) {
+        r.node.annotations.add(survivor);
+      }
+    }
+    if (_annotationRecords.isNotEmpty) s._commitTick.notify();
   }
+}
+
+/// Bookkeeping entry for a single annotation stroke split by the
+/// pixel-mode eraser. Captures the host image, the original
+/// `CanvasStrokeNode`, the original index inside `image.annotations`,
+/// and the survivors that replaced it.
+class _PixelAnnotationEraseRecord {
+  _PixelAnnotationEraseRecord({
+    required this.node,
+    required this.original,
+    required this.index,
+    required this.survivors,
+  });
+  final ImageNode node;
+  final CanvasStrokeNode original;
+  final int index;
+  final List<CanvasStrokeNode> survivors;
 }
 
 // ─── Layer-aware history ops (canvas 0.6.0+) ────────────────────────────
@@ -3975,9 +6851,9 @@ class _MergeDownOp extends _CanvasOp {
     final layers = s._rootLayer.children.whereType<LayerNode>().toList();
     if (upperIndex <= 0 || upperIndex >= layers.length) return;
     final lower = layers[upperIndex - 1];
-    final movedNodes = upper.children
-        .whereType<CanvasStrokeNode>()
-        .toList(growable: false);
+    final movedNodes = upper.children.whereType<CanvasStrokeNode>().toList(
+      growable: false,
+    );
     for (final node in movedNodes) {
       upper.remove(node);
       lower.add(node);
@@ -4068,8 +6944,9 @@ class _FlattenOp extends _CanvasOp {
     // spatial index.
     for (int i = 1; i < layers.length; i++) {
       final src = layers[i];
-      final movedNodes =
-          src.children.whereType<CanvasStrokeNode>().toList(growable: false);
+      final movedNodes = src.children.whereType<CanvasStrokeNode>().toList(
+        growable: false,
+      );
       if (src.isVisible) {
         for (final node in movedNodes) {
           src.remove(node);
@@ -4201,8 +7078,8 @@ class _LayerNameOp extends _CanvasOp {
 /// `localTransform` write into a single undoable step.
 class _TransformNodesOp extends _CanvasOp {
   _TransformNodesOp(Map<NodeId, Matrix4> before, Map<NodeId, Matrix4> after)
-      : _before = Map<NodeId, Matrix4>.from(before),
-        _after = Map<NodeId, Matrix4>.from(after);
+    : _before = Map<NodeId, Matrix4>.from(before),
+      _after = Map<NodeId, Matrix4>.from(after);
 
   final Map<NodeId, Matrix4> _before;
   final Map<NodeId, Matrix4> _after;
@@ -4214,8 +7091,7 @@ class _TransformNodesOp extends _CanvasOp {
     snapshots.forEach((id, m) {
       final node = s._selectableNodes[id];
       if (node == null) return;
-      node.localTransform = m.clone();
-      node.invalidateTransformCache();
+      s._writeLocalTransform(node, m.clone());
     });
     s._refreshSelectionBoundsAfterTransform();
   }
@@ -4233,6 +7109,208 @@ class _TransformNodesOp extends _CanvasOp {
 /// `ui.Image` for an [ImageNode] is NOT evicted on undo — it stays
 /// in [ImageNodePainter] so a redo is instant; the cache is dropped
 /// only when the op falls off the history capacity ring buffer.
+/// One snapshot row for [groupSelection]: which node, which layer
+/// it lived on, and at what index inside that layer's children list.
+/// Used by [_GroupOp.undo] to scatter children back to their
+/// original positions when the user un-groups via undo.
+class _GroupMember {
+  _GroupMember({required this.node, required this.parent, required this.index});
+  final CanvasNode node;
+  final LayerNode parent;
+  final int index;
+}
+
+/// Captures a `groupSelection()` call: the freshly-minted GroupNode,
+/// the layer it lives on, where it was inserted, and where each of
+/// its children originally lived. Undo dissolves the group and puts
+/// every child back at its original index; redo re-groups them.
+class _GroupOp extends _CanvasOp {
+  _GroupOp({
+    required this.group,
+    required this.layer,
+    required this.members,
+    required this.insertedAt,
+  });
+  final GroupNode group;
+  final LayerNode layer;
+  final List<_GroupMember> members;
+  final int insertedAt;
+
+  @override
+  void undo(FlueraCanvasState s) {
+    // Detach every child from the group, scatter them back to the
+    // layer at their original index. Members were sorted desc at
+    // group time; iterate ascending for re-insert so adjacent
+    // indices land in the right slots.
+    final sorted = List<_GroupMember>.from(members)
+      ..sort((a, b) => a.index.compareTo(b.index));
+    for (final m in sorted) {
+      group.remove(m.node);
+    }
+    layer.remove(group);
+    for (final m in sorted) {
+      final idx = m.index.clamp(0, layer.children.length);
+      if (idx >= layer.children.length) {
+        layer.add(m.node);
+      } else {
+        layer.insertAt(idx, m.node);
+      }
+    }
+    s._bumpLayerVersion(layer.id);
+    s._rebuildSelectableIndex();
+    s._selectionController.set(
+      s._selectionFromIds(members.map((m) => m.node.id).toSet()),
+    );
+    s._commitTick.notify();
+  }
+
+  @override
+  void redo(FlueraCanvasState s) {
+    // Pull every original member off its current parent slot,
+    // re-attach to the group, re-insert the group at `insertedAt`.
+    final sortedDesc = List<_GroupMember>.from(members)
+      ..sort((a, b) => b.index.compareTo(a.index));
+    for (final m in sortedDesc) {
+      if (m.node.parent is LayerNode) {
+        (m.node.parent! as LayerNode).remove(m.node);
+      }
+    }
+    for (final m in sortedDesc.reversed) {
+      group.add(m.node);
+    }
+    final idx = insertedAt.clamp(0, layer.children.length);
+    if (idx >= layer.children.length) {
+      layer.add(group);
+    } else {
+      layer.insertAt(idx, group);
+    }
+    s._bumpLayerVersion(layer.id);
+    s._rebuildSelectableIndex();
+    s._selectionController.set(s._selectionFromIds({group.id}));
+    s._commitTick.notify();
+  }
+}
+
+/// One ungroup snapshot: the group that was dissolved, the layer it
+/// lived on, the index it occupied inside that layer's children,
+/// and the ordered ids of the children at dissolve time. The
+/// child-id list is the canonical source of truth for undo because
+/// `group.children` is empty after `ungroupSelection()` (we
+/// explicitly detach to keep the group's `_childIdIndex` clean).
+class _UngroupOp {
+  _UngroupOp({
+    required this.group,
+    required this.layer,
+    required this.groupIndex,
+    required this.formerChildIds,
+  });
+  final GroupNode group;
+  final LayerNode layer;
+  final int groupIndex;
+  final List<String> formerChildIds;
+}
+
+/// Single history step covering every group dissolved by one
+/// `ungroupSelection()` call. Undo re-wraps each set of children
+/// into the original group; redo re-flattens them.
+class _UngroupBatchOp extends _CanvasOp {
+  _UngroupBatchOp(this.ops);
+  final List<_UngroupOp> ops;
+
+  @override
+  void undo(FlueraCanvasState s) {
+    for (final op in ops) {
+      // Pull each former child off the layer using the captured id
+      // list. We can't trust `op.group.children` (empty after the
+      // detach) nor positional indexing (other ops may have
+      // shuffled siblings since dissolve time). The id-keyed lookup
+      // is canonical.
+      final freed = <CanvasNode>[];
+      for (final id in op.formerChildIds) {
+        for (int i = 0; i < op.layer.children.length; i++) {
+          if (op.layer.children[i].id == id) {
+            freed.add(op.layer.children[i]);
+            op.layer.remove(op.layer.children[i]);
+            break;
+          }
+        }
+      }
+      for (final c in freed) {
+        op.group.add(c);
+      }
+      final idx = op.groupIndex.clamp(0, op.layer.children.length);
+      if (idx >= op.layer.children.length) {
+        op.layer.add(op.group);
+      } else {
+        op.layer.insertAt(idx, op.group);
+      }
+      s._bumpLayerVersion(op.layer.id);
+    }
+    s._rebuildSelectableIndex();
+    s._selectionController.set(
+      s._selectionFromIds(ops.map((o) => o.group.id).toSet()),
+    );
+    s._commitTick.notify();
+  }
+
+  @override
+  void redo(FlueraCanvasState s) {
+    final freedIds = <NodeId>{};
+    for (final op in ops) {
+      // Snapshot from the group's *current* children — populated by
+      // the previous undo. Detach properly so the group's id index
+      // is clean if the user undoes/redoes again.
+      final snapshot = List<CanvasNode>.from(op.group.children);
+      for (final c in snapshot) {
+        op.group.remove(c);
+      }
+      op.layer.remove(op.group);
+      for (int i = 0; i < snapshot.length; i++) {
+        op.layer.insertAt(op.groupIndex + i, snapshot[i]);
+        freedIds.add(snapshot[i].id);
+      }
+      s._bumpLayerVersion(op.layer.id);
+    }
+    s._rebuildSelectableIndex();
+    s._selectionController.set(s._selectionFromIds(freedIds));
+    s._commitTick.notify();
+  }
+}
+
+/// Z-order reorder of a single child within its parent layer.
+/// Captured at the moment of the move so undo restores the
+/// original index even after intermediate ops shuffled siblings.
+class _ReorderChildOp extends _CanvasOp {
+  _ReorderChildOp(this.nodeId, this.layerId, this.previousIndex, this.toFront);
+  final NodeId nodeId;
+  final NodeId layerId;
+  final int previousIndex;
+  final bool toFront;
+
+  @override
+  void undo(FlueraCanvasState s) {
+    final layer = s._findLayer(layerId);
+    if (layer == null) return;
+    final node = s._selectableNodes[nodeId];
+    if (node == null) return;
+    layer.remove(node);
+    final idx = previousIndex.clamp(0, layer.children.length);
+    if (idx >= layer.children.length) {
+      layer.add(node);
+    } else {
+      layer.insertAt(idx, node);
+    }
+    s._bumpLayerVersion(layer.id);
+    s._rebuildSelectableIndex();
+    s._commitTick.notify();
+  }
+
+  @override
+  void redo(FlueraCanvasState s) {
+    s._reorderChildToEdge(nodeId, toFront: toFront);
+  }
+}
+
 class _AddLayerChildOp extends _CanvasOp {
   _AddLayerChildOp(this.node, this.layerId, this.index);
   final CanvasNode node;
@@ -4271,10 +7349,18 @@ class _AddLayerChildOp extends _CanvasOp {
     if (n is CanvasStrokeNode) {
       n.stroke.dispose();
     } else if (n is ImageNode) {
-      // Only evict if no LIVE ImageNode references the same path.
+      // Annotation strokes attached to this orphaned image are
+      // unreachable too — release their picture caches alongside the
+      // image's GPU handle.
+      for (final ann in n.annotations) {
+        ann.stroke.dispose();
+      }
+      // Only evict the image-cache entry if no LIVE ImageNode
+      // references the same path. Iterate the non-stroke subset only.
       final path = n.imageElement.imagePath;
       var stillReferenced = false;
-      for (final live in s._selectableNodes.values) {
+      for (final id in s._nonStrokeSelectableIds) {
+        final live = s._selectableNodes[id];
         if (live is ImageNode && live.imageElement.imagePath == path) {
           stillReferenced = true;
           break;
@@ -4338,8 +7424,10 @@ class _DeleteNodesOp extends _CanvasOp {
         // list directly is the only way to round-trip the original id.
         final node = snap.node as CanvasStrokeNode;
         final stroke = node.stroke;
-        final flatIdx = (snap.flatStrokeIndex ?? s._strokes.length)
-            .clamp(0, s._strokes.length);
+        final flatIdx = (snap.flatStrokeIndex ?? s._strokes.length).clamp(
+          0,
+          s._strokes.length,
+        );
         s._strokes.insert(flatIdx, stroke);
         s._spatialIndex.insert(stroke);
         s._strokeToNode[stroke] = node;
@@ -4387,10 +7475,12 @@ class _DeleteNodesOp extends _CanvasOp {
   @override
   void onEvicted(FlueraCanvasState s) {
     // Collect every imagePath still referenced by a live ImageNode
-    // somewhere in the canvas. Compared against once per snapshot —
-    // O(N + K) rather than O(K × N).
+    // somewhere in the canvas. Iterate only the non-stroke subset —
+    // strokes never carry a path, so walking them is wasted work on
+    // canvases with thousands of strokes.
     final livePaths = <String>{};
-    for (final node in s._selectableNodes.values) {
+    for (final id in s._nonStrokeSelectableIds) {
+      final node = s._selectableNodes[id];
       if (node is ImageNode) {
         livePaths.add(node.imageElement.imagePath);
       }
@@ -4402,7 +7492,15 @@ class _DeleteNodesOp extends _CanvasOp {
         // surfaces the stroke later (unlikely after eviction).
         (snap.node as CanvasStrokeNode).stroke.dispose();
       } else if (snap.node is ImageNode) {
-        final path = (snap.node as ImageNode).imageElement.imagePath;
+        final imageNode = snap.node as ImageNode;
+        // Dispose every annotation stroke's `ui.Picture` cache — the
+        // image is forever lost from history, the annotations along
+        // with it. Their handles would otherwise leak for the lifetime
+        // of the process.
+        for (final ann in imageNode.annotations) {
+          ann.stroke.dispose();
+        }
+        final path = imageNode.imageElement.imagePath;
         if (!livePaths.contains(path)) {
           ImageNodePainter.evict(path);
         }
@@ -4455,6 +7553,25 @@ class _CanvasHistory {
     final op = _undo.removeLast();
     _redo.add(op);
     return op;
+  }
+
+  /// Surgical removal of the most recent op that satisfies [test].
+  /// Used by `removeFreshTextNode` to drop the matching
+  /// `_AddLayerChildOp` for an editor session that ended on empty
+  /// text — without touching unrelated entries the way a plain
+  /// [popUndo] would. The op is dropped from the undo stack and its
+  /// `onEvicted` is invoked so any GPU resources it owned are
+  /// released. Returns `true` when an op was removed.
+  bool popMatching(bool Function(_CanvasOp op) test) {
+    for (int i = _undo.length - 1; i >= 0; i--) {
+      if (test(_undo[i])) {
+        final op = _undo.removeAt(i);
+        final s = state;
+        if (s != null) op.onEvicted(s);
+        return true;
+      }
+    }
+    return false;
   }
 
   _CanvasOp? popRedo() {

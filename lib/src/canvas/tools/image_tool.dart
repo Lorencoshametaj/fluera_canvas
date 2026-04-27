@@ -50,9 +50,9 @@ class FlueraImageTool {
       label: 'images',
       extensions: extensions,
     );
-    final XFile? file = await openFile(acceptedTypeGroups: <XTypeGroup>[
-      typeGroup,
-    ]);
+    final XFile? file = await openFile(
+      acceptedTypeGroups: <XTypeGroup>[typeGroup],
+    );
     if (file == null) return null;
     final Uint8List bytes = await file.readAsBytes();
     return commitBytes(
@@ -87,8 +87,11 @@ class FlueraImageTool {
     // twice should produce two independent canvas nodes (the user may
     // expect to drop the second one elsewhere or transform it
     // separately).
-    final imagePath = 'fluera-canvas://memory/$id${label != null ? '/$label' : ''}';
-    ImageNodePainter.cache(imagePath, image);
+    final imagePath =
+        'fluera-canvas://memory/$id${label != null ? '/$label' : ''}';
+    // Register both the decoded `ui.Image` and the original encoded
+    // bytes so the canvas serializer (FCV0 v4+) can persist the asset.
+    ImageNodePainter.cacheWithBytes(imagePath, image, bytes);
     final element = ImageElement(
       id: id,
       imagePath: imagePath,

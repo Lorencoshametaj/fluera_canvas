@@ -20,7 +20,6 @@ class BackgroundImagePainter extends CustomPainter {
     final imageWidth = image.width.toDouble();
     final imageHeight = image.height.toDouble();
 
-
     final srcRect = Rect.fromLTWH(0, 0, imageWidth, imageHeight);
 
     // In image edit mode from infinite canvas, the canvas is already the image size
@@ -54,7 +53,7 @@ class FullScreenDarkOverlayPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final paint =
         Paint()
-          ..color = Colors.black.withValues(alpha:  0.6)
+          ..color = Colors.black.withValues(alpha: 0.6)
           ..style = PaintingStyle.fill;
 
     // Create path per l'intero overlay

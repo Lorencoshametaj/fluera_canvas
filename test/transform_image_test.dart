@@ -6,40 +6,37 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   CanvasStroke makeStroke(int seed) => CanvasStroke(
-        points: List<Offset>.unmodifiable([
-          Offset(seed.toDouble(), 0),
-          Offset(seed.toDouble() + 10, 10),
-        ]),
-        pressures: const [0.5, 0.7],
-        color: Color(0xFF000000 + seed),
-        baseWidth: 2.0,
-      );
+    points: List<Offset>.unmodifiable([
+      Offset(seed.toDouble(), 0),
+      Offset(seed.toDouble() + 10, 10),
+    ]),
+    pressures: const [0.5, 0.7],
+    color: Color(0xFF000000 + seed),
+    baseWidth: 2.0,
+  );
 
   ImageNode makeImage(String id, {Offset position = Offset.zero}) => ImageNode(
-        id: NodeId(id),
-        imageElement: ImageElement(
-          id: id,
-          imagePath: 'fluera-canvas://memory/$id',
-          position: position,
-          createdAt: DateTime.now(),
-          pageIndex: 0,
-        ),
-        imageSize: const Size(100, 80),
-      );
+    id: NodeId(id),
+    imageElement: ImageElement(
+      id: id,
+      imagePath: 'fluera-canvas://memory/$id',
+      position: position,
+      createdAt: DateTime.now(),
+      pageIndex: 0,
+    ),
+    imageSize: const Size(100, 80),
+  );
 
   Widget pump(GlobalKey<FlueraCanvasState> key) => MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: 600,
-            height: 400,
-            child: FlueraCanvas(key: key),
-          ),
-        ),
-      );
+    home: Scaffold(
+      body: SizedBox(width: 600, height: 400, child: FlueraCanvas(key: key)),
+    ),
+  );
 
   group('mirrorSelection over CanvasNode mix', () {
-    testWidgets('image-only selection: mirrorH flips localTransform[0]',
-        (tester) async {
+    testWidgets('image-only selection: mirrorH flips localTransform[0]', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -49,12 +46,16 @@ void main() {
 
       final affected = state.mirrorSelection(Axis.horizontal);
       expect(affected, 1);
-      expect(image.localTransform.storage[0], lessThan(0),
-          reason: 'mirrorH must flip the X-scale component');
+      expect(
+        image.localTransform.storage[0],
+        lessThan(0),
+        reason: 'mirrorH must flip the X-scale component',
+      );
     });
 
-    testWidgets('image-only selection: mirrorV flips localTransform[5]',
-        (tester) async {
+    testWidgets('image-only selection: mirrorV flips localTransform[5]', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -67,8 +68,9 @@ void main() {
       expect(image.localTransform.storage[5], lessThan(0));
     });
 
-    testWidgets('mixed stroke + image: both nodes mirrored, single op pushed',
-        (tester) async {
+    testWidgets('mixed stroke + image: both nodes mirrored, single op pushed', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -92,8 +94,7 @@ void main() {
       expect(image.localTransform.storage[0], 1.0);
     });
 
-    testWidgets('redo of mirrorSelection re-applies to image',
-        (tester) async {
+    testWidgets('redo of mirrorSelection re-applies to image', (tester) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -107,8 +108,10 @@ void main() {
       expect(image.localTransform.storage[0], 1.0);
       state.redo();
       for (int i = 0; i < 16; i++) {
-        expect(image.localTransform.storage[i],
-            closeTo(mirrored.storage[i], 1e-9));
+        expect(
+          image.localTransform.storage[i],
+          closeTo(mirrored.storage[i], 1e-9),
+        );
       }
     });
   });

@@ -18,6 +18,7 @@ import 'fluera_canvas_widget.dart';
 import 'fluera_color_picker_dialog.dart';
 import 'fluera_layer_panel.dart';
 import 'tools/image_tool.dart';
+import 'widgets/fluera_sticker_panel.dart';
 
 /// Default 6-color preset used by [FlueraCanvasToolbar] when no
 /// `palette` is provided. Black + 5 saturated hues, consistent with the
@@ -87,7 +88,12 @@ class FlueraCanvasToolbar extends StatelessWidget {
     this.showLayers = false,
     this.layersBottomSheetTitle,
     this.showSelectionTool = false,
+    this.showLassoTool = false,
     this.showImageTool = false,
+    this.showTextTool = false,
+    this.showStickerPanel = false,
+    this.stickers = kFlueraDefaultStickers,
+    this.stickersBottomSheetTitle,
     this.showTransformActions = false,
     this.eraserRadius,
     this.onEraserRadiusChanged,
@@ -172,12 +178,42 @@ class FlueraCanvasToolbar extends StatelessWidget {
   /// (Phase C2). Default `false`.
   final bool showSelectionTool;
 
+  /// When `true`, the tool segmented control gains a `Lasso` segment
+  /// that maps to [CanvasTool.lasso] — free-form selection by
+  /// dragging a closed path; concave shapes are honoured (vs the
+  /// rectangular marquee). Default `false`.
+  final bool showLassoTool;
+
   /// When `true`, a "picture" trailing IconButton invokes
   /// [FlueraImageTool.pickAndCommit] — opens the platform-native file
   /// picker, decodes the chosen image and commits it on the active
   /// layer. Imperative on purpose: tapping the button doesn't change
   /// `tool`. Default `false`.
   final bool showImageTool;
+
+  /// When `true`, the tool segmented control gains a `Text` segment
+  /// that maps to [CanvasTool.text]. Tap empty canvas to drop a fresh
+  /// `TextNode` and open the live editor; tap an existing text node
+  /// to re-enter editing. Wires through `FlueraTextEditor`. Default
+  /// `false`.
+  final bool showTextTool;
+
+  /// When `true`, a trailing emoji-emotions IconButton opens
+  /// [FlueraStickerPanel] in a Material bottom sheet. The host can
+  /// supply a custom catalogue via [stickers]; the default
+  /// [kFlueraDefaultStickers] is empty (the panel renders a
+  /// "no stickers configured" placeholder until the host provides
+  /// its own). Default `false`.
+  final bool showStickerPanel;
+
+  /// Sticker catalogue rendered by [FlueraStickerPanel] when
+  /// [showStickerPanel] is `true`. Defaults to
+  /// [kFlueraDefaultStickers] (empty).
+  final List<FlueraSticker> stickers;
+
+  /// Optional title shown above the sticker panel inside its bottom
+  /// sheet. Defaults to "Stickers".
+  final String? stickersBottomSheetTitle;
 
   /// When `true` AND a non-empty selection exists, mirror-H / mirror-V
   /// trailing buttons appear in the selection-action row. Wires
@@ -258,6 +294,20 @@ class FlueraCanvasToolbar extends StatelessWidget {
           icon: Icon(Icons.crop_free_rounded),
           tooltip: 'Tap to select, drag empty space to marquee-select',
         ),
+      if (showLassoTool)
+        const ButtonSegment(
+          value: CanvasTool.lasso,
+          label: Text('Lasso'),
+          icon: Icon(Icons.gesture_rounded),
+          tooltip: 'Drag a free-form path to select what falls inside',
+        ),
+      if (showTextTool)
+        const ButtonSegment(
+          value: CanvasTool.text,
+          label: Text('Text'),
+          icon: Icon(Icons.text_fields_rounded),
+          tooltip: 'Tap empty canvas to add text, tap text to edit',
+        ),
     ];
 
     return Container(
@@ -290,6 +340,12 @@ class FlueraCanvasToolbar extends StatelessWidget {
                       if (state == null) return;
                       FlueraImageTool.pickAndCommit(context, state);
                     },
+                  ),
+                if (showStickerPanel)
+                  IconButton(
+                    icon: const Icon(Icons.emoji_emotions_outlined),
+                    tooltip: 'Stickers',
+                    onPressed: () => _openStickerSheet(context),
                   ),
                 if (showLayers)
                   IconButton(
@@ -385,6 +441,49 @@ class FlueraCanvasToolbar extends StatelessWidget {
                   ),
                 ),
                 Expanded(child: FlueraLayerPanel(canvasKey: canvasKey)),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Open the [FlueraStickerPanel] in a Material bottom sheet. Wired
+  /// from the trailing emoji IconButton when [showStickerPanel] is
+  /// `true`. Closes itself when the user taps a sticker so the canvas
+  /// is immediately visible to position the freshly-dropped node.
+  void _openStickerSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetCtx) {
+        return FractionallySizedBox(
+          heightFactor: 0.55,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.max,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: Text(
+                    stickersBottomSheetTitle ?? 'Stickers',
+                    style: Theme.of(sheetCtx).textTheme.titleMedium,
+                  ),
+                ),
+                Expanded(
+                  child: FlueraStickerPanel(
+                    canvasKey: canvasKey,
+                    stickers: stickers,
+                    onSelected: (_, __) => Navigator.of(sheetCtx).maybePop(),
+                  ),
+                ),
               ],
             ),
           ),

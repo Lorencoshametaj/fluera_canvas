@@ -6,11 +6,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   CanvasStroke makeStroke(Offset start, Offset end) => CanvasStroke(
-        points: List<Offset>.unmodifiable([start, end]),
-        pressures: const [0.5, 0.7],
-        color: const Color(0xFF000000),
-        baseWidth: 2.0,
-      );
+    points: List<Offset>.unmodifiable([start, end]),
+    pressures: const [0.5, 0.7],
+    color: const Color(0xFF000000),
+    baseWidth: 2.0,
+  );
 
   ImageNode makeImage(
     String id, {
@@ -31,18 +31,15 @@ void main() {
   }
 
   Widget pump(GlobalKey<FlueraCanvasState> key) => MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: 600,
-            height: 400,
-            child: FlueraCanvas(key: key),
-          ),
-        ),
-      );
+    home: Scaffold(
+      body: SizedBox(width: 600, height: 400, child: FlueraCanvas(key: key)),
+    ),
+  );
 
   group('selection.bounds includes image worldBounds', () {
-    testWidgets('image-only selection bounds = image worldBounds',
-        (tester) async {
+    testWidgets('image-only selection bounds = image worldBounds', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -61,8 +58,9 @@ void main() {
       expect(b.height, closeTo(80, 1e-6));
     });
 
-    testWidgets('mixed stroke + image selection: bounds expands across both',
-        (tester) async {
+    testWidgets('mixed stroke + image selection: bounds expands across both', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;

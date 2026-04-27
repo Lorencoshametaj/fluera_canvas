@@ -7,25 +7,25 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   CanvasStroke makeStroke(int seed) => CanvasStroke(
-        points: List<Offset>.unmodifiable([
-          Offset(seed.toDouble(), 0),
-          Offset(seed.toDouble() + 10, 10),
-        ]),
-        pressures: const [0.5, 0.7],
-        color: Color(0xFF000000 + seed),
-        baseWidth: 2.0,
-      );
+    points: List<Offset>.unmodifiable([
+      Offset(seed.toDouble(), 0),
+      Offset(seed.toDouble() + 10, 10),
+    ]),
+    pressures: const [0.5, 0.7],
+    color: Color(0xFF000000 + seed),
+    baseWidth: 2.0,
+  );
 
   ImageNode makeImage(String id, {Offset position = Offset.zero}) => ImageNode(
-        id: NodeId(id),
-        imageElement: ImageElement(
-          id: id,
-          imagePath: 'fluera-canvas://memory/$id',
-          position: position,
-          createdAt: DateTime.now(),
-          pageIndex: 0,
-        ),
-      );
+    id: NodeId(id),
+    imageElement: ImageElement(
+      id: id,
+      imagePath: 'fluera-canvas://memory/$id',
+      position: position,
+      createdAt: DateTime.now(),
+      pageIndex: 0,
+    ),
+  );
 
   Widget pump(GlobalKey<FlueraCanvasState> key, {Uint8List? bytes}) =>
       MaterialApp(
@@ -39,8 +39,7 @@ void main() {
       );
 
   group('FlueraCanvasState selectable-nodes index', () {
-    testWidgets('initial state contains zero selectable nodes',
-        (tester) async {
+    testWidgets('initial state contains zero selectable nodes', (tester) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -48,8 +47,9 @@ void main() {
       expect(state.debugZOrderIndex, isEmpty);
     });
 
-    testWidgets('pushStroke + addImageNode register both in the index',
-        (tester) async {
+    testWidgets('pushStroke + addImageNode register both in the index', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -66,8 +66,9 @@ void main() {
       expect(nonImageIds, hasLength(1));
     });
 
-    testWidgets('Z-order: image inserted after stroke wins front-most',
-        (tester) async {
+    testWidgets('Z-order: image inserted after stroke wins front-most', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -78,8 +79,11 @@ void main() {
       state.addImageNode(img);
 
       final z = state.debugZOrderIndex;
-      expect(z[img.id]! > z[strokeId]!, isTrue,
-          reason: 'image inserted later must have higher Z than stroke');
+      expect(
+        z[img.id]! > z[strokeId]!,
+        isTrue,
+        reason: 'image inserted later must have higher Z than stroke',
+      );
     });
 
     testWidgets('clear() unregisters all stroke nodes', (tester) async {
@@ -90,29 +94,32 @@ void main() {
       state.pushStrokes([makeStroke(1), makeStroke(2), makeStroke(3)]);
       expect(state.debugSelectableIds, hasLength(3));
       state.clear();
-      expect(state.debugSelectableIds, isEmpty,
-          reason: 'clear() drops every stroke from the selectable index');
+      expect(
+        state.debugSelectableIds,
+        isEmpty,
+        reason: 'clear() drops every stroke from the selectable index',
+      );
     });
 
     testWidgets(
-        'undo of stroke commit removes the node from the selectable index',
-        (tester) async {
-      final key = GlobalKey<FlueraCanvasState>();
-      await tester.pumpWidget(pump(key));
-      final state = key.currentState!;
+      'undo of stroke commit removes the node from the selectable index',
+      (tester) async {
+        final key = GlobalKey<FlueraCanvasState>();
+        await tester.pumpWidget(pump(key));
+        final state = key.currentState!;
 
-      state.pushStroke(makeStroke(1));
-      expect(state.debugSelectableIds, hasLength(1));
+        state.pushStroke(makeStroke(1));
+        expect(state.debugSelectableIds, hasLength(1));
 
-      expect(state.undo(), isTrue);
-      expect(state.debugSelectableIds, isEmpty);
+        expect(state.undo(), isTrue);
+        expect(state.debugSelectableIds, isEmpty);
 
-      expect(state.redo(), isTrue);
-      expect(state.debugSelectableIds, hasLength(1));
-    });
+        expect(state.redo(), isTrue);
+        expect(state.debugSelectableIds, hasLength(1));
+      },
+    );
 
-    testWidgets('addImageNode + undo removes image from index',
-        (tester) async {
+    testWidgets('addImageNode + undo removes image from index', (tester) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -127,8 +134,7 @@ void main() {
       expect(state.debugSelectableIds, contains(img.id));
     });
 
-    testWidgets('removeLayer also drops every contained node',
-        (tester) async {
+    testWidgets('removeLayer also drops every contained node', (tester) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -145,8 +151,11 @@ void main() {
       final defaultLayerId = state.layers.first.id;
       expect(state.removeLayer(defaultLayerId), isTrue);
 
-      expect(state.debugSelectableIds, isNot(contains(img.id)),
-          reason: 'image on the dropped layer must be unregistered');
+      expect(
+        state.debugSelectableIds,
+        isNot(contains(img.id)),
+        reason: 'image on the dropped layer must be unregistered',
+      );
       // Only the lone stroke on l2 remains.
       expect(state.debugSelectableIds, hasLength(1));
     });
@@ -163,8 +172,11 @@ void main() {
       final loadKey = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(loadKey, bytes: bytes));
       final loadState = loadKey.currentState!;
-      expect(loadState.debugSelectableIds, hasLength(2),
-          reason: 'serializer round-trip must repopulate the index');
+      expect(
+        loadState.debugSelectableIds,
+        hasLength(2),
+        reason: 'serializer round-trip must repopulate the index',
+      );
     });
   });
 }

@@ -5,7 +5,8 @@
 // contract. Anything inside `src/` without a corresponding export line is
 // internal and may change at any time.
 //
-// Version: 0.1.0 (pre-release). Until 1.0.0 the API is considered unstable.
+// Version: 0.10.0. Until 1.0.0 the API is considered unstable; minor
+// versions are additive only (no removals, no signature breaks).
 // ════════════════════════════════════════════════════════════════════════════
 
 // ─── CORE UTILITIES ────────────────────────────────────────────────────────
@@ -17,6 +18,10 @@ export 'src/core/engine_error.dart';
 export 'src/core/engine_telemetry.dart';
 export 'src/core/engine_event.dart';
 export 'src/core/engine_event_bus.dart';
+
+// ─── HISTORY PRIMITIVES ────────────────────────────────────────────────────
+
+export 'src/history/canvas_delta_type.dart';
 
 // ─── CANVAS + CAMERA ───────────────────────────────────────────────────────
 
@@ -36,10 +41,14 @@ export 'src/canvas/fluera_layer_panel.dart';
 export 'src/canvas/fluera_blend_mode.dart';
 export 'src/canvas/canvas_background.dart';
 export 'src/canvas/canvas_serializer.dart';
+export 'src/canvas/edge_pan_controller.dart';
 export 'src/canvas/selection/canvas_selection.dart';
 export 'src/canvas/selection/transform_handles.dart'
     show SelectionHandle, TransformMode, TransformMath;
 export 'src/canvas/tools/image_tool.dart';
+export 'src/canvas/tools/text_editor.dart';
+export 'src/canvas/widgets/fluera_sketch.dart';
+export 'src/canvas/widgets/fluera_sticker_panel.dart';
 export 'src/rendering/canvas/image_node_painter.dart';
 
 // ─── DRAWING INPUT + FILTERS ───────────────────────────────────────────────
@@ -204,4 +213,12 @@ export 'src/export/fluera_file_format.dart';
 export 'src/export/fluera_file_export_service.dart';
 export 'src/export/pdf_export_models.dart';
 export 'src/export/svg_importer.dart';
+
+// Vector export (SVG / PDF, multi-page picker, settings panel) lives
+// in the commercial `fluera_canvas_gpu` package — see
+// engine.fluera.dev/pricing for the licensing tiers. canvas free
+// keeps PNG via `state.renderToImage(...)` and binary `.fcv` files
+// via `CanvasSerializer`. Vector formats are intentionally NOT in
+// the free pub.dev tier so the commercial SDK has a meaningful
+// value-add for design-tool / pre-print / plotter customers.
 export 'src/export/timelapse_export_config.dart';

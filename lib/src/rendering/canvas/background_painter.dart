@@ -122,14 +122,20 @@ class BackgroundPainter extends CustomPainter {
 
     // 🌀 FADE: Smooth opacity transition when zooming out.
     // Below 36 tiles: full opacity. 36→80: linear fade. Above 80: invisible.
-    final tileCount = (lastTileX - firstTileX + 1) * (lastTileY - firstTileY + 1);
+    final tileCount =
+        (lastTileX - firstTileX + 1) * (lastTileY - firstTileY + 1);
     if (tileCount > 80) return; // Hard cap — fully invisible
 
     const fadeStart = 36;
     const fadeEnd = 80;
-    final patternOpacity = tileCount <= fadeStart
-        ? 1.0
-        : 1.0 - ((tileCount - fadeStart) / (fadeEnd - fadeStart)).clamp(0.0, 1.0);
+    final patternOpacity =
+        tileCount <= fadeStart
+            ? 1.0
+            : 1.0 -
+                ((tileCount - fadeStart) / (fadeEnd - fadeStart)).clamp(
+                  0.0,
+                  1.0,
+                );
 
     // Apply canvas transform (translate + rotate) then print tiles
     canvas.save();
@@ -139,7 +145,13 @@ class BackgroundPainter extends CustomPainter {
     if (patternOpacity < 1.0) {
       canvas.saveLayer(
         Rect.fromLTWH(0, 0, size.width, size.height),
-        Paint()..color = Color.fromARGB((patternOpacity * 255).round(), 255, 255, 255),
+        Paint()
+          ..color = Color.fromARGB(
+            (patternOpacity * 255).round(),
+            255,
+            255,
+            255,
+          ),
       );
     }
 

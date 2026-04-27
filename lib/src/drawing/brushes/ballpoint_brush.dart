@@ -174,14 +174,18 @@ class BallpointBrush {
           final double t3 = t2 * t;
 
           // Catmull-Rom basis (tension = 0.5)
-          final double cx = 0.5 * ((2.0 * x1) +
-              (-x0 + x2) * t +
-              (2.0 * x0 - 5.0 * x1 + 4.0 * x2 - x3) * t2 +
-              (-x0 + 3.0 * x1 - 3.0 * x2 + x3) * t3);
-          final double cy = 0.5 * ((2.0 * y1) +
-              (-y0 + y2) * t +
-              (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3) * t2 +
-              (-y0 + 3.0 * y1 - 3.0 * y2 + y3) * t3);
+          final double cx =
+              0.5 *
+              ((2.0 * x1) +
+                  (-x0 + x2) * t +
+                  (2.0 * x0 - 5.0 * x1 + 4.0 * x2 - x3) * t2 +
+                  (-x0 + 3.0 * x1 - 3.0 * x2 + x3) * t3);
+          final double cy =
+              0.5 *
+              ((2.0 * y1) +
+                  (-y0 + y2) * t +
+                  (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3) * t2 +
+                  (-y0 + 3.0 * y1 - 3.0 * y2 + y3) * t3);
 
           denseX.add(cx);
           denseY.add(cy);
@@ -192,12 +196,12 @@ class BallpointBrush {
     final int dn = denseX.length;
 
     // Smoothed start/end centers (from dense samples)
-    final startCenter = dn > 0
-        ? Offset(denseX[0], denseY[0])
-        : Offset(sx[0], sy[0]);
-    final endCenter = dn > 0
-        ? Offset(denseX[dn - 1], denseY[dn - 1])
-        : Offset(sx[n - 1], sy[n - 1]);
+    final startCenter =
+        dn > 0 ? Offset(denseX[0], denseY[0]) : Offset(sx[0], sy[0]);
+    final endCenter =
+        dn > 0
+            ? Offset(denseX[dn - 1], denseY[dn - 1])
+            : Offset(sx[n - 1], sy[n - 1]);
 
     // Full circles at start and end (matching C++ generateCircle)
     canvas.drawCircle(startCenter, halfW, fillPaint);
@@ -210,8 +214,14 @@ class BallpointBrush {
       final List<double> dty = List<double>.filled(dn, 0.0);
       for (int i = 0; i < dn; i++) {
         double tdx = 0, tdy = 0;
-        if (i > 0) { tdx += denseX[i] - denseX[i - 1]; tdy += denseY[i] - denseY[i - 1]; }
-        if (i < dn - 1) { tdx += denseX[i + 1] - denseX[i]; tdy += denseY[i + 1] - denseY[i]; }
+        if (i > 0) {
+          tdx += denseX[i] - denseX[i - 1];
+          tdy += denseY[i] - denseY[i - 1];
+        }
+        if (i < dn - 1) {
+          tdx += denseX[i + 1] - denseX[i];
+          tdy += denseY[i + 1] - denseY[i];
+        }
         final double tlen = math.sqrt(tdx * tdx + tdy * tdy);
         if (tlen > 0.001) {
           dtx[i] = tdx / tlen;
@@ -252,9 +262,9 @@ class BallpointBrush {
 
   /// 🚀 Cached outline paths keyed by points list identity.
   /// Expando: auto-cleaned when the ProStroke (and its points list) is GC'd.
-  static final Expando<_CachedOutline> _outlineCache =
-      Expando<_CachedOutline>('ballpointOutline');
-
+  static final Expando<_CachedOutline> _outlineCache = Expando<_CachedOutline>(
+    'ballpointOutline',
+  );
 
   /// Build a Catmull-Rom sub-path starting from [startIndex].
   static Path _buildSubPath(List<dynamic> points, int startIndex) {

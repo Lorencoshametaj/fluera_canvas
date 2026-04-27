@@ -14,6 +14,9 @@ library;
 import 'dart:ui';
 import 'dart:math' as math;
 
+/// Maps raw stylus pressure samples through a configurable curve so
+/// brush widths react smoothly to user pen pressure. Tunable via
+/// [minPressure] / [maxPressure] + curve shape.
 class DynamicPressureMapper {
   /// Range di pressione (0.0 = min, 1.0 = max)
   final double minPressure;

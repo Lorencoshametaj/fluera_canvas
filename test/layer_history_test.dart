@@ -6,24 +6,20 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   CanvasStroke makeStroke(int seed) => CanvasStroke(
-        points: List<Offset>.unmodifiable([
-          Offset(seed.toDouble(), 0),
-          Offset(seed.toDouble() + 10, 0),
-        ]),
-        pressures: const [0.5, 0.7],
-        color: Color(0xFF000000 + seed),
-        baseWidth: 2.0,
-      );
+    points: List<Offset>.unmodifiable([
+      Offset(seed.toDouble(), 0),
+      Offset(seed.toDouble() + 10, 0),
+    ]),
+    pressures: const [0.5, 0.7],
+    color: Color(0xFF000000 + seed),
+    baseWidth: 2.0,
+  );
 
   Widget pump(GlobalKey<FlueraCanvasState> key) => MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: 400,
-            height: 400,
-            child: FlueraCanvas(key: key),
-          ),
-        ),
-      );
+    home: Scaffold(
+      body: SizedBox(width: 400, height: 400, child: FlueraCanvas(key: key)),
+    ),
+  );
 
   group('Layer history ops (undo/redo)', () {
     testWidgets('addLayer is undoable + redoable', (tester) async {
@@ -36,16 +32,20 @@ void main() {
       expect(state.layers, hasLength(2));
 
       expect(state.undo(), isTrue);
-      expect(state.layers, hasLength(1),
-          reason: 'addLayer undo should drop the layer');
+      expect(
+        state.layers,
+        hasLength(1),
+        reason: 'addLayer undo should drop the layer',
+      );
 
       expect(state.redo(), isTrue);
       expect(state.layers, hasLength(2));
       expect(state.layers.last.id, created.id);
     });
 
-    testWidgets('removeLayer restores the layer + its strokes on undo',
-        (tester) async {
+    testWidgets('removeLayer restores the layer + its strokes on undo', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -61,21 +61,28 @@ void main() {
       final removed = state.removeLayer(state.layers.first.id);
       expect(removed, isTrue);
       expect(state.layers, hasLength(1));
-      expect(state.strokeCount, 2,
-          reason: 'removed layer\'s strokes should be dropped');
+      expect(
+        state.strokeCount,
+        2,
+        reason: 'removed layer\'s strokes should be dropped',
+      );
 
       expect(state.undo(), isTrue);
       expect(state.layers, hasLength(2));
-      expect(state.strokeCount, 4,
-          reason: 'undo should reattach all dropped strokes');
+      expect(
+        state.strokeCount,
+        4,
+        reason: 'undo should reattach all dropped strokes',
+      );
 
       expect(state.redo(), isTrue);
       expect(state.layers, hasLength(1));
       expect(state.strokeCount, 2);
     });
 
-    testWidgets('setLayerVisible / setLayerLocked are undoable',
-        (tester) async {
+    testWidgets('setLayerVisible / setLayerLocked are undoable', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -92,8 +99,9 @@ void main() {
       expect(state.activeLayer.isLocked, isFalse);
     });
 
-    testWidgets('setLayerOpacity is undoable + tolerant to no-op writes',
-        (tester) async {
+    testWidgets('setLayerOpacity is undoable + tolerant to no-op writes', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -101,8 +109,11 @@ void main() {
       final undoBefore = state.historyLength;
 
       state.setLayerOpacity(layer.id, 1.0);
-      expect(state.historyLength, undoBefore,
-          reason: 'opacity 1.0 -> 1.0 should not push to history');
+      expect(
+        state.historyLength,
+        undoBefore,
+        reason: 'opacity 1.0 -> 1.0 should not push to history',
+      );
 
       state.setLayerOpacity(layer.id, 0.4);
       expect(layer.opacity, closeTo(0.4, 1e-6));
@@ -110,8 +121,9 @@ void main() {
       expect(layer.opacity, closeTo(1.0, 1e-6));
     });
 
-    testWidgets('reorderLayer is undoable, restores original Z-order',
-        (tester) async {
+    testWidgets('reorderLayer is undoable, restores original Z-order', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;
@@ -130,8 +142,9 @@ void main() {
       expect(state.layers.map((l) => l.id), [l3.id, l1.id, l2.id]);
     });
 
-    testWidgets('setLayerName + setLayerBlendMode are undoable',
-        (tester) async {
+    testWidgets('setLayerName + setLayerBlendMode are undoable', (
+      tester,
+    ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(key));
       final state = key.currentState!;

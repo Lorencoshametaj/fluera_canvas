@@ -7,10 +7,10 @@
 // ============================================================================
 
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import '../core/models/canvas_layer.dart';
+import '_file_reader_stub.dart' if (dart.library.io) '_file_reader_io.dart';
 import 'binary_canvas_format.dart';
 import 'fluera_file_format.dart';
 
@@ -216,16 +216,13 @@ class FlueraFileExportService {
         if (path.isEmpty || seenPaths.contains(path)) continue;
         seenPaths.add(path);
 
-        try {
-          final file = File(path);
-          if (await file.exists()) {
-            final fileBytes = await file.readAsBytes();
-            if (fileBytes.isNotEmpty) {
-              writer.addAssetBlob(path.hashCode, fileBytes);
-            }
-          }
-        } catch (_) {
-          // File not accessible — skip embedding, image will be path-only
+        // Web-safe: the IO impl returns the file bytes when the
+        // path resolves locally; the web stub returns `null` so the
+        // image is embedded path-only and the host app re-fetches
+        // the asset at load time.
+        final fileBytes = await readFileBytesIfExists(path);
+        if (fileBytes != null && fileBytes.isNotEmpty) {
+          writer.addAssetBlob(path.hashCode, fileBytes);
         }
       }
     }

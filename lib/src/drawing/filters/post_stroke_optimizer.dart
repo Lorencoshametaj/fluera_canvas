@@ -14,6 +14,11 @@ library;
 import 'dart:ui';
 import 'dart:math' as math;
 
+/// Pen-up stroke compactor. Runs Douglas-Peucker simplification +
+/// optional resampling on the raw point list before commit. Trades
+/// a tiny pen-up shape shift for smaller `.fcv` files and faster
+/// spatial-index queries; controlled via `simplifyEpsilon` on
+/// `FlueraCanvas`.
 class PostStrokeOptimizer {
   /// Tolleranza per simplification (more alta = more aggressiva)
   final double simplificationTolerance;

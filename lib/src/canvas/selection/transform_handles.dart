@@ -96,28 +96,22 @@ class TransformMath {
     assert(_isEdge(grabbed), 'edgeScale requires a mid-edge handle');
     switch (grabbed) {
       case SelectionHandle.topMid:
-        final anchor = Offset(
-          originalBounds.center.dx,
-          originalBounds.bottom,
-        );
+        final anchor = Offset(originalBounds.center.dx, originalBounds.bottom);
         final orig = originalBounds.top - anchor.dy;
         final cur = pointer.dy - anchor.dy;
         return (sx: 1.0, sy: orig == 0 ? 1.0 : cur / orig, anchor: anchor);
       case SelectionHandle.bottomMid:
-        final anchor =
-            Offset(originalBounds.center.dx, originalBounds.top);
+        final anchor = Offset(originalBounds.center.dx, originalBounds.top);
         final orig = originalBounds.bottom - anchor.dy;
         final cur = pointer.dy - anchor.dy;
         return (sx: 1.0, sy: orig == 0 ? 1.0 : cur / orig, anchor: anchor);
       case SelectionHandle.midLeft:
-        final anchor =
-            Offset(originalBounds.right, originalBounds.center.dy);
+        final anchor = Offset(originalBounds.right, originalBounds.center.dy);
         final orig = originalBounds.left - anchor.dx;
         final cur = pointer.dx - anchor.dx;
         return (sx: orig == 0 ? 1.0 : cur / orig, sy: 1.0, anchor: anchor);
       case SelectionHandle.midRight:
-        final anchor =
-            Offset(originalBounds.left, originalBounds.center.dy);
+        final anchor = Offset(originalBounds.left, originalBounds.center.dy);
         final orig = originalBounds.right - anchor.dx;
         final cur = pointer.dx - anchor.dx;
         return (sx: orig == 0 ? 1.0 : cur / orig, sy: 1.0, anchor: anchor);
@@ -133,7 +127,9 @@ class TransformMath {
     final pre = Matrix4.translationValues(anchor.dx, anchor.dy, 0);
     final scl = Matrix4.diagonal3Values(sx, sy, 1);
     final post = Matrix4.translationValues(-anchor.dx, -anchor.dy, 0);
-    return pre..multiply(scl)..multiply(post);
+    return pre
+      ..multiply(scl)
+      ..multiply(post);
   }
 
   /// Compute the rotation delta (radians) for a rotate-handle drag.
@@ -167,16 +163,16 @@ class TransformMath {
     final pre = Matrix4.translationValues(pivot.dx, pivot.dy, 0);
     final rot = Matrix4.rotationZ(radians);
     final post = Matrix4.translationValues(-pivot.dx, -pivot.dy, 0);
-    return pre..multiply(rot)..multiply(post);
+    return pre
+      ..multiply(rot)
+      ..multiply(post);
   }
 
   /// Mirror a node around a vertical axis [x].
-  static Matrix4 mirrorH(double x) =>
-      scaleAroundAnchor(-1, 1, Offset(x, 0));
+  static Matrix4 mirrorH(double x) => scaleAroundAnchor(-1, 1, Offset(x, 0));
 
   /// Mirror a node around a horizontal axis [y].
-  static Matrix4 mirrorV(double y) =>
-      scaleAroundAnchor(1, -1, Offset(0, y));
+  static Matrix4 mirrorV(double y) => scaleAroundAnchor(1, -1, Offset(0, y));
 
   // ── Handle introspection ─────────────────────────────────────────────
 

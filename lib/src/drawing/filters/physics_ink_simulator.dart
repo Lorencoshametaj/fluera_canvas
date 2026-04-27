@@ -13,6 +13,10 @@ library;
 
 import 'dart:ui';
 
+/// Spring + damper simulation for inertial ink trails. The cursor
+/// "pulls" a virtual point through a damped spring; the simulated
+/// position is what the painter draws, giving strokes a subtle
+/// follow-through after pen-up.
 class PhysicsInkSimulator {
   /// Damping coefficient (0.0 = no damping, 1.0 = stops immediately)
   final double damping;

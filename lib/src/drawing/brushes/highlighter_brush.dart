@@ -102,9 +102,13 @@ class HighlighterBrush {
         if (strokeAngle < 0.14) {
           // Use average Y for all points
           double sumY = 0;
-          for (int i = 0; i < n; i++) sumY += py[i];
+          for (int i = 0; i < n; i++) {
+            sumY += py[i];
+          }
           final avgY = sumY / n;
-          for (int i = 0; i < n; i++) py[i] = avgY;
+          for (int i = 0; i < n; i++) {
+            py[i] = avgY;
+          }
         }
       }
     }
@@ -136,12 +140,14 @@ class HighlighterBrush {
         final t2 = t * t;
         final t3 = t2 * t;
 
-        final cx = 0.5 *
+        final cx =
+            0.5 *
             ((2.0 * x1) +
                 (-x0 + x2) * t +
                 (2.0 * x0 - 5.0 * x1 + 4.0 * x2 - x3) * t2 +
                 (-x0 + 3.0 * x1 - 3.0 * x2 + x3) * t3);
-        final cy = 0.5 *
+        final cy =
+            0.5 *
             ((2.0 * y1) +
                 (-y0 + y2) * t +
                 (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3) * t2 +
