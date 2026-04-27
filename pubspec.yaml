@@ -2,7 +2,7 @@ name: fluera_canvas
 description: >
   Document-grade infinite-canvas SDK for Flutter — layered scene graph,
   selection + transform, lasso, image annotations, text, keyboard shortcuts.
-version: 0.10.2
+version: 0.10.3
 homepage: https://engine.fluera.dev
 repository: https://github.com/Lorencoshametaj/fluera_canvas
 issue_tracker: https://github.com/Lorencoshametaj/fluera_canvas/issues

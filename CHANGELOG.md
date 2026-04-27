@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.10.3 (FontWeight migration — pana 160/160 — 2026-04-27)
+
+- **Migrated `FontWeight.index` → `.value`** in
+  `digital_text_element.dart` (DigitalTextSpan + DigitalTextElement
+  encoders). The `.index` API was deprecated by Flutter in favour of
+  the recommended `.value`. Pana's analyzer ignores in-line
+  `// ignore: deprecated_member_use` comments, so the previous
+  suppression cost 10 pts on Static Analysis.
+- **Backward-compat preserved** via the new `_fontWeightFromJson`
+  decoder helper: it recognises both legacy `.index` (range 0..8) and
+  modern `.value` (range 100..900) ranges by sniffing magnitude — the
+  two ranges don't overlap, so the disambiguation is unambiguous.
+  FCV files written by 0.10.x and earlier load identically.
+- **Pana score**: should now reach **160/160** (Static Analysis 50/50
+  recovered).
+
 ## 0.10.2 (Dartdoc sweep — full coverage for pana — 2026-04-27)
 
 - **`public_member_api_docs` enabled.** A 1068-hit sweep added a

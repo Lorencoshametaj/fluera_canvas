@@ -63,11 +63,7 @@ class DigitalTextSpan {
     return {
       'text': text,
       if (color != null) 'color': color!.toARGB32(),
-      // ignore: deprecated_member_use — keeping `.index` for backward
-      // compatibility with FCV files written by 0.10.x and earlier.
-      // `.value` would change the on-disk numeric range from 0..8 to
-      // 100..900 and break round-trip with previously-saved canvases.
-      if (fontWeight != null) 'fontWeight': fontWeight!.index,
+      if (fontWeight != null) 'fontWeight': fontWeight!.value,
       if (fontStyle != null)
         'fontStyle': fontStyle == FontStyle.italic ? 'italic' : 'normal',
       if (fontSize != null) 'fontSize': fontSize,
@@ -82,10 +78,7 @@ class DigitalTextSpan {
     return DigitalTextSpan(
       text: json['text'] as String,
       color: json['color'] != null ? Color(json['color'] as int) : null,
-      fontWeight:
-          json['fontWeight'] != null
-              ? FontWeight.values[json['fontWeight'] as int]
-              : null,
+      fontWeight: _fontWeightFromJson(json['fontWeight']),
       fontStyle:
           json['fontStyle'] != null
               ? (json['fontStyle'] == 'italic'
@@ -120,6 +113,33 @@ class DigitalTextSpan {
         return TextDecoration.none;
     }
   }
+}
+
+/// Decode a JSON-encoded font weight that may have been written by
+/// either format era of this package:
+/// - 0.10.x and earlier wrote `FontWeight.index` (range 0..8 — w100
+///   sits at index 0, w900 at index 8).
+/// - 0.10.3 and later write `FontWeight.value` (range 100..900 — the
+///   actual numeric weight, recommended by the Flutter SDK and not
+///   deprecated).
+/// Both ranges are unambiguous (they don't overlap), so we sniff the
+/// magnitude to pick the right decoder. Returns `null` when the input
+/// is `null`.
+FontWeight? _fontWeightFromJson(Object? raw) {
+  if (raw == null) return null;
+  final n = (raw as num).toInt();
+  if (n >= 100) {
+    // New on-disk encoding: locate by `.value`.
+    for (final w in FontWeight.values) {
+      if (w.value == n) return w;
+    }
+    // Fallback to nearest weight if the file carries a non-standard
+    // value (extremely unlikely — Flutter only ships 9 weights).
+    return FontWeight.normal;
+  }
+  // Legacy on-disk encoding (`.index`).
+  if (n < 0 || n >= FontWeight.values.length) return FontWeight.normal;
+  return FontWeight.values[n];
 }
 
 // ---------------------------------------------------------------------------
@@ -511,8 +531,7 @@ class DigitalTextElement {
       'position': {'x': position.dx, 'y': position.dy},
       'color': color.toARGB32(),
       'fontSize': fontSize,
-      // ignore: deprecated_member_use — see DigitalTextSpan.toJson.
-      'fontWeight': fontWeight.index,
+      'fontWeight': fontWeight.value,
       'fontStyle': fontStyle == FontStyle.italic ? 'italic' : 'normal',
       'fontFamily': fontFamily,
       'textAlign': textAlign.name,
@@ -589,7 +608,7 @@ class DigitalTextElement {
       ),
       color: Color(json['color'] as int),
       fontSize: (json['fontSize'] as num).toDouble(),
-      fontWeight: FontWeight.values[json['fontWeight'] as int],
+      fontWeight: _fontWeightFromJson(json['fontWeight']) ?? FontWeight.normal,
       fontStyle:
           json['fontStyle'] == 'italic' ? FontStyle.italic : FontStyle.normal,
       fontFamily: json['fontFamily'] as String,

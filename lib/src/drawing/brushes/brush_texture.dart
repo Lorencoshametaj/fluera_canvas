@@ -52,7 +52,16 @@ class BrushTexture {
   };
 
   /// Package name used for asset resolution when consumed as a dependency.
-  static const String _packageName = 'fluera_engine';
+  ///
+  /// As of canvas_gpu 1.3.0 the texture PNGs are bundled with the
+  /// commercial GPU SDK so it's self-contained. Engine continues to
+  /// declare them too for older clients that load via the
+  /// `fluera_engine` prefix; loaders try canvas_gpu first then fall
+  /// back through engine then bare path.
+  static const List<String> _packageCandidates = <String>[
+    'fluera_canvas_gpu',
+    'fluera_engine',
+  ];
 
   /// Loads a texture asynchronously with caching.
   /// Returns `null` if the type is `none` or if loading fails.
@@ -70,15 +79,19 @@ class BrushTexture {
       final path = _assetPaths[type];
       if (path == null) return null;
 
-      // Try package-prefixed path first (required when consumed as a
-      // dependency), then fall back to bare path (when running directly
-      // from within the package).
-      late final ByteData data;
-      try {
-        data = await rootBundle.load('packages/$_packageName/$path');
-      } catch (_) {
-        data = await rootBundle.load(path);
+      // Try each candidate package prefix in order (canvas_gpu →
+      // engine), then fall back to bare path (when running directly
+      // from within a package that declares the asset).
+      ByteData? data;
+      for (final pkg in _packageCandidates) {
+        try {
+          data = await rootBundle.load('packages/$pkg/$path');
+          break;
+        } catch (_) {
+          // Try the next candidate.
+        }
       }
+      data ??= await rootBundle.load(path);
       final codec = await ui.instantiateImageCodec(data.buffer.asUint8List());
       final frame = await codec.getNextFrame();
       _cache[type] = frame.image;
