@@ -16,7 +16,7 @@ fluera_canvas/
 │       ├── rendering/               # Painters, spatial index, GPU bridge
 │       ├── export/                  # Binary / JSON / PNG / .fluera codecs
 │       └── utils/                   # Cross-cutting utilities
-├── example/                         # Runnable gallery (7 demos)
+├── example/                         # Runnable gallery (12 demos, incl. zero-config)
 ├── test/                            # Unit + widget tests
 ├── doc/                             # Long-form guides (architecture, perf, …)
 └── android/, ios/, linux/, ...      # Native plugin scaffolding
@@ -31,13 +31,11 @@ consumer code.
 
 ### Source of truth for canvas-core
 
-`fluera_canvas` is the **canonical home** for canvas, scene graph, rendering
-and drawing primitives across the Fluera monorepo. Its sister package
-`fluera_engine` is private and depends on this one — its older parallel
-implementation in `lib/src/{canvas,drawing,rendering,core/scene_graph}` is
-in **freeze**. Bug-fixes and new features for those concepts land here
-first; engine picks them up via dependency. See the monorepo doc
-`docs/CANVAS_OWNERSHIP.md` for the full rule and the migration tracker.
+`fluera_canvas` is the **canonical home** for canvas, scene graph,
+rendering and drawing primitives. The commercial `fluera_canvas_gpu`
+add-on depends on this package via the public `GpuStrokeBackend`
+interface — bug-fixes and new features for shared concepts (scene
+graph, painters, persistence, smoothing pipeline) land here first.
 
 ## Setup
 
@@ -91,7 +89,7 @@ A change is **ready to merge** when:
 - `flutter analyze` is clean
 - All `flutter test` cases pass
 - `dart format` is a no-op
-- `pana` score ≥ 150 (current baseline; aim to keep or improve)
+- `pana` score ≥ 160 (current baseline since 0.10.3; aim to keep)
 - A new test covers the change (unit for logic, widget for UI / lifecycle)
 - README / CHANGELOG / dartdoc updated if the public API changed
 
@@ -148,19 +146,29 @@ doc/troubleshooting-impeller.md for the long write-up.
 ## What lives in `fluera_canvas` vs `fluera_canvas_gpu`
 
 `fluera_canvas` (this repo, free MIT, on pub.dev):
-- `FlueraCanvas` widget + drop-in toolbar
+- `FlueraCanvas` widget + `FlueraCanvasToolbar` drop-in toolbar
+- `FlueraSketch` / `FlueraSketchScaffold` / `FlueraSketchApp` —
+  zero-config drop-in widgets (3 levels of "magic")
 - Camera (`InfiniteCanvasController`) and gesture handling
-- Pen / eraser tools
-- Spatial index, viewport culling, undo/redo
-- Serializer (binary + JSON), PNG export
-- Background patterns
+- Pen / stroke-eraser / pixel-eraser / shape / select / lasso /
+  text / image / sticker tools
+- Spatial index, viewport culling, undo/redo, snap-to-grid + smart
+  guides, group/ungroup, Z-order, duplicate, keyboard shortcuts
+- Five-stage stroke smoothing pipeline (One-Euro → arc-length
+  subdivision → EMA → ghost anchor → Catmull-Rom cubic bezier)
+- Serializer (binary FCV0 v6 + JSON), PNG export with 4
+  bounds modes (`viewport` / `allContent` / `selection` / `custom`)
+- Layer system with opacity / blend mode / mask + LayerPictureCache
+- Background patterns (solid / grid / dotted / lined)
 - Dart fallback live-stroke painter
-- Scene-graph BASE primitives (visitor, node interfaces)
+- Full scene graph (`CanvasStrokeNode`, `ShapeNode`, `TextNode`,
+  `ImageNode`, `PathNode`, `GroupNode`, `LayerNode`)
 
 `fluera_canvas_gpu` (commercial, separate repo, license tiers
-Indie / Team / Enterprise):
+Indie / Team — see [doc/commercial-add-ons.md](doc/commercial-add-ons.md)):
 - Native GPU live-stroke pipeline (Vulkan / Metal / OpenGL / D3D11 / WebGPU)
 - Sub-frame latency live ink
+- Vector export (SVG / PDF)
 
 The split is intentional: a free pub.dev consumer can ship a fully
 working canvas without the GPU plugin. With the plugin registered at

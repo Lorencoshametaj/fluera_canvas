@@ -5,7 +5,7 @@
 // contract. Anything inside `src/` without a corresponding export line is
 // internal and may change at any time.
 //
-// Version: 0.10.3. Until 1.0.0 the API is considered unstable; minor
+// Version: 0.10.4. Until 1.0.0 the API is considered unstable; minor
 // versions are additive only (no removals, no signature breaks).
 // ════════════════════════════════════════════════════════════════════════════
 

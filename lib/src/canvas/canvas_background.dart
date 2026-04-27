@@ -6,12 +6,16 @@
 //   • grid (square cells)
 //   • dotted (punched dots)
 //   • lined (horizontal rules — note-taking style)
+//   • paperGrain (canvas_gpu 1.3.0 — Feature #4 paper texture overlay)
 //
 // The pattern is rendered in world space and stays anchored to the canvas
 // origin, so panning/zooming feels like moving over a real sheet of paper.
 // ════════════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
+
+import '../drawing/brushes/brush_texture.dart';
+import '../rendering/canvas/paper_grain_painter.dart';
 
 /// Background decoration for [FlueraCanvas]. Use one of the factory
 /// constructors — [solid], [grid], [dotted], [lined] — to pick a style.
@@ -76,6 +80,32 @@ class CanvasBackground {
          dotRadius: 0,
        );
 
+  /// Paper grain — tiles a [`PaperType`] texture (charcoal,
+  /// pencil grain, watercolor cold-press, canvas weave, kraft)
+  /// over a base [fill] color. Strokes draw on top of the grain
+  /// without modifying it. Added in canvas_gpu 1.3.0
+  /// (Feature #4 brush textures + paper grain).
+  ///
+  /// The actual texture image is loaded asynchronously via
+  /// [`BrushTexture.load`] on first paint; subsequent paints reuse
+  /// the cached image. While the image is loading the painter
+  /// falls back to the [fill] color only — no flash of unstyled
+  /// content.
+  const CanvasBackground.paperGrain({
+    required PaperType paperType,
+    Color fill = const Color(0xFFFAFAFA),
+    double opacity = 0.4,
+    double scale = 1.5,
+  }) : this._(
+         type: _Type.paperGrain,
+         fill: fill,
+         lineColor: const Color(0x00000000),
+         spacing: scale,
+         lineWidth: opacity,
+         dotRadius: 0,
+         paperType: paperType,
+       );
+
   const CanvasBackground._({
     required _Type type,
     required this.fill,
@@ -83,6 +113,7 @@ class CanvasBackground {
     required this.spacing,
     required this.lineWidth,
     required this.dotRadius,
+    this.paperType,
   }) : _type = type;
 
   final _Type _type;
@@ -90,12 +121,15 @@ class CanvasBackground {
   final Color fill;
   /// Field `lineColor`.
   final Color lineColor;
-  /// Field `spacing`.
+  /// Field `spacing` — also reused as `scale` for `paperGrain`.
   final double spacing;
-  /// Field `lineWidth`.
+  /// Field `lineWidth` — also reused as `opacity` for `paperGrain`.
   final double lineWidth;
   /// Field `dotRadius`.
   final double dotRadius;
+  /// Paper texture type (only used when `_type == paperGrain`).
+  /// canvas_gpu 1.3.0 (Feature #4).
+  final PaperType? paperType;
 
   /// Paint the background. [viewport] is the visible rect in world space;
   /// implementations draw the pattern only where it's actually visible so
@@ -109,7 +143,73 @@ class CanvasBackground {
       _paintDotted(canvas, viewport, scale);
     } else if (t == _Type.lined) {
       _paintLined(canvas, viewport, scale);
+    } else if (t == _Type.paperGrain) {
+      _paintPaperGrain(canvas, viewport, scale);
     }
+  }
+
+  /// 1.4.0 optim #9 — memoize the `Paint` object for the paper
+  /// grain so we don't reconstruct the `ImageShader` on every
+  /// frame. Keyed by `(textureImage.identityHash, opacity, scale)`
+  /// so opacity / scale changes (rare — only when the consumer
+  /// re-applies a preset) invalidate naturally.
+  static final Map<int, Paint> _paintCache = <int, Paint>{};
+
+  /// Tile the paper-grain texture across the visible viewport.
+  /// `lineWidth` slot stores opacity, `spacing` slot stores
+  /// scale (chosen so the existing const constructor stays
+  /// const-compatible without adding new fields).
+  void _paintPaperGrain(Canvas canvas, Rect v, double scale) {
+    final paper = paperType;
+    if (paper == null || paper == PaperType.smooth) return;
+    final textureType = PaperGrainPainter.textureTypeForPaper(paper);
+    final image = BrushTexture.getCached(textureType);
+    if (image == null) {
+      // Texture not yet loaded — kick off async load. The next
+      // repaint (after `_textureLoadKick` resolves) will draw
+      // the tile pattern. Until then the base [fill] is shown.
+      _textureLoadKick(textureType);
+      return;
+    }
+    final cacheKey = Object.hash(
+      identityHashCode(image),
+      lineWidth, // opacity
+      spacing, // scale
+    );
+    final paint = _paintCache.putIfAbsent(
+      cacheKey,
+      () => BrushTexture.createTexturePaint(
+            textureImage: image,
+            intensity: lineWidth,
+            scale: spacing,
+          ) ??
+          Paint(),
+    );
+    canvas.drawRect(v, paint);
+  }
+
+  /// 1.4.0 optim #2 — paint() is called per-frame; without a guard
+  /// we'd fire a fresh microtask + duplicate `BrushTexture.load`
+  /// call every frame until the texture lands in the cache. Track
+  /// in-flight loads here so each `TextureType` triggers at most
+  /// one outstanding microtask.
+  static final Set<TextureType> _kickInFlight = <TextureType>{};
+
+  /// Async-fire the texture load on first paint. The image lands
+  /// in `BrushTexture._cache` and the canvas picks it up on the
+  /// next repaint cycle (driven by the canvas's commit ticker).
+  static void _textureLoadKick(TextureType type) {
+    if (_kickInFlight.contains(type)) return;
+    _kickInFlight.add(type);
+    // Fire-and-forget: BrushTexture.load is idempotent + cached.
+    // Wrap in a microtask so we don't block the paint thread.
+    Future<void>.microtask(() async {
+      try {
+        await BrushTexture.load(type);
+      } finally {
+        _kickInFlight.remove(type);
+      }
+    });
   }
 
   void _paintGrid(Canvas canvas, Rect v, double scale) {
@@ -162,11 +262,19 @@ class CanvasBackground {
       other.lineColor == lineColor &&
       other.spacing == spacing &&
       other.lineWidth == lineWidth &&
-      other.dotRadius == dotRadius;
+      other.dotRadius == dotRadius &&
+      other.paperType == paperType;
 
   @override
-  int get hashCode =>
-      Object.hash(_type, fill, lineColor, spacing, lineWidth, dotRadius);
+  int get hashCode => Object.hash(
+        _type,
+        fill,
+        lineColor,
+        spacing,
+        lineWidth,
+        dotRadius,
+        paperType,
+      );
 }
 
-enum _Type { solid, grid, dotted, lined }
+enum _Type { solid, grid, dotted, lined, paperGrain }

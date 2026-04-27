@@ -117,6 +117,43 @@ class BrushTexture {
     await Future.wait(futures);
   }
 
+  /// canvas_gpu 1.4.0 optim #5 — Bring-your-own custom texture.
+  /// Replaces the cached image for [type] with [image], so every
+  /// downstream call (`getCached`, `createTexturePaint`,
+  /// `applyTextureToPath`, paper-grain background) uses the
+  /// consumer-supplied texture instead of the bundled PNG.
+  ///
+  /// Use case: ship a brand-specific paper texture pack without
+  /// re-implementing the brush + grain pipeline. The TextureType
+  /// enum stays as the public id; only the underlying image is
+  /// swapped.
+  ///
+  /// To revert to the bundled PNG, pass `null` and call
+  /// [`load`] again — it'll re-fetch from the asset bundle.
+  ///
+  /// **Caveat**: this swap is process-global; multiple
+  /// `FlueraCanvas` instances in the same isolate share the
+  /// cache. Per-canvas custom textures are not supported in V1.
+  static void registerCustomTexture(TextureType type, ui.Image? image) {
+    if (type == TextureType.none) return;
+    if (image == null) {
+      _cache.remove(type);
+    } else {
+      _cache[type] = image;
+    }
+  }
+
+  /// Test-only escape hatch — drop every cached texture so a
+  /// subsequent `load()` re-fetches from the asset bundle. Useful
+  /// in widget tests that exercise the BYO custom-texture path.
+  ///
+  /// Annotated `@visibleForTesting` so production calls trip a
+  /// lint.
+  static void debugClearCache() {
+    _cache.clear();
+    _loading.clear();
+  }
+
   /// Creates un Paint con ImageShader for the texture
   ///
   /// [textureImage] L'immagine texture caricata

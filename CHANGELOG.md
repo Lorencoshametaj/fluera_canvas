@@ -1,6 +1,30 @@
 # Changelog
 
-## 0.10.3 (FontWeight migration — pana 160/160 — 2026-04-27)
+## 0.10.4 (Final FontWeight.index leftover — pana 160/160 — 2026-04-27)
+
+- **One last `FontWeight.index` was hiding** in
+  `lib/src/export/binary_canvas_format.dart:286` — pana flagged it
+  even after the 0.10.3 sweep that fixed the other two callsites in
+  `digital_text_element.dart`. Migrated to
+  `FontWeight.values.indexOf(...)` (returns the same 0..8 enum
+  position, but doesn't go through the deprecated getter, so the
+  on-disk binary layout is byte-for-byte unchanged — old `.fcv`
+  files keep loading verbatim).
+
+## 0.10.3 (FontWeight migration + README rewrite — pana 160/160 — 2026-04-27)
+
+- **README rewritten for dev-voice clarity** — dropped 3 obsolete
+  "What's new in 0.7.2 / 0.8.0 / 0.9.0" sections (CHANGELOG already
+  carries the per-release detail), removed duplicated "Drop-in
+  toolbar" section (merged into Common recipes), pruned outdated FAQ
+  entries (the 0.3.0 humps regression note, the OnBackInvokedCallback
+  Android warning), fixed three coherence bugs (`simplifyEpsilon`
+  default contradiction, "0.4.0 features" labels, stale pana / test
+  counts inline). Added a compact TOC at the top, replaced the
+  Notability / Goodnotes / Miro / Figma framing with concrete
+  technical claims. README is now ~720 lines (was 876) and reads
+  end-to-end without scrolling past 200 lines of release archaeology.
+
 
 - **Migrated `FontWeight.index` → `.value`** in
   `digital_text_element.dart` (DigitalTextSpan + DigitalTextElement

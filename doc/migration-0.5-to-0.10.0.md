@@ -1,9 +1,9 @@
-# Migrating from `fluera_canvas` 0.5.x → 0.10.0
+# Migrating from `fluera_canvas` 0.5.x → 0.10.x
 
 ## TL;DR
 
 **Zero breaking changes.** Bump `fluera_canvas: ^0.5.0` to
-`fluera_canvas: ^0.10.0` in your `pubspec.yaml`, run `flutter pub get`,
+`fluera_canvas: ^0.10.3` in your `pubspec.yaml`, run `flutter pub get`,
 recompile. Existing apps keep working without code changes.
 
 Every release in the 0.6 → 0.10.x line is **additive** — new opt-in
@@ -29,8 +29,8 @@ visual or API impact).
 ### 0.7.x — Image annotations + persistence
 
 - `FlueraImageTool.pickAndCommit(...)` — file picker + `ImageNode`
-  insertion at viewport centre. Add `file_selector` is already a
-  transitive dep of `fluera_canvas`.
+  insertion at viewport centre. `file_selector` is already a
+  transitive dep of `fluera_canvas`, no manual install required.
 - `state.addImageNode(ImageNode)` — programmatic insertion.
 - **Image annotations are sticky**: stroking on top of an `ImageNode`
   reroutes the stroke onto `ImageNode.annotations` (in image-local

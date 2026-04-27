@@ -1,8 +1,8 @@
 # Performance tuning
 
-The defaults in `fluera_canvas` 0.3.0 are calibrated to keep mid-tier
+The defaults in `fluera_canvas` 0.10.x are calibrated to keep mid-tier
 Android (Adreno 660 / Impeller-Vulkan, profile mode) at 60 FPS up to
-~5k–10k strokes in the viewport. This guide explains the knobs and
+~5 k–10 k strokes in the viewport. This guide explains the knobs and
 when to reach for them.
 
 ## Profiling baseline
@@ -32,8 +32,12 @@ total ≈ live_paint + (cached_blit if no commit) + tessellation_tail
 ```
 
 - **`live_paint`** ≈ 0.5–1.5 ms — one `Path` + one `drawPath` per
-  stroke, smoothed via quadratic Béziers. Cost depends on the
-  number of points in the in-progress stroke.
+  stroke, smoothed via the five-stage pipeline (One-Euro at ingest →
+  arc-length subdivision → two-pass EMA → predicted ghost tail
+  anchor → Catmull-Rom → cubic bezier with tau = 1/6). Cost depends
+  on the number of points in the in-progress stroke; for ≥ 5 k-point
+  strokes the chunked PictureRecorder cache caps per-frame work at
+  O(N/256).
 - **`cached_blit`** ≈ 0.5 ms — RepaintBoundary blit of the committed
   layer. Constant; doesn't scale with `N` while the cache is valid.
 - **`tessellation_tail`** ≈ 0 ms when nothing changed; ~5 ms per
@@ -79,14 +83,22 @@ aggressively); if you have very large strokes, increase it (don't
 miss strokes whose centroid is off-screen but bounds reach in).
 This is internal — open an issue if you need it tunable.
 
-### Stroke smoothing window
+### Stroke smoothing pipeline
 
-`_paintStrokeSegments` (in `fluera_canvas_widget.dart`) uses
-quadratic-bezier through midpoints. The smoothness of the rendered
-stroke is determined by the density of the input samples — Flutter
-gives you ~120 Hz on stylus and ~60 Hz on touch. If your stroke looks
-visibly polygonal, the input rate is the bottleneck, not the
-renderer.
+`_paintStrokeSegments` (in `fluera_canvas_widget.dart`) runs a
+five-stage chain mirrored from the commercial `fluera_engine`
+fountain-pen path builder: One-Euro at point ingest, adaptive
+arc-length subdivision via Catmull-Rom interpolation on long gaps,
+two-pass EMA pre-smoothing, predicted ghost tail anchor (velocity +
+half-acceleration extrapolation, never drawn), then a Catmull-Rom →
+cubic bezier with tau = 1/6.
+
+If your stroke still looks visibly polygonal, the input rate is most
+likely the bottleneck — Flutter coalesces pointer events into the
+vsync window (typically 60–120 Hz), and the platform pipeline can
+silently merge sub-frame samples on slow devices. See
+[troubleshooting-impeller.md](troubleshooting-impeller.md) for the
+Adreno-specific quirks.
 
 ## When the cache gets invalidated
 
@@ -120,11 +132,11 @@ For a real measurement use Flutter DevTools' Performance tab
 (`flutter run --profile` then open DevTools): the raster track
 will show your `_CommittedStrokesPainter.paint` calls explicitly.
 
-## When 5k–10k isn't enough
+## When 5 k–10 k isn't enough
 
 The free SDK is built around viewport culling + Picture cache. If
-you need 50k+ strokes per layer, near-zero camera-animation cost,
+you need 50 k+ strokes per layer, near-zero camera-animation cost,
 or shader-based variable-width brushes, that's the territory of the
-commercial `fluera_engine` (full tile cache, GPU shader brushes,
-WAL-based delta tracking). See
-[engine.fluera.dev/pricing](https://engine.fluera.dev/pricing).
+commercial add-ons. See
+[doc/commercial-add-ons.md](commercial-add-ons.md) for the full
+list.

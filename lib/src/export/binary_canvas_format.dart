@@ -283,7 +283,10 @@ class BinaryCanvasFormat {
     builder.add(_encodeFloat32(text.position.dy));
     builder.add(_encodeUint32(text.color.toARGB32()));
     builder.add(_encodeFloat32(text.fontSize));
-    builder.addByte(text.fontWeight.index);
+    // Use `indexOf` instead of the deprecated `.index` getter — both
+    // return the same 0..8 enum position, so the on-disk byte layout
+    // is unchanged and old `.fcv` files remain readable byte-for-byte.
+    builder.addByte(FontWeight.values.indexOf(text.fontWeight));
     builder.add(_encodeFloat32(text.scale));
     builder.addByte(text.isOCR ? 1 : 0);
     _writeString(builder, text.fontFamily ?? 'Roboto');

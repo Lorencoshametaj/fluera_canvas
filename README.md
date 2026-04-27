@@ -1,265 +1,108 @@
 # fluera_canvas
 
-> **The document-grade infinite-canvas SDK for Flutter.**
+> **Pure-Dart Flutter SDK for infinite-canvas drawing widgets.**
+> Pan, zoom, rotate camera. Layered scene graph. Pressure-aware input.
+> Persistence + PNG export. Selection / lasso / transform / text /
+> stickers / image annotations. **5 k+ strokes at 60 FPS** on a
+> mid-tier Android.
 >
-> Built for **notes apps, whiteboards and design tools** — not signature pads.
-> Multi-thousand strokes at 60 FPS, drop-in Material toolbar, persistence
-> primitives, optional native GPU bridge (separate package).
->
-> The only Flutter canvas SDK on pub.dev with infinite pan / zoom / **rotate**
-> camera physics, RTree-backed viewport culling, and per-stroke `ui.Picture`
-> cache. Pure Dart — no platform code in the free core. If you're building
-> Notability / Goodnotes / Miro / Figma-class UX, start here.
->
-> **Status:** `0.10.0` — additive release, zero breaking changes from
-> 0.8.0. The API stabilizes at `1.0.0`. All minor versions before
-> then are additive only.
+> Status: **`0.10.3`** — pre-1.0 but additive only (zero breaking
+> changes from 0.8.0). API stabilises at `1.0.0`.
 > Marketing site: **[engine.fluera.dev](https://engine.fluera.dev/)**
 
-## Positioning
-
-| You're building… | Use |
-|---|---|
-| Notes app, whiteboard, sketching app, design tool, mind-map, diagram editor, infinite-canvas planner | **`fluera_canvas` ✅** |
-| **Photo annotation, draw-on-image with strokes that follow when you move/rotate/scale the image** | **`fluera_canvas` ✅** (0.7.2 image annotations — see below) |
-| Signature pad, e-signature flow | `signature` / `hand_signature` (more focused) |
-| Custom stroke renderer, no widget | `perfect_freehand` (pure rendering primitive) |
-
-Different tools for different jobs. `fluera_canvas` deliberately doesn't
-chase the signature-pad niche — that's well served. What's missing on
-pub.dev is the **document-grade** category: infinite surface, thousands
-of strokes, persistence-friendly, image annotations that ride the image
-as a rigid block, ready for a real note-taking or design product.
-That's what this SDK is for.
-
-## What you get
-
-- `FlueraCanvas` — drop-in drawing widget. **Pen, stroke-mode eraser,
-  pixel-mode eraser, line / rectangle / ellipse shape tools**, undo /
-  redo history, pressure-aware input, infinite pan / zoom / rotation,
-  PNG export. One `GlobalKey<FlueraCanvasState>` and you have a full
-  canvas in your app. (Optional commercial `fluera_canvas_gpu` add-on
-  drops in a native GPU live-stroke pipeline.)
-- `FlueraCanvasToolbar` — drop-in Material toolbar that wires the most
-  common controls (tool segmented control, color swatches, stroke-width
-  slider, undo / redo / clear) into the canvas with zero glue code.
-  Opt-in flags `showShapeTools`, `showPixelEraser`, `showColorPickerButton`
-  expose the new 0.4.0 features. Auto-syncs to history state via
-  `FlueraCanvasState.historyListenable`.
-- `FlueraCanvasColorPickerDialog` + `showFlueraColorPicker(...)` —
-  zero-dependency HSV / hex color picker for arbitrary color choices
-  beyond the 6-swatch preset.
-- `InfiniteCanvasController` — camera with pan, zoom, rotation, spring
-  physics, momentum, multi-phase animation. Use it if you want to drive the
-  view from outside (e.g. "reset view" button, programmatic fly-to).
-- `InfiniteCanvasGestureDetector` — multi-touch, stylus, palm rejection,
-  hover tracking. All policies are pluggable.
-- Scene graph primitives (`StrokeNode`, `ShapeNode`, `TextNode`, `ImageNode`,
-  `PathNode`, `GroupNode`, `LayerNode`) with a visitor pattern.
-- Spatial index (`RTree`, `ViewportCuller`) used by default — combined
-  with a per-stroke `ui.Picture` cache and a committed-strokes
-  `RepaintBoundary`, the canvas scales to **5 k–10 k strokes at 60 FPS**
-  on mid-tier Android devices (Adreno 660 / Impeller-Vulkan, profile mode).
-- Input pipeline — One-Euro smoothing, dynamic pressure mapping, palm
-  rejection, stylus prediction, 120 Hz raw processor.
-- Drawing models — `ProDrawingPoint`, `PressureCurve`, `VelocityCurve`,
-  `BrushPreset`, `ProBrushSettings`.
-- A module system and telemetry hooks so consumers can wire their own
-  storage, sync, AI, export or PDF pipelines.
-
-## What's new in 0.9.0
-
-- **Live stroke chunked PictureRecorder cache** — long handwriting
-  strokes (5 k+ points) cache every 256-point range as a
-  `ui.Picture`; the painter replays cached chunks and only
-  re-tessellates the trailing tail. O(N) → O(N/256) per-frame
-  work for the live stroke.
-- **Multi-layer LayerPictureCache consumption** — both the fast
-  single-layer path AND the multi-layer composite path now replay
-  cached `ui.Picture`s instead of re-walking children. Every
-  layer-state mutator (opacity / visible / locked / blend / mask)
-  bumps the version.
-- **Default sticker catalogue** — `kFlueraDefaultStickers` ships 8
-  Material-icon stickers via the new `FlueraIconStickerProvider`
-  (zero asset bundling). Override with `stickers: const []` to
-  opt out.
-- **Web-safe `dart:io`** — file-export service uses conditional
-  import so web builds compile cleanly. Asset embedding falls
-  back to path-only on web.
-- **Backgrounds demo** — example gallery now showcases solid /
-  grid / dotted / lined paper with live toggle.
-- **LayerPictureCache active on the fast path** — single-layer
-  scenes (the >99% notes-app case) now replay one cached
-  `ui.Picture` per paint instead of walking every stroke.
-  Pan / zoom over a static 10 k-stroke scene drops from O(N)
-  per paint to O(1).
-- **Web / WASM verified** — `flutter build web` compiles cleanly,
-  WASM dry-run succeeds, and `test/web_compat_test.dart` exercises
-  every public API surface a web consumer would touch.
-- **Group / ungroup** — `state.groupSelection()` /
-  `state.ungroupSelection()`. Selection scope follows the
-  Figma / Sketch convention: tap on a member of a group selects
-  the group as a single unit; children become addressable again
-  only after ungrouping. Single undo per op.
-- **Snap-to-grid + smart guides** — set
-  `FlueraCanvas(snapToGrid: 16, smartGuidesEnabled: true)` and the
-  body-drag move snaps the dragged selection's 9 anchors (corners +
-  edges + centre) to grid lines AND to alignments with other
-  visible nodes. Magenta dashed guides render while the snap is
-  locked. Hold Shift to bypass.
-
-- **Auto-simplified strokes** — `PostStrokeOptimizer` is now wired
-  into the commit path. `simplifyEpsilon` (default `0.5`) trims
-  40-60 % of redundant points without visible difference, so
-  spatial-index size, paint cost, and persisted-file size all drop
-  proportionally. Pressures stay aligned (kept-indices, not
-  re-sampled). Set `0` to keep the raw point list.
-- **Lasso tool** — free-form selection via `CanvasTool.lasso`.
-  Drag any closed path; everything whose centre falls inside is
-  selected. Concave shapes honoured (vs the marquee rectangle).
-  Toolbar opt-in: `showLassoTool: true`.
-- **Duplicate / Z-order APIs** — `state.duplicateSelection()`,
-  `state.bringToFront(id)`, `state.sendToBack(id)`. Single undo
-  per op.
-- **Keyboard shortcuts overhaul** — Delete becomes selection-aware
-  (drops selection if non-empty, else clears canvas). New: Esc
-  (clear selection), Ctrl/Cmd+A (select all), Ctrl/Cmd+D
-  (duplicate), arrows (nudge 1 px, Shift = 10 px).
-- **Memory-pressure observer** — `WidgetsBindingObserver` wired:
-  drops layer / stroke caches when the OS reports low memory so
-  the host app stays alive instead of being reaped.
-- **Dirty-region + layer-cache infrastructure** — tracker +
-  per-layer content version + `LayerPictureCache` instance all
-  live on the state. Painter consumption lands in 0.9.1 once the
-  multi-layer composite path is refactored to clip safely.
-- **Benchmark suite** — `test/benchmarks/perf_baseline_test.dart`
-  micro-benches 5 k stroke insert, 10 k hit-test on 5 k scene,
-  5 k-point stroke push. Numbers stamped to CI for regression
-  tracking.
-- **Pana 160/160**, **274/274 tests**, **0 analyze issues**.
-
-## What's new in 0.8.0
-
-- **Live text tool** — tap empty canvas with `CanvasTool.text` to drop
-  a fresh `TextNode` and open a Material `TextField` overlay
-  caret-positioned over it; tap an existing text node to re-enter
-  editing. The overlay rides the camera (pan / zoom) while the user
-  types. Commit on Done / blur; **Esc cancels** on desktop. Empty-text
-  commit on a fresh node rolls back the addition via a surgical history
-  pop (no risk of nuking unrelated undo state).
-- **Sticker panel** — `FlueraStickerPanel` widget that browses a
-  `List<FlueraSticker>` thumbnail catalogue and commits the chosen
-  sticker as an `ImageNode` centered on the viewport. Same sticker
-  dropped twice shares the cached `ui.Image` (one decode per process).
-  Wired via `FlueraCanvasToolbar.showStickerPanel: true`.
-- **Canvas-level text APIs** — `state.addTextNode(node)`,
-  `state.updateTextElement(id, element)`, `state.findNode(id)`,
-  `state.removeFreshTextNode(node)`. Single `_UpdateTextOp` per
-  editing session for clean undo.
-- **FCV0 v6 binary persistence** — `nodeType=1` (text) round-trips
-  through `toBytes` / `loadFromBytes`. Backward-read v1 → v5
-  unchanged; new writers always emit v6.
-- **Painter dispatch in chronological order** — strokes / images /
-  text are walked in `layer.children` insertion order on both the
-  fast and slow path, so the last node added always wins Z-order.
-- **Pana 160/160**, **252/252 tests**, **0 analyze issues**.
-
-## What's new in 0.7.2
-
-- **Image annotations (sticky + split)** — write directly on top of an
-  imported image. Strokes that fall inside the image bounds are
-  rerouted onto `ImageNode.annotations` (in image-local coords) and
-  ride every move / rotate / scale / mirror as a rigid block. Strokes
-  that cross the boundary are split: inside parts attach to the image,
-  outside parts stay on the active layer. Stroke-mode AND pixel-mode
-  eraser cut both kinds of strokes through the same image-local
-  projection. Single-undo per pen-up.
-- **Selection frame follows rotation (OBB)** — a selected rotated
-  image now shows an oriented bounding box; corner/edge handles ride
-  the visual corners and scale along the image's own axes.
-- **FCV0 v5 binary persistence** — image annotations round-trip
-  through `toBytes` / `loadFromBytes`. Backward-read v1 → v4. Image
-  asset bytes now embedded (v4+) so close-and-reopen no longer drops
-  the bitmap.
-- **Hit-test transform-aware** — strokes moved with the selection
-  tool re-select correctly at their new visual position; the spatial
-  index falls back to a `worldBounds` pass for transformed nodes.
-- **Pana 160 / 160**, 249 / 249 tests, 0 analyze issues.
+**Jump to:** [Hello canvas](#hello-canvas) · [Zero-config](#zero-config-drop-in) · [Recipes](#common-recipes) · [Keyboard](#keyboard-shortcuts) · [Export](#export) · [Performance](#performance) · [FAQ](#faq--troubleshooting) · [Migration](doc/migration-0.5-to-0.10.0.md) · [Changelog](CHANGELOG.md)
 
 ## Install
 
 ```yaml
 dependencies:
-  fluera_canvas: ^0.10.0
+  fluera_canvas: ^0.10.3
 ```
 
-Upgrading from 0.5.x? See **[doc/migration-0.5-to-0.10.0.md](doc/migration-0.5-to-0.10.0.md)**
+```dart
+import 'package:fluera_canvas/fluera_canvas.dart';
+```
+
+## Positioning
+
+| You're building… | Use |
+|---|---|
+| Notes app, whiteboard, sketching app, design tool, mind-map, diagram editor, infinite-canvas planner | **`fluera_canvas`** — full scene-graph + persistence + selection / transform |
+| Photo annotation, draw-on-image with strokes that follow when you move / rotate / scale the image | **`fluera_canvas`** — image annotations are first-class (sticky, split-on-boundary) |
+| Signature pad, e-signature flow | `signature` / `hand_signature` (more focused on that single use case) |
+| Custom stroke renderer, no widget | `perfect_freehand` (pure rendering primitive) |
+
+`fluera_canvas` deliberately doesn't compete in the signature-pad
+niche — that's well served. The gap on pub.dev was the
+**document-grade** category: infinite surface, thousands of strokes,
+persistence-friendly, image annotations that ride the image as a
+rigid block. That's what this SDK is for.
+
+## What you get
+
+- **`FlueraCanvas`** — drop-in drawing widget. Pen, stroke- + pixel-mode
+  eraser, line / rectangle / ellipse shape tools, undo / redo,
+  pressure-aware input, infinite pan / zoom / rotation, PNG export.
+  Headless: drive `tool` / `strokeColor` / `strokeWidth` from any UI.
+- **`FlueraSketch` / `FlueraSketchScaffold` / `FlueraSketchApp`** — three
+  zero-config widgets at increasing levels of "magic". `runApp(const FlueraSketchApp())`
+  literally gives you a complete drawing app.
+- **`FlueraCanvasToolbar`** — drop-in Material toolbar. Tool segmented
+  control, color swatches, stroke-width slider, undo / redo / clear,
+  optional layer panel / sticker panel / text tool / image tool.
+- **`FlueraCanvasColorPickerDialog`** + `showFlueraColorPicker(...)` —
+  zero-dependency HSV / hex picker.
+- **`InfiniteCanvasController`** — camera with pan, zoom, rotation,
+  spring physics, momentum, multi-phase animation.
+- **`InfiniteCanvasGestureDetector`** — multi-touch, stylus, palm
+  rejection, hover tracking. All policies pluggable.
+- **Scene graph** — `CanvasStrokeNode`, `ShapeNode`, `TextNode`,
+  `ImageNode`, `PathNode`, `GroupNode`, `LayerNode` with visitor
+  pattern.
+- **Spatial index** + per-stroke `ui.Picture` cache + multi-layer
+  `LayerPictureCache` + `DirtyRegionTracker` + memory-pressure
+  observer — together responsible for the 5 k+ stroke / 60 FPS budget.
+- **Input pipeline** — One-Euro smoothing, dynamic pressure mapping,
+  palm rejection, stylus prediction, 120 Hz raw processor.
+- **Persistence** — binary FCV0 v6 round-trips strokes, image bytes,
+  image annotations, text, layer state.
+
+## What's new in 0.10.x
+
+- **`FlueraSketchApp`** zero-config drop-in: `runApp(const FlueraSketchApp())`
+  is a complete drawing app. Three presets: `notes`, `whiteboard`,
+  `signature`. Optional `onAutoSave` / `onAutoLoad` / `onExportPng`
+  callbacks for any persistence backend.
+- **Lasso UX parity** with the Fluera flagship app: tap-on-selection
+  enters transform mode (drag = move, handle = scale / rotate);
+  hit-test stricter (no over-selection from bbox-only).
+- **Live stroke now honours active layer's blend mode + opacity** —
+  toggling `multiply` / `screen` updates the in-flight preview
+  immediately, no jump at pen-up.
+- **Smoothing pipeline rebuilt** to match the commercial fountain-pen
+  path builder: One-Euro at ingest → arc-length subdivision →
+  two-pass EMA → ghost-tail anchor → Catmull-Rom → cubic bezier
+  (tau = 1/6). Live and committed strokes share identical geometry.
+- **Pixel eraser** is pressure-aware + velocity-aware + drops
+  micro-survivor fragments < 3 px arc-length.
+- **PNG export** has 4 bounds modes via `FlueraExportBounds`:
+  `viewport` (legacy), `allContent`, `selection`, `custom`. Plus
+  `pixelRatio`, `padding`, `transparent`.
+- **TextNode is now selectable + transformable** (drag / scale / rotate
+  via the same handles as image / stroke nodes).
+- Edge-case hardening: serializer bounds-checks (DoS protection),
+  `renderToImage` clamps, single-tap "dot" stroke commit, text editor
+  hot-restart guards.
+
+Full per-release detail in **[CHANGELOG.md](CHANGELOG.md)**. Upgrading
+from 0.5.x? See **[doc/migration-0.5-to-0.10.0.md](doc/migration-0.5-to-0.10.0.md)**
 — zero breaking changes, plus a checklist of opt-in flags to surface
 the new selection / lasso / text / sticker / snap-to-grid features.
 
-## Zero-config drop-in (0.10.0+)
-
-The fastest way to get a working drawing app — pick the level of
-"magic" you want.
-
-### Whole app, one line
-
-```dart
-import 'package:flutter/material.dart';
-import 'package:fluera_canvas/fluera_canvas.dart';
-
-void main() => runApp(const FlueraSketchApp());
-```
-
-That's it. You get a Material 3 `MaterialApp` + AppBar with undo /
-redo / clear / export-PNG popup, the full toolbar with every opt-in
-flag wired (pen / shapes / pixel-eraser / lasso / select / text /
-sticker / image / layers / transform / color picker), and a dotted
-background. Three preset shapes via `FlueraSketchPreset`:
-
-```dart
-const FlueraSketchApp(preset: FlueraSketchPreset.notes);      // Notability-minimal
-const FlueraSketchApp(preset: FlueraSketchPreset.whiteboard); // Default — full kit
-const FlueraSketchApp(preset: FlueraSketchPreset.signature);  // signature-pad style
-```
-
-### Embed a sketch page in an existing app
-
-```dart
-MaterialPageRoute(builder: (_) => FlueraSketchScaffold(
-  title: 'My note',
-  preset: FlueraSketchPreset.notes,
-  // Optional persistence: wire any backend (path_provider, network, …).
-  onAutoSave: (bytes) => File('$dir/note.fcv').writeAsBytes(bytes),
-  onAutoLoad: () async => File('$dir/note.fcv').readAsBytes(),
-));
-```
-
-The scaffold debounces autosave at 2 s by default
-(`autoSaveDebounce:`). The export-PNG popup falls back to copying a
-data-URL to the clipboard if you don't pass `onExportPng`.
-
-### Just the canvas + toolbar (no Scaffold)
-
-```dart
-Scaffold(
-  appBar: AppBar(title: Text('My drawing')),
-  body: const FlueraSketch(),  // canvas + toolbar self-contained
-);
-```
-
-`FlueraSketch` owns the `tool`, `color` and `strokeWidth` state
-internally — no `setState` plumbing needed. Pass
-`canvasKey: GlobalKey<FlueraCanvasState>()` if you want to drive
-`save` / `load` / `undo` from outside.
-
-The three widgets stack: `FlueraSketchApp` → wraps →
-`FlueraSketchScaffold` → wraps → `FlueraSketch`. Each is usable
-standalone. When you outgrow the presets, drop down to
-[`FlueraCanvas`](#hello-canvas) directly — same scene-graph, every
-API still available.
-
 ## Hello canvas
+
+The headless variant — wire `tool` / `color` / `width` from your own
+UI. Use this when you want full control over the drawing chrome.
 
 ```dart
 import 'package:flutter/material.dart';
@@ -309,13 +152,71 @@ class _MyPageState extends State<MyPage> {
 }
 ```
 
-Advanced camera control: pass a `controller: InfiniteCanvasController()`
-if you want to drive pan / zoom / rotation from outside.
+Want pan / zoom / rotation driven from outside (a "reset view"
+button, programmatic fly-to)? Pass
+`controller: InfiniteCanvasController()`.
+
+## Zero-config drop-in
+
+Pick the level of "magic":
+
+### Whole app, one line
+
+```dart
+void main() => runApp(const FlueraSketchApp());
+```
+
+You get a Material 3 `MaterialApp` + AppBar with undo / redo / clear /
+export-PNG popup, the full toolbar with every opt-in flag wired
+(pen / shapes / pixel-eraser / lasso / select / text / sticker / image /
+layers / transform / color picker), dotted background. Three presets:
+
+```dart
+const FlueraSketchApp(preset: FlueraSketchPreset.notes);      // minimal
+const FlueraSketchApp(preset: FlueraSketchPreset.whiteboard); // default
+const FlueraSketchApp(preset: FlueraSketchPreset.signature);  // single pen, no zoom
+```
+
+### Embed a sketch page in an existing app
+
+```dart
+MaterialPageRoute(builder: (_) => FlueraSketchScaffold(
+  title: 'My note',
+  preset: FlueraSketchPreset.notes,
+  // Optional persistence hooks — wire any backend.
+  onAutoSave: (bytes) => File('$dir/note.fcv').writeAsBytes(bytes),
+  onAutoLoad: () async => File('$dir/note.fcv').readAsBytes(),
+));
+```
+
+The scaffold debounces autosave at 2 s (`autoSaveDebounce:`). The
+export-PNG popup falls back to a clipboard data-URL if you don't pass
+`onExportPng`.
+
+### Just the canvas + toolbar (no Scaffold)
+
+```dart
+Scaffold(
+  appBar: AppBar(title: Text('My drawing')),
+  body: const FlueraSketch(),  // canvas + toolbar self-contained
+);
+```
+
+`FlueraSketch` owns the `tool` / `color` / `strokeWidth` state
+internally — no `setState` plumbing. Pass
+`canvasKey: GlobalKey<FlueraCanvasState>()` if you want to drive
+`save` / `load` / `undo` from outside.
+
+The three widgets stack: `FlueraSketchApp` → wraps →
+`FlueraSketchScaffold` → wraps → `FlueraSketch`. Each is usable
+standalone. When you outgrow the presets, drop down to
+[`FlueraCanvas`](#hello-canvas) — same scene graph, every API still
+available.
 
 ## Tools
 
-`FlueraCanvas` ships **6 input tools** out of the box, switched via the
-`tool:` parameter:
+Switch via the `tool:` parameter (or via `FlueraCanvasToolbar` opt-in
+flags):
 
 | Tool | What it does |
 |---|---|
@@ -325,14 +226,14 @@ if you want to drive pan / zoom / rotation from outside.
 | `CanvasTool.line` | Drag from A to B for a straight line. |
 | `CanvasTool.rectangle` | Drag corner-to-corner for a rectangle outline. |
 | `CanvasTool.ellipse` | Drag for an ellipse outline (32-segment polyline). |
+| `CanvasTool.select` | Tap a node to select; drag to move; corners / edges / rotate handle for transform. |
+| `CanvasTool.lasso` | Drag a closed path; nodes whose centre or corners fall inside are selected. Concave shapes work. |
+| `CanvasTool.text` | Tap to drop a `TextNode`; inline Material `TextField` opens for editing. |
+| `CanvasTool.image` | (via `FlueraImageTool.pickAndCommit`) — file-picker import. |
 
 Shape tools commit as ordinary `CanvasStroke` instances, so they
-participate in undo / redo, persistence (`toBytes` / `loadFromBytes`),
-spatial-index hit-test, and the per-stroke `ui.Picture` cache for free.
-
-`CanvasTool.select`, `CanvasTool.lasso`, `CanvasTool.text`, and the
-sticker panel are wired through the same `tool:` parameter (or via
-`FlueraCanvasToolbar` opt-in flags). See **Common recipes** below.
+participate in undo / redo, persistence, hit-test, and the per-stroke
+`ui.Picture` cache for free.
 
 ## Common recipes
 
@@ -351,12 +252,11 @@ FlueraCanvas(
   smartGuidesEnabled: true,        // optional: magenta align guides
 );
 
-// Programmatic delete of the current selection (e.g. on Delete key —
-// the canvas wires this up by default, but you can also call it):
+// Programmatic delete (Delete key is auto-wired):
 canvasKey.currentState?.deleteSelection();
 ```
 
-Selection is observable: `canvasKey.currentState!.selectionListenable`.
+Selection is observable via `canvasKey.currentState!.selectionListenable`.
 See `state.duplicateSelection()`, `state.bringToFront(id)`,
 `state.sendToBack(id)`, `state.groupSelection()`,
 `state.ungroupSelection()`.
@@ -366,16 +266,15 @@ See `state.duplicateSelection()`, `state.bringToFront(id)`,
 ```dart
 FlueraCanvas(key: canvasKey, tool: CanvasTool.lasso);
 // User drags any closed path; every node whose bounds the lasso
-// encloses or crosses is added to the selection. Concave shapes
-// work (vs the marquee rect). Live magenta dashed preview while
-// the user is dragging.
-// Toolbar opt-in: FlueraCanvasToolbar(showLassoTool: true, ...).
+// encloses or crosses is added to the selection. Live magenta dashed
+// preview during the drag. After pen-up, tapping inside the bbox
+// drags the selection (no need to switch to `select` first); tapping
+// outside starts a fresh lasso.
 ```
 
-Use **lasso** when the strokes you want to select are scattered or
-arranged non-rectangularly (e.g. all strokes around an imported
-image, an artistic cluster, hand-drawn diagrams). Use **`CanvasTool.select`**
-(marquee) for grid layouts and structured content where an
+Use **lasso** for scattered or non-rectangular selections (strokes
+around an imported image, an artistic cluster, hand-drawn diagrams).
+Use **`CanvasTool.select`** marquee for grid layouts where an
 axis-aligned rectangle does the job faster.
 
 ### Snap-to-grid + smart guides
@@ -384,7 +283,7 @@ axis-aligned rectangle does the job faster.
 FlueraCanvas(
   key: canvasKey,
   tool: CanvasTool.select,
-  snapToGrid: 8,                   // 0 disables; 8/16/24 are typical
+  snapToGrid: 8,                   // 0 disables; 8 / 16 / 24 are typical
   smartGuidesEnabled: true,        // align with neighbours on drag
   smartGuidesTolerancePx: 6,       // screen-space tolerance
 );
@@ -396,11 +295,8 @@ FlueraCanvas(
 ```dart
 FlueraCanvas(key: canvasKey, tool: CanvasTool.text);
 // Tap empty canvas: a Material TextField caret opens inline. Type;
-// commit on Done / blur. Esc cancels (and rolls back a fresh empty
-// node so you don't litter the layer with phantoms).
-// Tap an existing TextNode to re-enter edit mode.
-//
-// Toolbar opt-in: FlueraCanvasToolbar(showTextTool: true, ...).
+// commit on Done / blur / Esc. Tap an existing TextNode to re-enter
+// edit mode. Use CanvasTool.select afterwards to drag / scale / rotate.
 ```
 
 ### Sticker panel
@@ -413,8 +309,9 @@ FlueraCanvasToolbar(
   showStickerPanel: true,
   // stickers: const [], // omit or set to [] to opt out of defaults
 );
-// Defaults: kFlueraDefaultStickers ships 8 Material-icon stickers
-// via FlueraIconStickerProvider — zero asset bundling.
+
+// Defaults: kFlueraDefaultStickers ships 8 Material-icon stickers via
+// FlueraIconStickerProvider — zero asset bundling.
 
 // Custom catalogue:
 final myStickers = <FlueraSticker>[
@@ -426,7 +323,7 @@ final myStickers = <FlueraSticker>[
 ### Image annotations (sticky strokes)
 
 ```dart
-// 1. Import an image (toolbar opt-in shows a button; or call directly):
+// 1. Import an image:
 await FlueraImageTool.pickAndCommit(context: context, state: canvasKey.currentState!);
 
 // 2. Switch to a draw tool and stroke on top of the image. Strokes
@@ -436,173 +333,11 @@ await FlueraImageTool.pickAndCommit(context: context, state: canvasKey.currentSt
 //    boundary are split: inside parts attach, outside parts stay free.
 ```
 
-### Save / load (mobile + desktop)
+### Custom toolbar layout
 
-```dart
-// Persist to disk:
-final bytes = canvasKey.currentState!.toBytes();
-await File('$dir/scene.fcv').writeAsBytes(bytes);
-
-// Restore inside initState (the safest path — see FAQ #2):
-FlueraCanvas(key: canvasKey, initialBytes: await loadBytes());
-
-// Or reload after first frame:
-canvasKey.currentState?.loadFromBytes(bytes);
-```
-
-FCV0 v6 round-trips strokes, image bytes, image annotations, text
-nodes, layer state. Backward-read v1 → v5 unchanged.
-
-### Save / load (web)
-
-`dart:io File` doesn't exist in the browser sandbox. `state.toBytes()`
-still returns a `Uint8List` — wire it to a download instead:
-
-```dart
-import 'package:flutter/foundation.dart' show kIsWeb;
-// On web only — keep behind `if (kIsWeb)` to keep mobile/desktop builds clean:
-import 'package:web/web.dart' as web;
-import 'dart:js_interop';
-
-void downloadFcv(Uint8List bytes, String filename) {
-  final blob = web.Blob(
-    [bytes.toJS].toJS,
-    web.BlobPropertyBag(type: 'application/octet-stream'),
-  );
-  final url = web.URL.createObjectURL(blob);
-  web.HTMLAnchorElement()
-    ..href = url
-    ..download = filename
-    ..click();
-  web.URL.revokeObjectURL(url);
-}
-
-// Usage:
-final bytes = canvasKey.currentState!.toBytes();
-if (kIsWeb) {
-  downloadFcv(bytes, 'scene.fcv');
-} else {
-  await File('$dir/scene.fcv').writeAsBytes(bytes);
-}
-```
-
-To **load** on web, use `file_selector` (already a transitive dep of
-`fluera_canvas`):
-
-```dart
-import 'package:file_selector/file_selector.dart';
-
-final file = await openFile(acceptedTypeGroups: [
-  XTypeGroup(label: 'fluera', extensions: ['fcv']),
-]);
-if (file != null) {
-  final bytes = await file.readAsBytes();
-  canvasKey.currentState?.loadFromBytes(bytes);
-}
-```
-
-This snippet works on every platform — no `kIsWeb` branch needed.
-
-## Keyboard shortcuts
-
-`FlueraCanvas` wraps its widget tree in `Shortcuts + Actions` and ships
-**15 default keybindings**. The Ctrl/Cmd modifier auto-resolves per
-platform (Cmd on macOS / iOS, Ctrl elsewhere) — you don't have to
-branch on `Platform` in your app.
-
-| Shortcut (Win / Linux / Web) | Shortcut (macOS / iOS) | Action |
-|---|---|---|
-| `Ctrl+Z` | `Cmd+Z` | Undo last op |
-| `Ctrl+Y` *or* `Ctrl+Shift+Z` | `Cmd+Y` *or* `Cmd+Shift+Z` | Redo |
-| `Ctrl+A` | `Cmd+A` | Select all selectable nodes in active layer |
-| `Ctrl+D` | `Cmd+D` | Duplicate current selection (offset 20 × 20 px) |
-| `Delete` *or* `Backspace` | `Delete` *or* `Backspace` | Delete selection — falls back to *clear canvas* when nothing is selected |
-| `Esc` | `Esc` | Clear selection / cancel inline text editor |
-| `←` `→` `↑` `↓` | same | Nudge selection 1 px (world-space) |
-| `Shift + ← → ↑ ↓` | same | Nudge selection 10 px |
-
-Hold **Shift** while body-dragging a selection to bypass `snapToGrid`
-and `smartGuidesEnabled` for that single drag — useful for nudging a
-node off-grid without reconfiguring the widget.
-
-### Add your own shortcuts
-
-Wrap `FlueraCanvas` in a `Shortcuts + Actions` of your own — the
-outer wrapper is evaluated first, so your bindings win for the
-activators they claim and the built-in 15 still fire for everything
-else. No package change required:
-
-```dart
-class _SaveIntent extends Intent { const _SaveIntent(); }
-class _GroupIntent extends Intent { const _GroupIntent(); }
-
-Shortcuts(
-  shortcuts: <ShortcutActivator, Intent>{
-    const SingleActivator(LogicalKeyboardKey.keyS, control: true):
-        const _SaveIntent(),
-    const SingleActivator(LogicalKeyboardKey.keyG, control: true):
-        const _GroupIntent(),
-  },
-  child: Actions(
-    actions: <Type, Action<Intent>>{
-      _SaveIntent: CallbackAction<_SaveIntent>(onInvoke: (_) {
-        _persist(canvasKey.currentState!.toBytes());
-        return null;
-      }),
-      _GroupIntent: CallbackAction<_GroupIntent>(onInvoke: (_) {
-        canvasKey.currentState?.groupSelection();
-        return null;
-      }),
-    },
-    child: FlueraCanvas(key: canvasKey, /* … */),
-  ),
-);
-```
-
-Override one of the built-ins the same way — declare the same
-activator (e.g. `Ctrl+D`) in your wrapper with your own Intent +
-Action and the package's duplicate binding is shadowed.
-
-## Performance
-
-`fluera_canvas` ships every perf optimization wired by default — no
-configuration needed for typical apps. The knobs below let power users
-tune for their workload.
-
-- **Stroke smoothing pipeline (0.9.3)** — five-stage chain mirrored
-  from the commercial `fluera_engine` fountain-pen path builder:
-  OneEuroFilter at point ingest (`minCutoff = 1.0`, `beta = 0.007`)
-  → adaptive arc-length subdivision via Catmull-Rom interpolation
-  on long gaps → two-pass EMA pre-smoothing (forward + backward,
-  alpha 0.3, endpoints pinned) → predicted "ghost" tail anchor
-  (velocity + half-acceleration extrapolation, never drawn) →
-  Catmull-Rom → cubic bezier with tau = 1/6. Live and committed
-  strokes share identical geometry, so what the user sees while
-  drawing is exactly what gets persisted.
-- **Stroke simplification** — `simplifyEpsilon: 0` default (raw
-  fidelity). Set `0.5` to opt into Douglas-Peucker compression
-  (~40-60 % point reduction with sub-pixel visual difference).
-- **LayerPictureCache** — pan / zoom on a 10 k-stroke static scene
-  paints in O(1): one cached `ui.Picture` per layer, replayed.
-- **DirtyRegionTracker** — mutating one stroke in the bottom-right
-  doesn't repaint the full screen.
-- **MemoryPressure observer** — drops picture caches on
-  `didHaveMemoryPressure()` so the OS doesn't reap your app on mobile.
-- **RTree-backed hit test** — O(log n + k) on visible-stroke queries.
-- **Live stroke chunked PictureRecorder** — handwriting strokes with
-  5 k+ points cache every 256-point range; the painter replays cached
-  chunks and only re-tessellates the trailing tail.
-- **Pixel eraser polish (0.9.3)** — pressure-aware radius (linear
-  ramp 40-100 %), velocity-aware sub-stamp growth (≤ 1.4× to absorb
-  fast-drag gaps), micro-survivor cleanup (drops < 3 px arc-length
-  fragments after a cut).
-
-Numbers + benchmark recipes: **[doc/performance.md](doc/performance.md)**.
-
-## Drop-in toolbar
-
-Don't want to wire your own pen / eraser / color / undo UI?
-`FlueraCanvasToolbar` does it for you:
+When the built-in `FlueraCanvasToolbar` doesn't fit your design
+(Cupertino, sidebar, floating, custom segmented button) — skip it and
+drive the canvas directly:
 
 ```dart
 class _DemoState extends State<Demo> {
@@ -619,78 +354,133 @@ class _DemoState extends State<Demo> {
       strokeColor: _color,
       strokeWidth: _width,
     )),
-    FlueraCanvasToolbar(
-      canvasKey: _canvasKey,
-      tool: _tool,
-      onToolChanged: (t) => setState(() => _tool = t),
-      color: _color,
-      onColorChanged: (c) => setState(() => _color = c),
-      strokeWidth: _width,
-      onStrokeWidthChanged: (w) => setState(() => _width = w),
-      // Optional 0.4.0 opt-in flags:
-      showShapeTools: true,        // adds Line / Rect / Oval segments
-      showPixelEraser: true,       // adds Pixel eraser segment
-      showColorPickerButton: true, // adds a "+ more colors" gradient button
-    ),
+    // Your own toolbar widgets here — anything that mutates
+    // _tool / _color / _width via setState.
   ]);
 }
 ```
 
-The toolbar subscribes to `FlueraCanvasState.historyListenable` so
-`Undo` / `Redo` automatically reflect the live history state — no
-`onStrokeCommitted` plumbing required. Use `palette: [...]` for a
-custom color set, or pass `showUndo: false` etc. to suppress
-individual buttons. Want a different layout (Cupertino, sidebar,
-floating)? Skip the toolbar and drive `tool` / `strokeColor` /
-`strokeWidth` from your own UI — `FlueraCanvas` is intentionally
-headless.
+`FlueraCanvas` is intentionally headless. The state is observable via
+`historyListenable` / `selectionListenable` so a custom toolbar can
+gate undo / redo / contextual buttons without polling.
 
-A runnable demo lives in [`example/`](example/). Full quickstart with
-persistence and camera animation: **[engine.fluera.dev/quickstart](https://engine.fluera.dev/quickstart)**.
+### Save / load (mobile + desktop)
 
-## Platforms
+```dart
+// Persist to disk:
+final bytes = canvasKey.currentState!.toBytes();
+await File('$dir/scene.fcv').writeAsBytes(bytes);
 
-`fluera_canvas` is **pure Dart**. No platform-channel code, no native
-plugin, no shaders — runs anywhere Flutter runs.
+// Restore inside initState (the safest path — see FAQ #1):
+FlueraCanvas(key: canvasKey, initialBytes: await loadBytes());
 
-| Platform | Status |
-| --- | --- |
-| Android | ✅ |
-| iOS     | ✅ |
-| macOS   | ✅ |
-| Linux   | ✅ |
-| Windows | ✅ |
-| Web (CanvasKit / WASM) | ✅ |
+// Or reload after first frame:
+canvasKey.currentState?.loadFromBytes(bytes);
+```
 
-Only runtime deps: `meta` and `vector_math`. Zero native footprint, no
-AndroidManifest tweaks, no Podfile changes.
+FCV0 v6 round-trips strokes, image bytes, image annotations, text
+nodes, layer state. Backward-read v1 → v5 unchanged.
 
-### Per-platform notes
+### Save / load (web)
 
-- **Keyboard shortcuts auto-adjust**: `Ctrl+…` on Windows / Linux /
-  Web; `Cmd+…` on macOS / iOS. No consumer wiring required. Full
-  table in **Keyboard shortcuts** below.
-- **Trackpad pinch-zoom and two-finger pan** work out of the box on
-  macOS / Windows / Linux / ChromeOS via `PointerScrollEvent` and
-  `PointerPanZoom*` events.
-- **Stylus / Apple Pencil / S Pen / Surface Pen / Wacom** are
-  detected automatically via `PointerDeviceKind.stylus`; pressure +
-  tilt are forwarded to the brush pipeline.
-- **Web file save**: `state.toBytes()` returns a `Uint8List` —
-  trigger a download via the snippet in the **Save / load (web)**
-  recipe above. Loading via `file_selector.openFile()` is identical
-  on every platform.
-- **Image import** (`FlueraImageTool.pickAndCommit`) uses
-  `file_selector` and works on every platform Flutter supports,
-  including web (renders a hidden `<input type="file">`).
-- **Right-click context menu and clipboard copy/paste** are *not*
-  bundled — they're consumer-side decisions. Wire them via
-  `Listener.onPointerDown` (button == 2) and
-  `Clipboard.setData` / `Clipboard.getData` if your UX needs them.
+`dart:io File` doesn't exist in the browser sandbox. `state.toBytes()`
+still returns a `Uint8List` — wire it to a download instead:
+
+```dart
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:web/web.dart' as web;            // web only
+import 'dart:js_interop';
+
+void downloadFcv(Uint8List bytes, String filename) {
+  final blob = web.Blob(
+    [bytes.toJS].toJS,
+    web.BlobPropertyBag(type: 'application/octet-stream'),
+  );
+  final url = web.URL.createObjectURL(blob);
+  web.HTMLAnchorElement()
+    ..href = url
+    ..download = filename
+    ..click();
+  web.URL.revokeObjectURL(url);
+}
+
+if (kIsWeb) {
+  downloadFcv(canvasKey.currentState!.toBytes(), 'scene.fcv');
+} else {
+  await File('$dir/scene.fcv').writeAsBytes(canvasKey.currentState!.toBytes());
+}
+```
+
+To **load** on web, use `file_selector` (already a transitive dep of
+`fluera_canvas`):
+
+```dart
+import 'package:file_selector/file_selector.dart';
+
+final file = await openFile(acceptedTypeGroups: [
+  XTypeGroup(label: 'fluera', extensions: ['fcv']),
+]);
+if (file != null) {
+  canvasKey.currentState?.loadFromBytes(await file.readAsBytes());
+}
+```
+
+This snippet works on every platform — no `kIsWeb` branch needed.
+
+## Keyboard shortcuts
+
+`FlueraCanvas` wraps its widget tree in `Shortcuts + Actions` and
+ships **15 default keybindings**. The Ctrl/Cmd modifier auto-resolves
+per platform (Cmd on macOS / iOS, Ctrl elsewhere) — no `Platform`
+branching required.
+
+| Shortcut (Win / Linux / Web) | Shortcut (macOS / iOS) | Action |
+|---|---|---|
+| `Ctrl+Z` | `Cmd+Z` | Undo last op |
+| `Ctrl+Y` *or* `Ctrl+Shift+Z` | `Cmd+Y` *or* `Cmd+Shift+Z` | Redo |
+| `Ctrl+A` | `Cmd+A` | Select all selectable nodes in active layer |
+| `Ctrl+D` | `Cmd+D` | Duplicate current selection (offset 20 × 20 px) |
+| `Delete` *or* `Backspace` | `Delete` *or* `Backspace` | Delete selection — falls back to *clear canvas* when nothing is selected |
+| `Esc` | `Esc` | Clear selection / cancel inline text editor |
+| `←` `→` `↑` `↓` | same | Nudge selection 1 px (world-space) |
+| `Shift + ← → ↑ ↓` | same | Nudge selection 10 px |
+
+Hold **Shift** while body-dragging a selection to bypass `snapToGrid`
+and `smartGuidesEnabled` for that single drag.
+
+### Add your own shortcuts
+
+Wrap `FlueraCanvas` in a `Shortcuts + Actions` of your own — the
+outer wrapper is evaluated first, so your bindings win for the
+activators they claim and the built-in 15 still fire for everything
+else. No package change required:
+
+```dart
+class _SaveIntent extends Intent { const _SaveIntent(); }
+
+Shortcuts(
+  shortcuts: <ShortcutActivator, Intent>{
+    const SingleActivator(LogicalKeyboardKey.keyS, control: true):
+        const _SaveIntent(),
+  },
+  child: Actions(
+    actions: <Type, Action<Intent>>{
+      _SaveIntent: CallbackAction<_SaveIntent>(onInvoke: (_) {
+        _persist(canvasKey.currentState!.toBytes());
+        return null;
+      }),
+    },
+    child: FlueraCanvas(key: canvasKey, /* … */),
+  ),
+);
+```
+
+To override one of the built-ins, declare the same activator with
+your own Intent + Action; the package's binding is shadowed.
 
 ## Export
 
-`fluera_canvas` free ships **PNG raster** export with four
+`fluera_canvas` ships **PNG raster** export with four
 infinite-canvas-aware bounds modes via `FlueraExportBounds`.
 
 ### What you see (legacy / WYSIWYG)
@@ -702,7 +492,7 @@ final png = await image.toByteData(format: ui.ImageByteFormat.png);
 
 ### Everything (even off-screen)
 
-The infinite-canvas killer feature: rasterize the union of every
+The infinite-canvas killer feature: rasterise the union of every
 visible node's `worldBounds`, regardless of where the camera is
 pointing. Output dimensions auto-computed.
 
@@ -747,24 +537,114 @@ final image = await state.renderToImage(
 );
 ```
 
-**Guards**: `pixelRatio` is clamped to `[0.05, 32.0]`; output size
-is rejected over 16 384 px per side (GPU max texture). Helpful
-sibling getters: `state.contentBoundsWorld`, `state.selectionBoundsWorld`,
+**Guards**: `pixelRatio` is clamped to `[0.05, 32.0]`; output size is
+rejected over 16 384 px per side (GPU max texture). Helpful sibling
+getters: `state.contentBoundsWorld`, `state.selectionBoundsWorld`,
 `state.viewportCenterWorld`, `state.viewportSize`.
+
+## Platforms
+
+`fluera_canvas` is **pure Dart**. No platform-channel code, no native
+plugin, no shaders — runs anywhere Flutter runs.
+
+| Platform | Status |
+| --- | --- |
+| Android | ✅ |
+| iOS     | ✅ |
+| macOS   | ✅ |
+| Linux   | ✅ |
+| Windows | ✅ |
+| Web (CanvasKit / WASM) | ✅ |
+
+Only runtime deps: `meta`, `vector_math`, `file_selector` (latter only
+pulled when the image / sticker tools are wired). Zero native
+footprint, no AndroidManifest tweaks, no Podfile changes.
+
+### Per-platform notes
+
+- **Keyboard shortcuts auto-adjust**: `Ctrl+…` on Windows / Linux /
+  Web; `Cmd+…` on macOS / iOS. No consumer wiring required.
+- **Trackpad pinch-zoom and two-finger pan** work out of the box on
+  macOS / Windows / Linux / ChromeOS via `PointerScrollEvent` and
+  `PointerPanZoom*` events.
+- **Stylus / Apple Pencil / S Pen / Surface Pen / Wacom** are
+  detected automatically via `PointerDeviceKind.stylus`; pressure +
+  tilt are forwarded to the brush pipeline.
+- **Web file save**: `state.toBytes()` returns a `Uint8List` —
+  trigger a download via the snippet in **Save / load (web)** above.
+- **Image import** (`FlueraImageTool.pickAndCommit`) uses
+  `file_selector` and works on every platform Flutter supports,
+  including web (renders a hidden `<input type="file">`).
+- **Right-click context menu and clipboard copy/paste** are *not*
+  bundled — they're consumer-side decisions. Wire them via
+  `Listener.onPointerDown` (button == 2) and
+  `Clipboard.setData` / `Clipboard.getData` if your UX needs them.
+
+## Performance
+
+Every optimisation is wired by default. The knobs below let power
+users tune for their workload.
+
+- **Stroke smoothing pipeline** — five-stage chain mirrored from the
+  commercial `fluera_engine` fountain-pen path builder: One-Euro
+  filter at point ingest (`minCutoff = 1.0`, `beta = 0.007`) →
+  adaptive arc-length subdivision via Catmull-Rom interpolation on
+  long gaps → two-pass EMA pre-smoothing (forward + backward,
+  alpha 0.3, endpoints pinned) → predicted "ghost" tail anchor
+  (velocity + half-acceleration extrapolation, never drawn) →
+  Catmull-Rom → cubic bezier with tau = 1/6. Live and committed
+  strokes share identical geometry — what the user sees while drawing
+  is exactly what gets persisted.
+- **Stroke simplification** — `simplifyEpsilon: 0` default (raw
+  fidelity). Set `0.5` to opt into Douglas-Peucker compression
+  (~40-60 % point reduction with sub-pixel visual difference).
+- **LayerPictureCache** — pan / zoom on a 10 k-stroke static scene
+  paints in O(1): one cached `ui.Picture` per layer, replayed.
+- **DirtyRegionTracker** — mutating one stroke in the bottom-right
+  doesn't repaint the full screen.
+- **MemoryPressure observer** — drops picture caches on
+  `didHaveMemoryPressure()` so the OS doesn't reap your app on mobile.
+- **RTree-backed hit test** — O(log n + k) on visible-stroke queries.
+- **Live stroke chunked PictureRecorder** — handwriting strokes with
+  5 k+ points cache every 256-point range; the painter replays cached
+  chunks and only re-tessellates the trailing tail.
+- **Pixel eraser polish** — pressure-aware radius (linear ramp 40-100 %),
+  velocity-aware sub-stamp growth (≤ 1.4× to absorb fast-drag gaps),
+  micro-survivor cleanup (drops < 3 px arc-length fragments after a cut).
+
+Numbers + benchmark recipes: **[doc/performance.md](doc/performance.md)**.
 
 ## Beyond the free tier
 
-Vector export (SVG / PDF), native sub-frame live-stroke latency, advanced
-brush engines, real-time collaboration, PDF annotation, LaTeX OCR,
-SQLCipher storage and timeline playback are intentionally **not** in this
-package. They're available as optional commercial add-ons (`fluera_canvas_gpu`,
-`fluera_engine_pro`) that plug into the same scene graph via the public
-`GpuStrokeBackend` hook — no fork, no rewrite. See
-**[doc/commercial-add-ons.md](doc/commercial-add-ons.md)** for the full
-list and pricing pointer. The free `fluera_canvas` package on its own is
-production-ready.
+Vector export (SVG / PDF), native sub-frame live-stroke latency,
+advanced brush engines, real-time collaboration, PDF annotation,
+LaTeX OCR, SQLCipher storage and timeline playback are intentionally
+**not** in this package. They're available as optional commercial
+add-ons (`fluera_canvas_gpu`, `fluera_engine_pro`) that plug into the
+same scene graph via the public `GpuStrokeBackend` hook — no fork, no
+rewrite. See **[doc/commercial-add-ons.md](doc/commercial-add-ons.md)**
+for the full list and pricing pointer. The free `fluera_canvas`
+package on its own is production-ready.
 
 ## FAQ / Troubleshooting
+
+**My persisted canvas appears empty when I reopen it.**
+Use `FlueraCanvas(initialBytes: bytesFromDisk)` to restore — it
+decodes inside `initState`, before the first paint. Calling
+`loadFromBytes` on the State after the first frame can leave the
+`RepaintBoundary` cached layer stale on Impeller-Vulkan / Adreno (the
+second paint is silently coalesced and the canvas looks empty). Full
+write-up: [doc/troubleshooting-impeller.md](doc/troubleshooting-impeller.md#symptom-2).
+
+**My live stroke is invisible until I lift my finger on Android.**
+Flutter pipeline coalescing quirk on Impeller-Vulkan / Adreno in
+profile mode — mid-gesture `setState` / `markNeedsPaint` calls inside
+pointer-event handlers get folded together until pen-up.
+`FlueraCanvas` ships a vsync `Ticker` workaround that calls
+`setState({})` from a frame callback while a draw / erase / shape
+gesture is active — the live stroke and eraser preview circle track
+the pointer in real time. Zero idle cost. Verified on
+Adreno 660 / Impeller-Vulkan, profile mode.
 
 **What's the difference between the stroke eraser and the pixel eraser?**
 The stroke eraser (`CanvasTool.erase`) removes whole strokes whose
@@ -782,6 +662,7 @@ For anything else, build the polyline yourself and call
 the same undo / redo / persistence / hit-test infrastructure for free.
 
 **How do I open the color picker without the toolbar?**
+
 ```dart
 final picked = await showFlueraColorPicker(
   context: context,
@@ -790,46 +671,15 @@ final picked = await showFlueraColorPicker(
 );
 if (picked != null) setState(() => currentColor = picked);
 ```
+
 Returns `null` on cancel.
 
-**My persisted canvas appears empty when I reopen it.**
-Use `FlueraCanvas(initialBytes: bytesFromDisk)` to restore — it decodes
-the bytes inside `initState`, before the first paint. Calling
-`loadFromBytes` on the State after the first frame can leave the
-`RepaintBoundary` cached layer stale on Impeller-Vulkan / Adreno (the
-second paint is silently coalesced and the canvas looks empty).
-Full write-up: [doc/troubleshooting-impeller.md](doc/troubleshooting-impeller.md#symptom-2).
-
-**My live stroke is invisible until I lift my finger on Android.**
-This is a Flutter pipeline coalescing quirk on Impeller-Vulkan / Adreno
-in profile mode (mid-gesture `setState` / `markNeedsPaint` calls inside
-pointer-event handlers get folded together until pen-up). `FlueraCanvas`
-ships a vsync `Ticker` workaround that calls `setState({})` from a
-frame callback while a draw / erase / shape gesture is active — the
-live stroke and eraser preview circle track the pointer in real time.
-Zero idle cost. Verified on Xiaomi 2107113SG (Adreno 660).
-
-**My stroke has visible "humps" or "pinches" when I zoom in.**
-Update to 0.3.0+. The renderer now uses a single `drawPath` per stroke
-with quadratic-bezier smoothing and average pressure — silhouette is
-C¹-continuous regardless of zoom. The 0.2.x pressure-banding renderer
-is gone.
-
-**Can I use `fluera_canvas` without the commercial GPU plugin?**
-Yes — that's the default. The free package is **pure Dart**: no
-platform code ships in it, no MethodChannel, no shaders. The pure-Dart
-pipeline handles the live stroke and committed strokes on every
-platform Flutter supports. The native GPU plugin (`fluera_canvas_gpu`,
-separate commercial package) plugs into the public `GpuStrokeBackend`
-hook to buy sub-frame latency on the live path, but is strictly
-optional.
-
 **Why is the API so big? I see hundreds of exported symbols.**
-Most of them are scene-graph primitives, brush models, filters, and
-input pipeline pieces inherited from the larger commercial
-`fluera_engine`. They're free to use but not required by `FlueraCanvas`
-itself. Stick to the symbols documented in the README and you'll have
-everything you need for typical drawing-app use cases.
+Most are scene-graph primitives, brush models, filters, and input
+pipeline pieces inherited from the larger commercial `fluera_engine`.
+They're free to use but not required by `FlueraCanvas` itself. Stick
+to the symbols documented in this README and you'll have everything
+you need for typical drawing-app use cases.
 
 **How many strokes can it handle at 60 FPS?**
 ~5 000–10 000 strokes in a typical viewport on a mid-tier Android
@@ -847,28 +697,27 @@ using `path_provider` — copy and adapt.
 
 **Does `fluera_canvas` work on Web?**
 Yes. CanvasKit and WASM compilation both work out of the box — the
-free package has zero web-specific code, just Dart through Flutter's
-standard web toolchain. The commercial `fluera_canvas_gpu` adds a
-WebGPU live-stroke path for browsers that ship `navigator.gpu`
-(Chrome 113+, Edge 113+, Safari 18+).
+package has zero web-specific code, just Dart through Flutter's
+standard web toolchain.
 
-**My CI logs an `OnBackInvokedCallback is not enabled` warning.**
-That's a generic Android system warning unrelated to `fluera_canvas`.
-Add `android:enableOnBackInvokedCallback="true"` to your
-`<application>` tag in `AndroidManifest.xml`.
+**Can I use `fluera_canvas` without the commercial GPU plugin?**
+Yes — that's the default. The package is **pure Dart**: no platform
+code, no MethodChannel, no shaders. The optional native GPU plugin
+(`fluera_canvas_gpu`, separate package) plugs into the public
+`GpuStrokeBackend` hook to buy sub-frame latency on the live path,
+but is strictly optional.
 
 More guides: [doc/architecture.md](doc/architecture.md),
 [doc/performance.md](doc/performance.md),
-[doc/troubleshooting-impeller.md](doc/troubleshooting-impeller.md),
-[doc/migration-0.2-to-0.3.md](doc/migration-0.2-to-0.3.md),
-[doc/migration-0.3-to-0.4.md](doc/migration-0.3-to-0.4.md).
+[doc/troubleshooting-impeller.md](doc/troubleshooting-impeller.md).
 
 ## Contributing
 
 Issues and PRs welcome at
 [github.com/Lorencoshametaj/fluera_canvas](https://github.com/Lorencoshametaj/fluera_canvas).
-Please open an issue before starting a large change so we can align on API
-shape — we're converging on `1.0` and want to avoid breaking churn.
+Please open an issue before starting a large change so we can align on
+API shape — we're converging on `1.0` and want to avoid breaking
+churn.
 
 ## License
 

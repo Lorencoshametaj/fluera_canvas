@@ -56,12 +56,18 @@ native overlay.
 ### `_LiveStrokePainter`
 
 - One stable instance per State, also created in `initState`.
-- `super(repaint: Listenable.merge([_liveStroke, _controller]))`.
-- Renders the in-progress stroke with a single `Path` per stroke,
-  smoothed with quadratic-bezier curves through midpoints. Stroke
-  width is the average pressure across the path — sacrifices
-  per-segment pressure variation but eliminates the "pinch" artefacts
-  you'd otherwise see at high zoom.
+- `super(repaint: Listenable.merge([_liveStroke, _controller, _commitTick]))`
+  — the `_commitTick` is in there so toggling layer blend mode /
+  opacity while a stroke is in flight refreshes the preview.
+- Wraps the paint in a `canvas.saveLayer(...)` with the active
+  layer's blend mode + opacity, so an in-flight stroke on a
+  `multiply` / `screen` layer composes correctly in real time.
+- Stroke geometry is shared with the committed painter — see
+  `_paintStrokeSegments` for the five-stage smoothing pipeline
+  (One-Euro at ingest → arc-length subdivision → two-pass EMA →
+  predicted ghost tail anchor → Catmull-Rom → cubic bezier with
+  tau = 1/6). What the user sees mid-stroke is exactly what gets
+  persisted at pen-up.
 
 ### `NativeStrokeOverlay` (optional, conditional)
 
@@ -139,7 +145,9 @@ the same `_liveStrokeTicker` workaround.
 ### Persistence
 
 - `toBytes` / `loadFromBytes` — compact little-endian binary
-  (`FCV0` magic, version 1). ~14 bytes per point.
+  (`FCV0` magic, current version `v6` — strokes + image bytes +
+  image annotations + text + layer state). ~14 bytes per stroke
+  point. Backward-read of v1 → v5 is supported.
 - `toJson` / `loadFromJson` — diff-friendly JSON, ~10× larger.
 - `FlueraCanvas(initialBytes:)` — bytes are decoded inside
   `initState`, BEFORE the first build/paint. The first frame already

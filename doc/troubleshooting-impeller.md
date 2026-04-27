@@ -1,10 +1,11 @@
 # Troubleshooting Impeller-Vulkan / Adreno
 
 This document collects the platform-specific quirks we hit while
-building `fluera_canvas` 0.3.0 on Android profile mode with the
+building `fluera_canvas` on Android profile mode with the
 Impeller-Vulkan backend (the default on Adreno GPUs since Flutter
-3.27). If your symptoms match, the SDK already has the workaround;
-this is here so you understand what you're seeing.
+3.27). The workarounds described here are wired into the SDK from
+0.3.0 onwards and remain in place through the current 0.10.x line.
+This file is here so you understand what you're seeing.
 
 ## Symptom 1: live stroke invisible mid-gesture, "snaps" at pen-up
 
