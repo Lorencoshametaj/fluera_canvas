@@ -19,6 +19,7 @@
 //     export, history) while the GPU path ships as a paid add-on.
 // ════════════════════════════════════════════════════════════════════════════
 
+import 'dart:typed_data' show Uint8List;
 import 'dart:ui' as ui;
 import 'dart:ui' show Color;
 
@@ -103,6 +104,197 @@ abstract class GpuStrokeBackend {
 
   /// Free the native surface and any GPU resources.
   void dispose();
+
+  /// Compile and cache a custom shader payload in the platform-native
+  /// renderer. The payload is already in the platform target format —
+  /// for Vulkan this is raw SPIR-V bytes (`uint32_t` array as
+  /// `Uint8List`). The paid `fluera_canvas_gpu_cross_compile`
+  /// sub-package produces this payload at runtime by feeding the
+  /// consumer's `.frag` GLSL ES through `shaderc`.
+  ///
+  /// Returns `true` when the payload was accepted (compiled, validated,
+  /// pipeline created, cached). Returns `false` for any failure
+  /// (validation error, version mismatch, OOM, unsupported platform) —
+  /// the caller falls back to the Dart `ui.FragmentShader` path
+  /// transparently in that case.
+  ///
+  /// Default implementation returns `false`. This makes the addition
+  /// **non-breaking** for consumers that have implemented
+  /// [GpuStrokeBackend] directly: their existing renderer keeps
+  /// working, and custom-brush strokes fall through to the Dart path.
+  Future<bool> registerCustomNativeShader({
+    required String id,
+    required Uint8List payload,
+  }) async => false;
+
+  /// Release a custom shader previously registered via
+  /// [registerCustomNativeShader]. The native side waits for any
+  /// in-flight command buffer to finish before destroying the
+  /// pipeline / shader module so freeing is safe under concurrent
+  /// rendering.
+  ///
+  /// Default implementation is a no-op.
+  Future<void> unregisterCustomNativeShader(String id) async {}
+
+  /// Switch the live overlay's active brush to the custom pipeline
+  /// identified by [id]. Pass `null` to restore the standard
+  /// `brushType`-driven dispatch (the 11 built-in shader brushes).
+  ///
+  /// Default implementation is a no-op — when the backend doesn't
+  /// support custom shaders the live overlay keeps painting the
+  /// built-in brushes; the paid layer's Dart shader overlay
+  /// (`CustomBrushOverlay` from canvas_gpu 1.5.0) takes care of the
+  /// custom-brush live preview as a fallback.
+  Future<void> setActiveCustomNativeShader(String? id) async {}
+
+  /// Render a stroke to an offscreen RGBA byte buffer using the
+  /// **same** pipeline the live overlay uses, so the resulting bytes
+  /// are byte-for-byte identical to what the user just saw drawing.
+  ///
+  /// This is the path that closes the live↔committed gap for
+  /// custom-shader brushes: instead of letting the Dart-side
+  /// `GpuCanvasStrokeRenderer` recompose the stroke through Skia
+  /// (where anti-aliasing, blend rounding, and sub-pixel sampling
+  /// don't match the native Vulkan/Metal/D3D output), the committed
+  /// `CanvasStroke._cachedPicture` reuses the bytes the GPU just
+  /// produced.
+  ///
+  /// Contract:
+  /// - Returns a freshly-allocated `Uint8List` of size
+  ///   `width * height * 4` in RGBA byte order on success.
+  /// - Returns `null` to opt out — the caller MUST then fall back
+  ///   to its previous renderer path. Never silently return
+  ///   incorrect bytes.
+  /// - Synchronous from the caller's perspective (returns when the
+  ///   GPU readback completes); implementations may run on a
+  ///   background isolate / worker thread internally.
+  ///
+  /// Default implementation returns `null` so the addition is
+  /// **non-breaking** for consumers that have implemented
+  /// [GpuStrokeBackend] directly.
+  ///
+  /// Added in 1.8.0 (M6.1 — pixel-perfect committed renderer).
+  Future<Uint8List?> renderStrokeToImage({
+    required List<ProDrawingPoint> points,
+    required Color color,
+    required double strokeWidth,
+    required int width,
+    required int height,
+    required int brushType,
+    String? customBrushId,
+    PencilConfig pencil = PencilConfig.defaults,
+    FountainPenConfig fountainPen = FountainPenConfig.defaults,
+  }) async => null;
+
+  // ════════════════════════════════════════════════════════════════════
+  // NATIVE SCENE RENDERER (2.0.0+)
+  //
+  // When [supportsNativeScene] returns `true`, the canvas widget
+  // bypasses its Dart `_CommittedStrokesPainter` entirely — all
+  // committed strokes, layer compositing, and background are
+  // rendered by the native GPU backend and surfaced as a second
+  // Flutter `Texture` widget underneath the live-stroke overlay.
+  //
+  // Default implementations return no-op / false so existing
+  // consumers are unaffected.
+  // ════════════════════════════════════════════════════════════════════
+
+  /// Whether this backend implements the full native scene renderer.
+  /// When `true`, the canvas widget mounts a `Texture(textureId:
+  /// sceneTextureId)` and stops calling the Dart committed-strokes
+  /// painter.
+  bool get supportsNativeScene => false;
+
+  /// Initialise the scene renderer surface.  Returns the Flutter
+  /// texture ID for the committed-strokes scene, or `null` when the
+  /// backend does not support native scene rendering.
+  ///
+  /// The returned texture ID is separate from the live-stroke overlay
+  /// texture returned by [init].  The widget tree stacks them:
+  /// ```
+  /// Stack(
+  ///   Texture(textureId: sceneTextureId),  // committed (this)
+  ///   Texture(textureId: liveTextureId),   // live overlay (init)
+  /// )
+  /// ```
+  Future<int?> initScene(int width, int height) async => null;
+
+  /// Commit a stroke to the native scene graph.  The backend
+  /// tessellates the points natively, stores the vertex buffer, and
+  /// re-renders the affected region on the next vsync.
+  ///
+  /// Returns the native stroke ID assigned by the C++ scene graph.
+  Future<int> commitStroke({
+    required List<ProDrawingPoint> points,
+    required Color color,
+    required double strokeWidth,
+    required int layerId,
+    int brushType = 0,
+    PencilConfig pencil = PencilConfig.defaults,
+    FountainPenConfig fountainPen = FountainPenConfig.defaults,
+    String? customBrushId,
+  }) async => -1;
+
+  /// Remove a stroke from the native scene graph (soft-delete for
+  /// undo support).
+  Future<void> removeStroke(int strokeId) async {}
+
+  /// Batch-remove multiple strokes (single undo operation).
+  Future<void> removeStrokes(List<int> strokeIds) async {}
+
+  /// Undo the last scene mutation.
+  Future<void> undoScene() async {}
+
+  /// Redo the last undone scene mutation.
+  Future<void> redoScene() async {}
+
+  /// Whether the native scene graph has undoable operations.
+  Future<bool> canUndoScene() async => false;
+
+  /// Whether the native scene graph has redoable operations.
+  Future<bool> canRedoScene() async => false;
+
+  /// Add a new layer to the native scene graph.  Returns the
+  /// assigned layer ID.
+  Future<int> addLayer() async => -1;
+
+  /// Set the layer ordering (back-to-front).
+  Future<void> setLayerOrder(List<int> layerIds) async {}
+
+  /// Set a layer's blend mode and opacity.
+  Future<void> setLayerBlend({
+    required int layerId,
+    required int blendModeCode,
+    required double opacity,
+  }) async {}
+
+  /// Set a layer's visibility.
+  Future<void> setLayerVisible({
+    required int layerId,
+    required bool visible,
+  }) async {}
+
+  /// Set the canvas background.
+  Future<void> setSceneBackground({
+    required int backgroundType,
+    required Color color,
+    double gridSpacing = 20.0,
+  }) async {}
+
+  /// Resize the scene renderer surface.
+  Future<bool> resizeScene(int width, int height) async => false;
+
+  /// Dispose the scene renderer surface.
+  void disposeScene() {}
+
+  /// Get the default (first) layer ID from the native scene graph.
+  Future<int> defaultLayerId() async => 0;
+
+  /// Get the current stroke count (non-deleted).
+  Future<int> sceneStrokeCount() async => 0;
+
+  /// Clear all strokes and layers from the native scene graph.
+  Future<void> clearScene() async {}
 }
 
 /// Holder for the (optional) process-wide GPU backend.
@@ -365,8 +557,15 @@ abstract class CanvasStrokeRenderer {
   /// uses (no extra translate / scale needed).
   ///
   /// Implementations must be a no-op when [brushType] is the canvas-core
-  /// vector default (typically `0`) — the caller will fall back to its
-  /// built-in vector renderer in that case.
+  /// vector default (typically `0`) AND [customBrushId] is null — the
+  /// caller falls back to its built-in vector renderer in that case.
+  ///
+  /// When [customBrushId] is non-null the implementation should look it
+  /// up in its custom-brush registry (the commercial
+  /// `fluera_canvas_gpu` ships `ShaderBrushService.registerCustom(...)`)
+  /// and paint with the consumer-supplied fragment shader. If the id is
+  /// unknown the implementation should be a no-op so the caller can
+  /// fall back gracefully (the free vector renderer takes over).
   void renderStroke(
     ui.Canvas canvas, {
     required List<ui.Offset> points,
@@ -378,5 +577,6 @@ abstract class CanvasStrokeRenderer {
     PencilConfig pencilConfig,
     FountainPenConfig fountainConfig,
     double zoomScale,
+    String? customBrushId,
   });
 }

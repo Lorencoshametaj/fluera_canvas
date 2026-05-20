@@ -1,5 +1,739 @@
 # Changelog
 
+## 0.16.2 (cross-feature audit fixes — 2026-04-28)
+
+Patch release. No new public surface; pure correctness fixes
+caught by a cross-feature audit of 0.11→0.16.1.
+
+### Fixes
+
+- **`pasteFromClipboard` now preserves `tilts` / `twists` /
+  `metadata`.** The 0.13.0 paste path was authored before the 0.14.0
+  channels existed and silently dropped them when reconstructing
+  pasted strokes — copying a calligraphy / fountain-pen stroke and
+  pasting it back yielded a flat clone with no nib angle, no barrel
+  twist, no consumer metadata. Round-trip is now lossless and the
+  metadata map is shallow-copied so future mutations don't reach
+  back into the clipboard-decoded original.
+- **`hitTestInRect` normalises degenerate rects.** Inverted rects
+  (negative width / height — common when a marquee drag crosses its
+  origin) now return the same hit set as their normalised
+  equivalent, instead of silently probing the spatial index with
+  `right < left`. Zero-area rects and non-finite (NaN / infinite)
+  coordinates short-circuit to an empty set.
+- **Programmatic helpers fail loudly on degenerate input in release
+  builds.** `drawCircle` throws `ArgumentError` for `radius <= 0`,
+  non-finite radius, or `segments < 3`. `drawPolygon` throws for
+  `points.length < 2`. The pre-fix `assert`s only fired in debug,
+  so production callers silently committed malformed strokes.
+- **`FlueraMinimap` lifecycle hardened.** Added `didUpdateWidget` to
+  rebind when the consumer swaps `canvasKey` mid-flight, and a
+  defensive `dispose()` that drops the cached canvas-state and
+  merged-listenable references on unmount.
+
+### Migration impact
+
+Zero breaking. The new `ArgumentError` paths replace asserts that
+already documented the invariant — only callers that were passing
+degenerate input in release builds (and silently producing
+malformed strokes) will see the error. If you genuinely need to
+draw a 0-radius / 1-point shape, special-case it before the call.
+
+## 0.16.1 (Cupertino toolbar fork — 2026-04-28)
+
+Single-feature release: a Cupertino-styled drop-in toolbar for
+consumers targeting iOS / macOS with pixel-perfect Apple HIG
+aesthetics. Deferred from 0.16.0 to keep that release focused on
+adoption-optimization (cookbook / integrations / a11y / i18n /
+shortcuts).
+
+Audit Agent 2 (TLDraw, Excalidraw, Konva, Fabric) confirmed: zero
+competitor pub.dev offers a Cupertino-styled canvas toolbar. This
+closes the identity gap for the iOS-purist segment (~5% of Flutter
+audience targeting iOS-only) without touching the Material default.
+
+### `FlueraCanvasCupertinoToolbar`
+
+- **NEW** widget exported from the barrel — same public API as
+  `FlueraCanvasToolbar` (32 constructor params, all `show*` flags,
+  callbacks, `theme` / `strings` / `compactBreakpoint`). Consumer
+  migration is one line: swap `FlueraCanvasToolbar(...)` for
+  `FlueraCanvasCupertinoToolbar(...)`.
+- Built with `CupertinoButton`, `CupertinoSlider`, `CupertinoColors`,
+  `CupertinoIcons`. iOS-style hairline divider (0.33 px) on the top
+  edge instead of Material's gradient + outline-variant border.
+- Reuses `FlueraToolbarTheme` for geometry (radii / spacing /
+  motion); colour overrides on the theme still work — `null` fields
+  fall back to `CupertinoColors.activeBlue` / `systemRed` / `label`
+  / `separator` / `systemGrey6` instead of Material colorScheme.
+- Reuses `FlueraStrings` for i18n (no parallel string set needed).
+- Pen-down haptic via `HapticFeedback.selectionClick()` on tool
+  switch — matches iOS expectations.
+- Compact mode + `compactBreakpoint` work identically to the
+  Material toolbar.
+- Layers / sticker bottom sheets use `showCupertinoModalPopup`
+  (instead of Material's `showModalBottomSheet`).
+
+### Demo
+
+- New "Cupertino toolbar" entry in `example/lib/main.dart` gallery
+  (14th demo). Uses `FlueraCanvasCupertinoToolbar` inside a
+  Material `Scaffold` to demonstrate that mixing the two design
+  systems works fine.
+
+### Tests
+
+- 3 widget tests in `test/cupertino_toolbar_test.dart` — render,
+  tool-tap dispatch, compact-mode slider width swap.
+- Full suite: 391 + 3 = **394 tests green**.
+
+### Migration impact
+
+**Zero breaking**:
+- New widget is additive; the existing Material `FlueraCanvasToolbar`
+  is unchanged.
+- No new dependencies in `pubspec.yaml` — Cupertino is built-in
+  Flutter (`package:flutter/cupertino.dart`).
+
+### Out of scope (deferred to 0.16.2+ or later)
+
+- **Cupertino color picker dialog** — `showFlueraColorPicker`
+  Material is reused. If iOS-purist consumers find it out of place,
+  they can pass `showColorPickerButton: false` and supply their own
+  picker.
+- **Cupertino `FlueraSketchApp` zero-config variant** — for now
+  consumers who want the all-Cupertino experience pair the
+  Cupertino toolbar with a headless `FlueraCanvas` themselves.
+- **Dedicated `FlueraCupertinoToolbarTheme` extension** — current
+  reuse of `FlueraToolbarTheme` works; promote to its own extension
+  when sufficient consumer demand justifies the divergence.
+
+## 0.16.0 (Adoption optimization — 2026-04-28)
+
+This release is positioning-driven, not feature-driven. Following an
+explicit business-role choice (fluera_canvas as OSS lead funnel for
+the commercial `fluera_canvas_gpu`), 0.16.0 stops chasing vertical
+identity (TLDraw / Notability / etc.) and instead removes the
+adoption friction that prevents Flutter dev teams from making
+fluera_canvas their default canvas dependency.
+
+Five drops: cookbook docs, integration snippets, accessibility
+semantics, opt-in i18n, customisable keyboard shortcuts. Pure-Dart,
+free-tier, zero overlap with `canvas_gpu` commercial moat
+(brush calligrafici, 16 PS blend modes, mask, adjustment layers,
+CRDT collab, PDF, time-travel/replay restano commerciale).
+
+**Cupertino toolbar fork** is deferred to 0.16.1 — the scope (~10h
+for full API parity with the Material toolbar) doesn't fit a single
+release alongside the docs + a11y + i18n + shortcuts work.
+
+### Cookbook (10 copy-paste recipes)
+
+- **NEW** `doc/cookbook.md` — every common ask answered with a
+  ready-to-paste snippet:
+  1. Add drawing to my app in 1 line
+  2. Autosave to disk with debounce
+  3. Export PNG with transparent background
+  4. Export as SVG vector
+  5. Limit zoom to a single page
+  6. Copy / paste between canvas instances
+  7. Brand the toolbar with my colours
+  8. Add a custom tool to my own toolbar
+  9. Draw shapes programmatically (tutorial overlays)
+  10. Detect what's under the pointer (hover tooltips)
+- README TOC links to the cookbook.
+
+### Integration snippets
+
+- **NEW** `doc/integrations.md` — paste-ready snippets for the
+  packages most Flutter projects already pull:
+  `flutter_riverpod`, `flutter_bloc`, `drift`, `hive`, `share_plus`,
+  `cached_network_image`, `printing`. Each section is one block of
+  code (~30 lines) you adapt and drop into your project.
+- None of these become required dependencies; they're just docs
+  showing how the integration works when you DO pull them.
+
+### Accessibility / a11y semantics
+
+- **NEW** `FlueraCanvas(semanticsEnabled: true)` (default `true`) —
+  wraps the canvas in a `Semantics` node carrying a summary label
+  `"Drawing canvas, X strokes, Y layers"` so TalkBack / VoiceOver /
+  Narrator announce something meaningful when the canvas receives
+  focus. Set to `false` to opt out (saves one element in the
+  semantic tree when you know no assistive tech is active).
+- Per-stroke semantics intentionally NOT emitted — even moderate
+  scenes (~1k strokes) would explode the semantic tree and tank
+  screen-reader performance. Consumers needing stroke-level a11y
+  wrap nodes themselves outside the canvas.
+- 3 widget tests in `test/semantics_test.dart`.
+
+### Localization (i18n) — `FlueraStrings` delegate
+
+- **NEW** `FlueraStrings` `ThemeExtension<T>` exporting 24
+  localisable strings (tool tooltips, sheet titles, slider labels,
+  selection-action tooltips). Apply globally via
+  `ThemeData.extensions: [FlueraStrings(toolPen: 'Penna', ...)]` or
+  per-toolbar via `FlueraCanvasToolbar(strings:)` (local prop wins
+  over global extension — same priority pattern as
+  `FlueraToolbarTheme`).
+- Defaults are English; partial overrides translate only the
+  strings you provide. Zero runtime dependency on
+  `flutter_localizations`.
+- Wired into `FlueraCanvasToolbar` tool labels, trailing tooltips
+  (image / sticker / layers / undo / redo / clear), bottom sheet
+  titles. Selection-action tooltips + slider labels remain English
+  in 0.16.0; can be wired in 0.16.x once consumer demand is
+  evident.
+- 3 widget tests in `test/strings_i18n_test.dart`.
+
+### Keyboard shortcuts customizable — `FlueraShortcuts` map
+
+- **NEW** `FlueraShortcuts` + `FlueraShortcutAction` enum.
+  `FlueraCanvas(shortcuts: FlueraShortcuts(overrides: {...}))`
+  re-binds any subset of the 8 default actions
+  (undo / redo / deleteOrClear / escape / selectAll / duplicate /
+  copy / paste). Missing entries fall back to the per-platform
+  default — Cmd-bound on macOS / iOS, Ctrl-bound elsewhere.
+- Backward-compat aliases (`Y` for redo on non-Mac, `Backspace` for
+  deleteOrClear) only inject when the consumer hasn't re-bound the
+  primary action — avoids surprising re-binds.
+- 4 unit tests in `test/shortcuts_custom_test.dart` (default
+  per-platform binding, override priority, exhaustive
+  per-action coverage).
+
+### Tests
+
+- 10 new tests across a11y (3), i18n (3), shortcuts (4).
+- Full suite: 381 + 10 = **391 tests green**.
+
+### Migration impact
+
+**Zero API breaking**:
+- `semanticsEnabled: true` is a new default; consumers who
+  explicitly want NO `Semantics` wrapper pass `false`.
+- `FlueraStrings` and `FlueraShortcuts` are opt-in opzionali
+  (default reproduce 0.15.x exactly).
+- All new symbols (`FlueraStrings`, `FlueraShortcuts`,
+  `FlueraShortcutAction`) are additive exports.
+
+### Out of scope (deferred / commercial)
+
+- **Cupertino toolbar fork** — deferred to 0.16.1 (~10h scope).
+- **Slider tooltip i18n** (opacity / eraser radius) — deferred
+  pending consumer feedback on which strings matter most.
+- **Pillar verticali** (arrow-binding, frames, rich text, shape
+  recognition) — out of "lead funnel" scope per memoria progetto.
+- **Brush calligrafici, PDF, multi-page, CRDT collab, time-travel/
+  replay, 16 PS blend modes, mask, adjustment layers** — restano
+  in `fluera_canvas_gpu` commerciale.
+
+## 0.15.0 (Smart guides on-by-default + interactive primitives — 2026-04-28)
+
+This release closes two gaps measured by the 0.15.0 evidence-based
+audit (35 pub.dev packages surveyed + 9 reference SDKs outside
+Flutter benchmarked + 0.14.0 internal API inventory):
+
+1. **Smart object snap during drag** is table stake in Konva, Fabric,
+   PixiJS, TLDraw, Excalidraw — and absent from every pub.dev canvas
+   package (audit 0/35). fluera_canvas had the infrastructure since
+   pre-0.13 (gated behind `smartGuidesEnabled: false`); this release
+   flips the default to `true` and ships a public reusable
+   [SnapEngine] for consumers building custom widgets.
+2. **Hit-test API** is table stake in Konva, Fabric, PixiJS, TLDraw —
+   fluera_canvas had `_hitTestNode` / `_hitTestIdsInRect` private
+   since 0.12. Exposed publicly as `state.hitTest(Offset)` /
+   `state.hitTestInRect(Rect)`.
+
+Plus: programmatic drawing helpers (`state.drawLine` / `drawCircle` /
+`drawPolygon`) and per-tool mouse cursor override (`cursorPerTool`).
+
+Pure-Dart, free-tier, no overlap with `fluera_canvas_gpu`'s commercial
+moat (bezier handle editing, boolean path operations, brush
+calligrafici, multi-page, PDF, CRDT collab restano commerciale).
+
+### Smart guides default flipped to `true`
+
+- `FlueraCanvas(smartGuidesEnabled:)` default changed from `false`
+  to `true`. Drag-to-move on a selection now scans nearby selectable
+  nodes and snaps the dragged frame's anchors to matching anchors
+  (Figma / TLDraw style alignment). Magenta dashed guide lines
+  render via the existing selection painter.
+- Hold Shift while dragging to bypass guides for a single drag.
+- Set `smartGuidesEnabled: false` to restore 0.14.x behaviour
+  exactly.
+- Tolerance configurable via the existing `smartGuidesTolerancePx`
+  prop (default `6.0` logical px, scale-aware).
+
+### `SnapEngine` public reusable primitive
+
+- **NEW** `SnapEngine` + `SnapResult` + `SnapGuide` + `SnapAxes`
+  exported from the barrel. Pure-geometry pass over candidate AABBs;
+  no canvas / widget dependency. Useful for consumers building
+  custom transform widgets / gestures that need the same snap
+  semantics standalone.
+- Tunable thresholds: `snapTolerance` (default 6 world-px),
+  `enableEdgeSnap`, `enableCenterSnap`.
+- 5 geometric tests in `test/snap_engine_test.dart` (edge snap,
+  center-X snap, tolerance respect, axes filter, axes=none).
+
+### Hit-test API public
+
+- **NEW** `state.hitTest(Offset, {tolerance: 4.0})` returns the
+  front-most `NodeId` at the world-space point, or `null`. O(log n)
+  via the internal RTree spatial index. Safe to call from
+  `MouseRegion.onHover`.
+- **NEW** `state.hitTestInRect(Rect)` returns an unmodifiable
+  `Set<NodeId>` of every node whose bounds intersect the rect.
+  Use for batch queries (export-by-region, custom marquee, collision
+  detection).
+- 4 widget tests in `test/hit_test_public_test.dart`.
+
+### Programmatic drawing helpers
+
+- **NEW** `state.drawLine(from, to, {color, width, metadata})` —
+  commits a 2-point straight stroke.
+- **NEW** `state.drawCircle(center, radius, {segments: 32, color, width, metadata})`
+  — commits a closed N-segment polyline circle.
+- **NEW** `state.drawPolygon(points, {closed, color, width, metadata})`
+  — commits an arbitrary polygon, optionally closed.
+- All three fall back to the canvas's `strokeColor` / `strokeWidth`
+  when overrides are null. Useful for tutorial overlays, generative
+  art, AI-assisted drawing, anything that deposits ink without
+  going through pointer events.
+- 4 widget tests in `test/programmatic_draw_test.dart`.
+
+### Custom per-tool mouse cursors
+
+- **NEW** `FlueraCanvas(cursorPerTool: Map<CanvasTool, MouseCursor>?)`
+  prop — partial map of overrides; missing entries fall back to the
+  per-tool default (`SystemMouseCursors.precise` for draw / shape,
+  `none` for erase + showEraserPreview, `text` for text, `basic`
+  otherwise).
+- Useful for branded cursors, tutorial states, custom tool
+  affordances. Touch-only platforms ignore the override (no
+  MouseRegion mounts).
+- 1 widget test in `test/eraser_preview_test.dart`.
+
+### Tests
+
+- 14 new tests across SnapEngine (5), hit-test (4), programmatic
+  draw (4), cursor override (1).
+- Full suite: 367 + 14 = **381 tests green**.
+
+### Migration impact
+
+**Behaviour change** (intentional, easy to opt out):
+- Smart guides now ON by default. Consumers who want exact 0.14.x
+  behaviour pass `smartGuidesEnabled: false`. The visual change
+  (magenta guide lines during drag) is non-breaking — no crashes,
+  no API change — but observable, hence flagged.
+
+**Zero API breaking**:
+- All new public symbols (`SnapEngine`, `SnapResult`, `SnapGuide`,
+  `SnapAxes`) and methods (`hitTest`, `hitTestInRect`, `drawLine`,
+  `drawCircle`, `drawPolygon`) are additive.
+- New `cursorPerTool: null` default — no behaviour change for
+  consumers who don't pass it.
+
+### Out of scope (deferred to 0.16+ / commercial)
+
+- **Arrow-to-shape binding** (TLDraw flagship per audit) — pillar
+  for a future release; uses SnapEngine as substrate.
+- **Frames / artboards** — `FrameNode extends GroupNode` + export
+  bounds mode; pillar for a future release.
+- **Rich text on TextNode** — `TextSpan` tree + FCV0 v9 bump;
+  pillar for a future release.
+- **Bezier handle editing on existing strokes** — `fluera_canvas_gpu`
+  commercial.
+- **Boolean path operations** (union/intersect/subtract via Skia
+  PathOps) — `fluera_canvas_gpu` commercial.
+- **Multi-page documents with page-flip transitions** —
+  `fluera_canvas_gpu` commercial.
+- **Hosted collab backend, OCR, AI/LLM features, baked-in editor
+  UI, 3D shaders, cloud asset hosting** — out of OSS Flutter SDK
+  scope per the cross-ecosystem benchmarking audit.
+
+## 0.14.0 (Power-user data + UX polish — 2026-04-28)
+
+This release lays the data foundation that production-grade drawing
+apps need (stylus tilt channel, opaque per-stroke metadata,
+document model with autosave) plus surfaces the credibility
+materials that mark a serious SDK (published benchmarks). Everything
+is pure-Dart and free-tier — the rendering features that *exploit*
+the new data (calligraphic / tilt-aware brushes) remain in the
+commercial `fluera_canvas_gpu` add-on.
+
+### Stylus tilt channel on `CanvasStroke`
+
+- **NEW** `tilts: List<Offset>?` on `CanvasStroke` — per-point pen
+  tilt as `Offset(tiltX, tiltY)` in radians. `null` when the input
+  device didn't report tilt (mouse, finger, or a stylus that
+  doesn't expose it). When non-null, must match `points.length`
+  (asserted at construction).
+- **NEW** `twists: List<double>?` channel on `CanvasStroke` — per-point
+  pen barrel rotation in radians. Reserved data structure:
+  consumers can construct strokes programmatically with twists
+  populated, but the gesture-capture pipeline does not yet harvest
+  raw orientation as a separate channel (planned for 0.14.x once a
+  brush exists that consumes it).
+- Gesture pipeline lazily allocates the tilt accumulator only when
+  the input device reports a non-zero tilt — mouse / finger paths
+  pay zero allocation cost. Mid-stroke tilt detection backfills
+  prior points with `Offset.zero` to keep the per-point arrays
+  aligned at commit time.
+- Built-in vector renderer (ballpoint / marker / highlighter)
+  ignores the tilt channel — the value lands in the stroke for
+  persistence + handoff to canvas_gpu's calligraphic brushes.
+
+### Opaque per-stroke metadata bag
+
+- **NEW** `metadata: Map<String, dynamic>?` on `CanvasStroke` — a
+  consumer-defined JSON-encodable bag that round-trips through FCV0
+  v8 binary save/load. Built-in code never reads this field;
+  consumers attach replay timestamps, author IDs, semantic labels,
+  anything they want to recover at load time.
+- **NEW** `stroke.getMeta<T>(String key, [T? defaultValue])`
+  convenience accessor — reads a typed value or returns the
+  default on missing key / type mismatch. Saves the consumer
+  `as T?` casts at every read site.
+
+### `FlueraDocument` model
+
+- **NEW** `FlueraDocument` (extends `ChangeNotifier`) — opt-in
+  document wrapper around a `FlueraCanvas` mounted via `GlobalKey`.
+  Mediates the dirty-flag + autosave-debounce plumbing every notes
+  / whiteboard app ends up reinventing. Subscribes to the canvas's
+  `historyListenable`, flips `isDirty` on every committed stroke,
+  resets a debounce timer (default `2s`), invokes the
+  consumer-provided `onAutoSave` callback with the FCV0 bytes +
+  current metadata.
+- **NEW** `FlueraDocumentMeta` immutable record — id / title /
+  createdAt / modifiedAt / tags. `copyWith` + JSON round-trip
+  baked in.
+- Public callback typedefs: `FlueraDocumentSaveCallback` and
+  `FlueraDocumentLoadCallback`.
+- `save()` and `load()` are explicit async methods — useful for
+  "save now" buttons and initial-mount hydration.
+- The document is **opt-in**: the pre-0.14 pattern (write FCV0
+  bytes yourself on stroke commit) keeps working unchanged.
+
+### FCV0 v8 binary format
+
+- Bumped from v7 to v8 to carry the new chained extension blocks
+  after each stroke's customBrushId TLV: `0xE1` tilts /
+  `0xE2` metadata / `0xE3` twists (reserved), terminated by
+  `0xE0`. The terminator byte is mandatory in v8, so v8+ readers
+  always know where each stroke ends.
+- v8 readers continue to load v7 / v6 / v5 / v4 / v3 / v2 / v1
+  files unchanged — strokes from older formats load with
+  `tilts: null`, `twists: null`, `metadata: null`.
+- **Migration impact**: v8 files cannot be read by 0.13.x and
+  earlier. Upgrading 0.13 → 0.14 is seamless (new reader handles
+  old files); downgrading 0.14 → 0.13 and re-loading v8 files
+  raises `FormatException`. Plan the upgrade window accordingly
+  if you have a mixed-version userbase.
+
+### Eraser preview cursor (documentation)
+
+- The `showEraserPreview` flag on `FlueraCanvas` (default `true`)
+  was already wired pre-0.14.0 — translucent circle under the
+  pointer / stylus when the eraser tool is active. Added to
+  `doc/customization.md` for discoverability and 2 backward-compat
+  tests pinning the contract.
+
+### Published benchmarks
+
+- `doc/performance.md` extended with a "Published benchmarks (0.14.0)"
+  section: median of 3 runs of `test/benchmarks/perf_baseline_test.dart`
+  on Linux x86_64 / Vulkan-Impeller / Ryzen 7 5800X. Headline numbers:
+  - Insert 5,000 strokes into the spatial index: **243 ms**
+    (~49 µs / stroke)
+  - 10,000 hit-tests on a 5,000-stroke scene: **43 ms**
+    (~4.3 µs / hit-test)
+  - Commit a 5,000-point stroke: **297 µs** (~60 ns / point)
+- Numbers are reproducible with `flutter test test/benchmarks/`
+  (output format `[bench] name=duration_in_microseconds` for easy
+  CI parsing).
+
+### Tests
+
+- 15 new unit / widget tests across stroke channels (8),
+  document (5), eraser preview (2). Pre-existing v7 assertion in
+  `canvas_serializer_v2_test.dart` updated to assert v8.
+- Full suite: 352 + 15 = **367 tests green**.
+
+### Migration impact
+
+- **Code**: zero breaking. New `CanvasStroke` named params
+  (`tilts`, `twists`, `metadata`) are optional with `null` default.
+  `FlueraDocument` + `FlueraDocumentMeta` are new public symbols
+  (no collision). All consumer 0.13.x code continues to work
+  unchanged.
+- **Binary format**: v8 is forward-compat (v8 readers load older
+  files) but NOT backward-compat (0.13.x readers throw on v8
+  files). If you ship a mixed-version fleet, gate the v0.14
+  upgrade until all clients have migrated.
+
+### Out of scope (commercial / deferred)
+
+- **Calligraphic brushes that consume the tilt / twist channels** —
+  fountain pen, technical pen, charcoal-angled, nib-angle pencil —
+  remain `fluera_canvas_gpu` commercial. The free tier provides
+  the data plumbing; the visual expressiveness is the commercial
+  moat.
+- **High-fidelity SVG / PDF, 16 PS blend modes, mask layers,
+  adjustment layers, real-time CRDT collab** — `canvas_gpu` only.
+- **Twist channel gesture capture** — deferred to 0.14.x once a
+  brush consumes it. The data structure is ready; the pipeline
+  doesn't harvest raw orientation as a separate channel today.
+- **Cupertino fork of the toolbar, i18n, history branching,
+  customizable keyboard shortcuts** — deferred to 0.15+.
+
+## 0.13.0 (Table-stakes parity + power-user polish — 2026-04-28)
+
+This release closes four gaps a Flutter dev would hit when adopting
+the package for a design-tool-class application: vector export,
+copy / paste, minimap navigation, configurable camera bounds.
+Every feature is purely Dart-only — the commercial
+`fluera_canvas_gpu` add-on continues to extend each one with
+high-fidelity output (full Photoshop blend mode preservation,
+image-annotation embedding, multi-page PDF, etc.). Zero breaking
+changes: every new public surface is opt-in with defaults that
+reproduce 0.12.0 behaviour exactly.
+
+### SVG export (basic)
+
+- **NEW** `FlueraSvgWriter` class with `encodeStrokes` /
+  `encodeLayers` / `encodeStrokesBytes` / `encodeLayersBytes` static
+  methods. Pure Dart, zero dependencies.
+- **NEW** `state.toSvgBytes({Rect? bounds, double padding = 16.0})`
+  on `FlueraCanvasState` — encodes the visible layer tree as SVG 1.1
+  ready to write to disk or share.
+- Free-tier scope: strokes (`<path>` polylines + `<circle>` dots),
+  per-layer opacity (`<g opacity="...">`), 12 CSS-mappable blend
+  modes (`mix-blend-mode:multiply` etc.). Image / text / shape nodes
+  emit explanatory XML comments and are skipped (planned for 0.13.1
+  + `canvas_gpu` high-fidelity writer).
+- 10 widget tests in `test/svg_writer_test.dart`.
+- New doc page `doc/export.md` — full PNG vs SVG vs FCV0 matrix +
+  free vs commercial tier comparison.
+
+### Clipboard API + Ctrl+C / Ctrl+V shortcuts
+
+- **NEW** `state.copySelection()` — encodes the current selection as
+  FCV0 v7 bytes, base64-wraps with a `FLUERA_CLIPBOARD_V1:` magic
+  prefix, writes to the system clipboard via `flutter/services`.
+  Cross-platform, zero extra dependency.
+- **NEW** `state.pasteFromClipboard({Offset? worldPosition})` —
+  detects the magic prefix, decodes, translates so the pasted
+  bounds centre lands at `worldPosition` (defaults to the camera
+  centre). Returns the IDs of the newly-added stroke nodes; ignores
+  any non-fluera clipboard content (returns `[]`).
+- **NEW** `Ctrl/Cmd + C` / `Ctrl/Cmd + V` keyboard shortcuts wired
+  by default when `enableKeyboardShortcuts: true` (the existing
+  default). Honours the in-canvas text editor (no hijack while
+  typing).
+- 3 widget tests in `test/clipboard_test.dart` exercising round-trip
+  + empty / foreign-content paths via the standard
+  `setMockMethodCallHandler` clipboard mock.
+
+### Minimap widget
+
+- **NEW** `FlueraMinimap` opt-in widget — drops into a `Stack`
+  overlay, shows a scaled-down view of every committed stroke + a
+  rectangle indicating the current viewport. Tap to recenter; drag
+  to pan smoothly.
+- Subscribes to `state.historyListenable` (content changes) and to
+  the camera controller (viewport changes) via a single merged
+  `Listenable`, so a single `CustomPainter` repaint covers both.
+- Pure Dart `CustomPainter` — no GPU, no native code, no extra
+  dependency. Theme-aware via `colorScheme` defaults; everything
+  overridable via constructor params (`size`, `background`,
+  `viewportColor`, `contentColor`, `borderRadius`).
+- 2 widget tests in `test/minimap_test.dart`.
+
+### InfiniteCanvasController bounds — `minScale` / `maxScale` / `panBoundary`
+
+- The previously-`static const` zoom limits (`0.1` / `5.0`) are now
+  constructor parameters on `InfiniteCanvasController`. Defaults
+  preserve 0.12.0 behaviour exactly.
+- **NEW** `panBoundary` (`Rect?`) — clamps `setOffset` so the camera
+  origin stays inside the rectangle. Use for single-page notes apps
+  / Figma-style frames. `null` (default) keeps the canvas infinite.
+- 5 unit tests in `test/controller_bounds_test.dart` (default
+  reproduction, custom limits honored, assertion validation,
+  panBoundary clamp behaviour).
+
+### Documentation
+
+- **NEW** `doc/export.md` — quick reference table + per-format
+  details + tier matrix free vs `canvas_gpu`.
+- `doc/customization.md` extended with two new sections: "Camera
+  bounds" + "Minimap navigation" (with copy-paste recipes).
+- README pillar list updated: SVG export / clipboard / minimap /
+  camera bounds bullets added; TOC links to the new export doc.
+
+### Tests
+
+- 20 new widget / unit tests across SVG writer (10), minimap (2),
+  clipboard (3), controller bounds (5). One pre-existing stale
+  assertion in `canvas_serializer_v2_test.dart` (was checking FCV
+  v6, writer is at v7 since 0.10.3) updated.
+- Full suite: 332 + 20 = **352 tests green**.
+
+### Migration impact
+
+**Zero** breaking changes:
+- All new public symbols (`FlueraSvgWriter`, `FlueraMinimap`) are
+  opt-in.
+- All new methods (`toSvgBytes`, `copySelection`,
+  `pasteFromClipboard`) are additive on existing `FlueraCanvasState`.
+- New `InfiniteCanvasController(minScale, maxScale, panBoundary)`
+  parameters all have defaults matching pre-0.13.0 hard-coded values.
+- New `Ctrl+C / Ctrl+V` shortcuts honour the existing
+  `enableKeyboardShortcuts` opt-out + the in-canvas text editor's
+  focus state, so consumers who type-in-text never see the canvas
+  hijack their keystrokes.
+
+### Out of scope (deferred or commercial)
+
+- **SVG for image / text / shape nodes** — planned for 0.13.1
+  (still free tier; extends the basic writer with the remaining node
+  types).
+- **High-fidelity SVG / PDF export** — `fluera_canvas_gpu` only
+  (commercial). Ships transparently behind the same `toSvgBytes()`
+  call site when `canvas_gpu` is installed alongside.
+- **Advanced calligraphic brushes** (fountain pen, technical pen,
+  nib-angle pencil with tilt-aware shading) — these belong to
+  `fluera_canvas_gpu`'s commercial roadmap. Even when the
+  implementation is pure Dart (no GPU shader), the algorithm
+  complexity (perfect-freehand pressure model + nib angle + thinning
+  + taper) is part of the commercial value proposition. The free
+  tier ships geometric stroke brushes only: ballpoint, marker,
+  highlighter.
+
+## 0.12.0 (Material 3 toolbar + opacity slider + theme + responsive + custom-toolbar example — 2026-04-28)
+
+This release bundles the toolbar restyle (planned 0.11.0) and the
+DX improvements bundle (planned 0.11.1) into a single coherent jump.
+Zero breaking changes — all new props are opt-in with defaults that
+match prior behaviour.
+
+### Toolbar visual restyle (Material 3)
+
+- **Pill-shaped tool buttons** — `FlueraCanvasToolbar` swaps the
+  `SegmentedButton` row for filled-tonal pills (selected → filled
+  `colorScheme.primary` with soft drop shadow; idle → transparent +
+  `onSurfaceVariant` icon). Trailing icons (image, sticker, layers,
+  undo, redo, clear) become `IconButton.filledTonal` with a uniform
+  22 px glyph and an `error`-tinted `clear` for the destructive cue.
+  Container picks up a subtle `surfaceContainerHigh →
+  surfaceContainerHighest` vertical gradient + outline-variant top
+  border.
+- **Circular colour swatches** — 30 px with a 2.5 px primary ring on
+  selected (the old square + thick border is gone). White swatch
+  gets an `outlineVariant` hairline so it doesn't disappear on light
+  themes. Tapping a swatch now **preserves the alpha** the user
+  dialled in via the opacity slider.
+- **Stroke-width slider with live preview** — moved out of the bare
+  `Slider` into a `Row(preview, slider)` layout: the 30 px preview on
+  the left renders the actual stroke diameter (in the active colour)
+  or an outline ring (eraser mode). 30 % floor on the preview so thin
+  strokes stay visible. Slider track is now 3 px with a primary thumb.
+- **Opacity slider** — NEW. Drives the alpha channel of `color`
+  through the existing `onColorChanged` callback (no new API). Preview
+  uses a 7 px checkerboard behind the live colour so transparency
+  reads at a glance. Hidden automatically while an eraser tool is
+  active. Toggleable via `showOpacitySlider` (default `true`).
+- **Tool tooltips standardised** — `Pen / Erase / Pixel / Line / Rect /
+  Oval / Select / Lasso / Text` (matches the legacy SegmentedButton
+  labels for muscle memory).
+
+### `FlueraToolbarTheme` — themable toolbar
+
+- New public `FlueraToolbarTheme` class (`ThemeExtension<FlueraToolbarTheme>`).
+  Exposes 21 fields covering radii, spacing, tap target, slider widths
+  (wide + compact), motion duration + curve, and 8 colour overrides
+  (selectedFill, selectedIconColor, idleIconColor, destructiveColor,
+  swatchRingColor, surfaceGradientStart/End, outlineColor).
+- Apply globally via `ThemeData.extensions: [FlueraToolbarTheme(...)]`,
+  or locally via the new `theme:` prop on `FlueraCanvasToolbar`. The
+  prop wins over the global extension when both are present.
+- Colour fields default to `null` — meaning "fall back to
+  `Theme.of(context).colorScheme`". Override only what your brand
+  needs; the rest stays consistent with the host app.
+
+### Compact mode (responsive layout)
+
+- New `compactBreakpoint` prop (default `600.0`) on `FlueraCanvasToolbar`.
+  Below the threshold the toolbar switches from the classic 2-row
+  layout to a 3-row vertical stack (tools / palette + size slider /
+  opacity slider + trailing icons), and slider widths shrink from 220
+  to 140 px. Tap targets remain 44×44 in both modes.
+- Pass `compactBreakpoint: 0` to disable compact mode entirely.
+
+### Layout polish
+
+- Palette + size slider + opacity slider live in a `Wrap` with each
+  slider constrained to a fixed width (no more full-row stretch).
+  Tool pills wrap instead of horizontal-scrolling, so they reflow on
+  narrow viewports.
+- Internal `_T` design tokens replaced with `FlueraToolbarTheme`
+  resolution. All sub-widgets (`_ToolPill`, `_ColorSwatch`,
+  `_TrailingIconButton`, `_SizeSlider`, `_OpacitySlider`) now consume
+  the resolved theme via constructor prop.
+
+### Custom toolbar demo + customization docs
+
+- New `example/lib/main.dart` demo: **Custom toolbar (headless)** —
+  Photoshop-style floating sidebar (vertical tool pills + undo / redo)
+  on the left, floating colour palette on the top right, headless
+  `FlueraCanvas` behind both. Demonstrates the pattern for replacing
+  `FlueraCanvasToolbar` entirely (Cupertino, sidebar, ribbon, etc.).
+- New `doc/customization.md` covering the four magic levels
+  (`FlueraSketchApp` → `FlueraSketchScaffold` →
+  `FlueraCanvasToolbar` → headless `FlueraCanvas`), how to apply
+  `FlueraToolbarTheme` globally / locally, the field reference, the
+  `compactBreakpoint` prop, and the headless wiring pattern with a
+  real-time `historyListenable` recipe.
+- README TOC now links to `doc/customization.md`.
+
+### Example app desktop window
+
+- Linux / macOS / Windows runners now open at 1400×900 with a 900×600
+  minimum size and "Fluera Canvas" in the title bar (was
+  "fluera_canvas_example" 1280×720). Affects the example only — the
+  published archive is unchanged.
+- Zero-config demo's `TabBarView` switched to
+  `NeverScrollableScrollPhysics` so horizontal swipes don't intercept
+  canvas pans / draws.
+
+### Tests
+
+- `test/toolbar_restyle_test.dart` — 5 widget tests for the new
+  visual behaviour (tool-pill tap, alpha-preserving swatch, opacity
+  tooltip, eraser-hide, showOpacitySlider toggle).
+- `test/toolbar_theme_test.dart` — 6 widget tests for theme + compact
+  (copyWith preservation, lerp interpolation, ThemeData extension
+  pickup, local prop priority, wide vs narrow slider widths).
+- Existing `find.text(...)` assertions in `edge_cases_test.dart`,
+  `shape_tools_test.dart`, `fluera_canvas_widget_test.dart`,
+  `toolbar_phase_e_test.dart` migrated to `find.byTooltip(...)`
+  (text labels became tooltips).
+- Full suite: 331 tests green.
+
+### Migration impact
+
+**Zero** breaking changes:
+- No API renames, removals, or new required params.
+- All new props (`theme`, `compactBreakpoint`, `showOpacitySlider`)
+  are opt-in with defaults that match prior behaviour.
+- Consumer 0.10.x / 0.11.x code keeps working — the look changes, the
+  call sites don't. New `FlueraToolbarTheme` symbol export doesn't
+  collide with anything.
+- Consumer on viewport < 600 px sees the new 3-row compact layout;
+  pass `compactBreakpoint: 0` to keep the wide layout everywhere.
+
 ## 0.10.4 (Final FontWeight.index leftover — pana 160/160 — 2026-04-27)
 
 - **One last `FontWeight.index` was hiding** in

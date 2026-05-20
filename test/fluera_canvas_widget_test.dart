@@ -377,9 +377,10 @@ void main() {
               ),
         ),
       );
-      expect(find.text('Pen'), findsOneWidget);
-      expect(find.text('Erase'), findsOneWidget);
-      expect(find.byType(Slider), findsOneWidget);
+      expect(find.byTooltip('Pen'), findsOneWidget);
+      expect(find.byTooltip('Erase'), findsOneWidget);
+      // Stroke-width slider + opacity slider (added in 0.11.0).
+      expect(find.byType(Slider), findsNWidgets(2));
     });
   });
 }

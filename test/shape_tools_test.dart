@@ -208,9 +208,9 @@ void main() {
           ),
         ),
       );
-      expect(find.text('Line'), findsOneWidget);
-      expect(find.text('Rect'), findsOneWidget);
-      expect(find.text('Oval'), findsOneWidget);
+      expect(find.byTooltip('Line'), findsOneWidget);
+      expect(find.byTooltip('Rect'), findsOneWidget);
+      expect(find.byTooltip('Oval'), findsOneWidget);
     });
 
     testWidgets('showShapeTools=false (default) hides shape buttons', (
@@ -243,9 +243,9 @@ void main() {
           ),
         ),
       );
-      expect(find.text('Line'), findsNothing);
-      expect(find.text('Rect'), findsNothing);
-      expect(find.text('Oval'), findsNothing);
+      expect(find.byTooltip('Line'), findsNothing);
+      expect(find.byTooltip('Rect'), findsNothing);
+      expect(find.byTooltip('Oval'), findsNothing);
     });
   });
 }

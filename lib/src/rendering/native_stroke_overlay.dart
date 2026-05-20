@@ -75,6 +75,14 @@ class NativeStrokeOverlayController extends ChangeNotifier {
   int _brushType = 0;
   bool _drawing = false;
 
+  /// Identifier of the custom shader currently active on the live
+  /// overlay (paid `fluera_canvas_gpu_cross_compile` 1.6.0 path).
+  /// `null` restores the standard `_brushType`-driven dispatch over
+  /// the 11 built-in shaders. Read by the overlay widget to forward
+  /// to [GpuStrokeBackend.setActiveCustomNativeShader] on every
+  /// change.
+  String? _activeCustomShaderId;
+
   // Brush tuning exposed verbatim so power users can mimic Fluera's pencil /
   // fountain pen rendering. Defaults match the engine's pencil brush.
   /// Field `pencilBaseOpacity`.
@@ -181,6 +189,24 @@ class NativeStrokeOverlayController extends ChangeNotifier {
   /// Getter `brushType`.
   int get brushType => _brushType;
   @protected
+  /// Active custom shader id (paid path), or null for built-in.
+  String? get activeCustomShaderId => _activeCustomShaderId;
+
+  /// Switch the live overlay's active brush to a custom shader
+  /// previously registered via
+  /// [GpuStrokeBackend.registerCustomNativeShader]. Pass `null` to
+  /// restore the [_brushType]-driven dispatch over the 11 built-in
+  /// shader brushes.
+  ///
+  /// Implemented by the paid `fluera_canvas_gpu` add-on; the free
+  /// core only persists the value and notifies the overlay so it can
+  /// forward to the backend.
+  void setActiveCustomShader(String? id) {
+    if (_activeCustomShaderId == id) return;
+    _activeCustomShaderId = id;
+    notifyListeners();
+  }
+  @protected
   /// Getter `bufferedPoints`.
   List<ProDrawingPoint> get bufferedPoints => _points;
 }
@@ -229,6 +255,13 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay>
   Size? _lastPhysicalSize;
   double _lastDpr = 1.0;
   bool _wasDrawing = false;
+
+  /// Last value of [NativeStrokeOverlayController.activeCustomShaderId]
+  /// pushed to the backend via [GpuStrokeBackend.setActiveCustomNativeShader].
+  /// Used to detect changes on every controller tick so we forward
+  /// only on actual transitions (avoids a MethodChannel hop per
+  /// pointer event).
+  String? _lastActiveCustomShaderId;
 
   /// vsync-driven repaint pulse. On Impeller-Vulkan / Adreno the
   /// `Texture` widget does not get marked dirty when the underlying
@@ -466,6 +499,16 @@ class _NativeStrokeOverlayState extends State<NativeStrokeOverlay>
       // No GPU add-on installed — NativeStrokeOverlay is a no-op; the
       // parent widget renders the live stroke via its Dart painter.
       return;
+    }
+
+    // Forward custom-shader activation to the native backend on the
+    // first tick after `setActiveCustomShader` was called. Cheap
+    // string compare per tick; the MethodChannel hop only fires on
+    // actual transitions.
+    final currentId = c.activeCustomShaderId;
+    if (currentId != _lastActiveCustomShaderId) {
+      _lastActiveCustomShaderId = currentId;
+      backend.setActiveCustomNativeShader(currentId);
     }
 
     if (!_isReady) {

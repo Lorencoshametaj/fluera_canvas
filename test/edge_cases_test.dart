@@ -266,7 +266,7 @@ void main() {
             ),
           ),
         );
-        expect(find.text('Cut'), findsOneWidget);
+        expect(find.byTooltip('Pixel'), findsOneWidget);
       },
     );
 
@@ -303,12 +303,12 @@ void main() {
             ),
           ),
         );
-        expect(find.text('Pen'), findsOneWidget);
-        expect(find.text('Erase'), findsOneWidget);
-        expect(find.text('Cut'), findsOneWidget);
-        expect(find.text('Line'), findsOneWidget);
-        expect(find.text('Rect'), findsOneWidget);
-        expect(find.text('Oval'), findsOneWidget);
+        expect(find.byTooltip('Pen'), findsOneWidget);
+        expect(find.byTooltip('Erase'), findsOneWidget);
+        expect(find.byTooltip('Pixel'), findsOneWidget);
+        expect(find.byTooltip('Line'), findsOneWidget);
+        expect(find.byTooltip('Rect'), findsOneWidget);
+        expect(find.byTooltip('Oval'), findsOneWidget);
         // No RenderFlex overflow exception thrown during pump.
         expect(tester.takeException(), isNull);
       },

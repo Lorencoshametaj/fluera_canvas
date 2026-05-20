@@ -14,16 +14,20 @@
 // and commercial `fluera_engine_pro` packages.
 // ════════════════════════════════════════════════════════════════════════════
 
+import 'dart:async' show unawaited;
+import 'dart:convert' show base64Decode, base64Encode;
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show LogicalKeyboardKey;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData, LogicalKeyboardKey;
 import 'package:flutter/scheduler.dart' show Ticker;
 
 import './canvas_background.dart';
 import './canvas_serializer.dart';
+import './fluera_shortcuts.dart';
+import '../export/svg_writer.dart';
 import './infinite_canvas_controller.dart';
 import './infinite_canvas_gesture_detector.dart';
 import '../core/models/digital_text_element.dart';
@@ -87,7 +91,72 @@ class CanvasStroke {
     this.brushType = 0,
     this.pencilConfig = PencilConfig.defaults,
     this.fountainConfig = FountainPenConfig.defaults,
-  }) : _cachedBounds = _computeBounds(points, baseWidth);
+    this.customBrushId,
+    this.tilts,
+    this.twists,
+    this.metadata,
+  })  : assert(
+          tilts == null || tilts.length == points.length,
+          'tilts.length must match points.length',
+        ),
+        assert(
+          twists == null || twists.length == points.length,
+          'twists.length must match points.length',
+        ),
+        _cachedBounds = _computeBounds(points, baseWidth);
+
+  /// Per-point pen tilt as `Offset(tiltX, tiltY)` in radians, where
+  /// `tiltX` is the angle from vertical in the screen-X plane and
+  /// `tiltY` is the angle from vertical in the screen-Y plane (the
+  /// same convention Flutter's [PointerEvent.tilt] surfaces). `null`
+  /// when the input device didn't report tilt (mouse, finger, or a
+  /// stylus that doesn't expose it). When non-null, MUST match
+  /// [points] length.
+  ///
+  /// Built-in brushes (ballpoint / marker / highlighter) ignore this
+  /// channel — it costs zero when null. The commercial
+  /// `fluera_canvas_gpu` consumes it for nib-angle simulation in
+  /// the fountain-pen / calligraphy / charcoal-angled brushes.
+  ///
+  /// Persists through FCV0 v8+ binary save/load and the JSON
+  /// serializer. Older readers (v7 and below) ignore the channel
+  /// silently — strokes load with `tilts: null`.
+  ///
+  /// Added in 0.14.0.
+  final List<Offset>? tilts;
+
+  /// Per-point pen barrel rotation in radians. Same null-when-absent
+  /// semantics as [tilts]. Currently consumed only by the commercial
+  /// `fluera_canvas_gpu` twist-aware brushes; the free vector
+  /// renderer ignores this channel.
+  ///
+  /// Added in 0.14.0.
+  final List<double>? twists;
+
+  /// Optional consumer-defined metadata bag — round-trips through
+  /// FCV0 v8+ as UTF-8 JSON. Use it to tag strokes with replay
+  /// timestamps, author IDs, semantic labels, anything you want to
+  /// recover at load time. Built-in code never reads this field; the
+  /// canvas treats it as opaque payload.
+  ///
+  /// Keys + nested values must be JSON-encodable
+  /// (`String` / `num` / `bool` / `List` / `Map<String, dynamic>` /
+  /// `null`). Non-JSON values cause a `JsonUnsupportedObjectError`
+  /// at save time.
+  ///
+  /// Added in 0.14.0.
+  final Map<String, dynamic>? metadata;
+
+  /// Convenience accessor: read a typed value from [metadata]
+  /// returning [defaultValue] when the key is missing or the stored
+  /// type doesn't match `T`. Saves the consumer a `as T?` cast +
+  /// null-check at every read site.
+  ///
+  /// Added in 0.14.0.
+  T? getMeta<T>(String key, [T? defaultValue]) {
+    final v = metadata?[key];
+    return v is T ? v : defaultValue;
+  }
 
   /// When `true` (default), the rasteriser smooths the polyline with
   /// quadratic-bezier curves through the midpoints — eliminates kinks
@@ -114,6 +183,20 @@ class CanvasStroke {
   /// Fountain-pen tuning forwarded to the shader renderer when
   /// [brushType] selects the fountain pen. Ignored otherwise.
   final FountainPenConfig fountainConfig;
+
+  /// Stable opaque identifier of a custom shader brush registered via
+  /// `ShaderBrushService.registerCustom(...)` in the commercial
+  /// `fluera_canvas_gpu` add-on. When non-null, the paid stroke
+  /// renderer dispatches this stroke to the consumer-supplied fragment
+  /// shader pipeline instead of one of the 11 built-in shaders. The
+  /// free vector renderer ignores this field — `null` means "use
+  /// [brushType] / vector fallback".
+  ///
+  /// Convention: `<consumer_id>.<brush_name>` (e.g. `acme.rainbow`).
+  /// Persists losslessly through [toJson] / [fromJson] so the brush
+  /// identity round-trips across save / load / cloud sync / CRDT collab
+  /// / time-travel replay.
+  final String? customBrushId;
 
   final Rect _cachedBounds;
 
@@ -142,7 +225,9 @@ class CanvasStroke {
     // as the live preview so the post-pen-up appearance matches what
     // the user just drew. Falls back to the vector renderer otherwise.
     final renderer = FlueraCanvasGpu.strokeRenderer;
-    if (renderer != null && brushType != 0 && points.length >= 2) {
+    if (renderer != null &&
+        (brushType != 0 || customBrushId != null) &&
+        points.length >= 2) {
       renderer.renderStroke(
         canvas,
         points: points,
@@ -153,6 +238,7 @@ class CanvasStroke {
         brushType: brushType,
         pencilConfig: pencilConfig,
         fountainConfig: fountainConfig,
+        customBrushId: customBrushId,
       );
     } else {
       _paintStrokeSegments(
@@ -217,6 +303,7 @@ class CanvasStroke {
         'te': fountainConfig.taperEntry,
       };
     }
+    if (customBrushId != null) out['cbi'] = customBrushId;
     return out;
   }
 
@@ -259,6 +346,7 @@ class CanvasStroke {
                 taperEntry: ((map['fc'] as Map)['te'] as num).toInt(),
               )
               : FountainPenConfig.defaults,
+      customBrushId: map['cbi'] as String?,
     );
   }
 
@@ -338,6 +426,7 @@ class CanvasStroke {
           brushType: stroke.brushType,
           pencilConfig: stroke.pencilConfig,
           fountainConfig: stroke.fountainConfig,
+          customBrushId: stroke.customBrushId,
         ),
       );
     }
@@ -524,6 +613,22 @@ enum FlueraExportBounds {
   custom,
 }
 
+/// Builder for an alternative live-stroke overlay widget. When
+/// [FlueraCanvas.liveStrokeOverlayBuilder] is non-null the canvas mounts
+/// the returned widget in place of the default [NativeStrokeOverlay].
+///
+/// Used by the commercial `fluera_canvas_gpu` add-on to swap in a
+/// Dart-shader overlay during custom-brush drawing so the live preview
+/// matches the committed shader output. The builder receives the
+/// existing canvas + native-overlay controllers; the consumer can
+/// listen to either to reproduce the live point stream.
+typedef LiveStrokeOverlayBuilder =
+    Widget Function(
+      BuildContext context,
+      InfiniteCanvasController canvasController,
+      NativeStrokeOverlayController strokeController,
+    );
+
 /// A ready-to-use infinite canvas widget.
 ///
 /// Typical usage:
@@ -574,10 +679,15 @@ class FlueraCanvas extends StatefulWidget {
     this.brushType = 0,
     this.pencilConfig = PencilConfig.defaults,
     this.fountainConfig = FountainPenConfig.defaults,
+    this.customBrushId,
+    this.liveStrokeOverlayBuilder,
     this.simplifyEpsilon = 0,
     this.snapToGrid = 0,
-    this.smartGuidesEnabled = false,
+    this.smartGuidesEnabled = true,
     this.smartGuidesTolerancePx = 6,
+    this.cursorPerTool,
+    this.semanticsEnabled = true,
+    this.shortcuts,
   });
 
   /// Optional external controller. If null, an internal one is created and
@@ -608,6 +718,42 @@ class FlueraCanvas extends StatefulWidget {
   /// effective radius. On touch devices only during active press; on
   /// desktop also tracks the hovering mouse.
   final bool showEraserPreview;
+
+  /// Override the desktop mouse cursor on a per-[CanvasTool] basis.
+  /// Pass a partial map (entries for the tools you care about);
+  /// missing entries fall back to the per-tool default
+  /// (`SystemMouseCursors.precise` for draw / shape, `none` for
+  /// erase with [showEraserPreview], `text` for text, `basic`
+  /// otherwise). On touch-only platforms the override is ignored
+  /// (no `MouseRegion` mounts).
+  ///
+  /// Useful for branded cursors, tutorial states, or signalling
+  /// custom tool affordances. Added in 0.15.0.
+  final Map<CanvasTool, MouseCursor>? cursorPerTool;
+
+  /// When `true` (default since 0.16.0), wraps the canvas in a
+  /// [Semantics] node carrying a summary label
+  /// (`"Drawing canvas, X strokes, Y layers"`) so screen readers
+  /// (TalkBack / VoiceOver / Narrator) announce something
+  /// meaningful when the canvas receives focus. Set to `false` to
+  /// opt out — the wrapper adds one element to the semantic tree
+  /// even when no assistive tech is active.
+  ///
+  /// Per-stroke semantics are intentionally not emitted: even
+  /// moderate scenes would explode the semantic tree. Consumers who
+  /// need stroke-level a11y wrap nodes themselves outside the canvas.
+  ///
+  /// Added in 0.16.0.
+  final bool semanticsEnabled;
+
+  /// Customise the keyboard shortcuts attached when
+  /// [enableKeyboardShortcuts] is `true`. `null` (default) uses the
+  /// per-platform defaults (`Ctrl+Z` / `Cmd+Z` undo etc.). Pass a
+  /// [FlueraShortcuts] instance with `overrides` to re-bind any
+  /// subset of actions; missing actions keep the default.
+  ///
+  /// Added in 0.16.0.
+  final FlueraShortcuts? shortcuts;
 
   /// Maximum number of operations kept in the undo history. Oldest entries
   /// are dropped first. Set to `0` to disable history entirely.
@@ -682,6 +828,28 @@ class FlueraCanvas extends StatefulWidget {
   /// Ignored when [brushType] does not select the fountain pen.
   final FountainPenConfig fountainConfig;
 
+  /// Active custom-shader brush identifier (paid `fluera_canvas_gpu`
+  /// `ShaderBrushService.registerCustom(...)`). When non-null every
+  /// stroke committed by the user is stamped with this id, the paid
+  /// stroke renderer dispatches it to the consumer-supplied fragment
+  /// shader, and the live preview is routed through
+  /// [liveStrokeOverlayBuilder] (Dart-shader overlay) instead of the
+  /// native overlay. Free-tier users leave this `null`; the field has
+  /// no effect without a registered renderer.
+  final String? customBrushId;
+
+  /// Optional override for the live-stroke overlay widget. When
+  /// non-null the canvas mounts the returned widget instead of the
+  /// default [NativeStrokeOverlay] for the live drag preview. The paid
+  /// `fluera_canvas_gpu` add-on uses this hook to swap in a
+  /// Dart-shader overlay when [customBrushId] is set, so the live
+  /// preview matches the committed appearance pixel-for-pixel.
+  ///
+  /// Returning the same overlay regardless of [customBrushId] is
+  /// fine — the hook only exists so the paid layer can decide. Free
+  /// consumers leave this `null`.
+  final LiveStrokeOverlayBuilder? liveStrokeOverlayBuilder;
+
   /// Douglas-Peucker tolerance (in world pixels) applied to every
   /// stroke at pen-up before commit.
   ///
@@ -717,14 +885,19 @@ class FlueraCanvas extends StatefulWidget {
   /// ```
   final double snapToGrid;
 
-  /// When `true`, drag-to-move on a selection scans every other
-  /// visible selectable node and snaps the dragged frame's anchors
-  /// to the closest matching anchor on a nearby node (Figma-style
-  /// alignment). Magenta dashed guide lines render via the selection
-  /// painter while a snap is locked. Default `false`.
+  /// When `true` (default since 0.15.0), drag-to-move on a selection
+  /// scans every other visible selectable node and snaps the dragged
+  /// frame's anchors to the closest matching anchor on a nearby node
+  /// (Figma / TLDraw style alignment). Magenta dashed guide lines
+  /// render via the selection painter while a snap is locked.
   ///
   /// Hold Shift while dragging to bypass guides for a single drag
-  /// without reconfiguring the widget.
+  /// without reconfiguring the widget. Set to `false` to opt out
+  /// permanently and recover 0.14.x behaviour exactly.
+  ///
+  /// For consumers building custom widgets / gestures that need the
+  /// same snap math standalone, see the public [SnapEngine] class
+  /// (also added in 0.15.0).
   final bool smartGuidesEnabled;
 
   /// Logical-px tolerance band around an anchor for both
@@ -899,6 +1072,15 @@ class FlueraCanvasState extends State<FlueraCanvas>
   /// Current in-progress stroke (null when the user isn't drawing).
   List<Offset>? _livePoints;
   List<double>? _livePressures;
+
+  /// Per-point pen tilt accumulator (Offset(tiltX, tiltY) in radians)
+  /// for the in-progress stroke. Lazily allocated the first time the
+  /// gesture detector reports a non-zero tilt — kept null for mouse /
+  /// finger input so we don't pay the per-point allocation cost on
+  /// non-stylus devices. Mid-stroke promotion (tilt detected after
+  /// some zero-tilt points) backfills with `Offset.zero` to keep the
+  /// array length aligned with `_livePoints`. Added in 0.14.0.
+  List<Offset>? _liveTilts;
 
   /// Strokes erased in the current erase gesture (committed to history on
   /// pen-up so a whole swipe becomes a single undo step).
@@ -1635,6 +1817,13 @@ class FlueraCanvasState extends State<FlueraCanvas>
     );
     _livePoints = <Offset>[filteredStart];
     _livePressures = <double>[pressure];
+    // Lazy-init the tilt accumulator only when the input device
+    // actually reports tilt (Apple Pencil / S-Pen / Wacom). Mouse +
+    // finger paths leave it null so we don't pay per-point Offset
+    // allocation cost on devices that have no tilt to report.
+    _liveTilts = (tiltX != 0 || tiltY != 0)
+        ? <Offset>[Offset(tiltX, tiltY)]
+        : null;
     _liveStroke.setStroke(_livePoints!, _livePressures!);
     if (!_useNative && !_liveStrokeTicker.isActive) {
       _liveStrokeTicker.start();
@@ -1765,6 +1954,16 @@ class FlueraCanvasState extends State<FlueraCanvas>
         world;
     _livePoints!.add(filteredWorld);
     _livePressures!.add(pressure);
+    // Append tilt or backfill if first non-zero report came mid-stroke.
+    if (_liveTilts != null) {
+      _liveTilts!.add(Offset(tiltX, tiltY));
+    } else if (tiltX != 0 || tiltY != 0) {
+      _liveTilts = List<Offset>.filled(
+        _livePoints!.length - 1,
+        Offset.zero,
+        growable: true,
+      )..add(Offset(tiltX, tiltY));
+    }
     _liveStroke.forceRepaint();
     if (_useNative) {
       _nativeOverlay.appendPoint(
@@ -1917,6 +2116,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
       if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
       _livePoints = null;
       _livePressures = null;
+      _liveTilts = null;
       _liveStroke.clear();
       return;
     }
@@ -1934,10 +2134,16 @@ class FlueraCanvasState extends State<FlueraCanvas>
       // round-cap circle that gives the dot its shape.
       _livePoints!.add(Offset(p.dx + 0.01, p.dy));
       _livePressures!.add(pr);
+      // Mirror the synthetic point into the tilt accumulator so
+      // length invariants hold at commit time.
+      if (_liveTilts != null) {
+        _liveTilts!.add(_liveTilts!.last);
+      }
     } else if (_livePoints!.length < 2) {
       if (_liveStrokeTicker.isActive) _liveStrokeTicker.stop();
       _livePoints = null;
       _livePressures = null;
+      _liveTilts = null;
       _liveStroke.clear();
       return;
     }
@@ -1950,6 +2156,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
       brushType: widget.brushType,
       pencilConfig: widget.pencilConfig,
       fountainConfig: widget.fountainConfig,
+      customBrushId: widget.customBrushId,
+      tilts: _liveTilts == null
+          ? null
+          : List<Offset>.unmodifiable(_liveTilts!),
     );
     // Apply Douglas-Peucker simplification BEFORE the split + commit.
     // Default eps 0.5 trims 40-60% of redundant points without
@@ -1962,6 +2172,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _commitDrawnStroke(stroke);
     _livePoints = null;
     _livePressures = null;
+    _liveTilts = null;
     _commitTick.notify();
     _liveStroke.clear();
     widget.onStrokeCommitted?.call(stroke);
@@ -1985,6 +2196,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
     if (keep.length == raw.points.length) return raw;
     final pts = <Offset>[for (final i in keep) raw.points[i]];
     final prs = <double>[for (final i in keep) raw.pressures[i]];
+    final tilts = raw.tilts;
+    final keptTilts = tilts == null
+        ? null
+        : List<Offset>.unmodifiable([for (final i in keep) tilts[i]]);
     return CanvasStroke(
       points: List<Offset>.unmodifiable(pts),
       pressures: List<double>.unmodifiable(prs),
@@ -1994,6 +2209,10 @@ class FlueraCanvasState extends State<FlueraCanvas>
       brushType: raw.brushType,
       pencilConfig: raw.pencilConfig,
       fountainConfig: raw.fountainConfig,
+      customBrushId: raw.customBrushId,
+      tilts: keptTilts,
+      twists: raw.twists,
+      metadata: raw.metadata,
     );
   }
 
@@ -2199,6 +2418,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
           brushType: source.brushType,
           pencilConfig: source.pencilConfig,
           fountainConfig: source.fountainConfig,
+          customBrushId: source.customBrushId,
         );
         runs.add((stroke: seg, target: container));
       }
@@ -2735,6 +2955,159 @@ class FlueraCanvasState extends State<FlueraCanvas>
     final ids = _hitTestIdsInRect(worldRect);
     _selectionController.set(_selectionFromIds(ids));
     return ids.length;
+  }
+
+  /// Front-most node at the world-space [point]. Returns `null` if
+  /// nothing is hit.
+  ///
+  /// [tolerance] (default `4.0` world-px) inflates the per-node
+  /// bounds before testing — useful for thin strokes that would
+  /// otherwise require pixel-perfect aim.
+  ///
+  /// O(log n) via the internal RTree spatial index. Safe to call
+  /// from a `MouseRegion` `onHover` callback (won't allocate or
+  /// notify listeners). Use it to build hover tooltips, custom
+  /// tap-select behaviour, click-through detection, anything that
+  /// needs to know "what's under this point".
+  ///
+  /// Added in 0.15.0.
+  NodeId? hitTest(Offset point, {double tolerance = 4.0}) =>
+      _hitTestNode(point, tolerance: tolerance);
+
+  /// All node IDs whose bounding rectangle intersects [worldRect].
+  /// Returns an unmodifiable view of the spatial-index hit set.
+  ///
+  /// Use for batch queries — bulk-select, export-by-region, custom
+  /// collision detection, marquee implementations that don't want
+  /// to mutate the canvas selection. The return order is the
+  /// scene-graph paint order (back-to-front), so consumers can pick
+  /// the front-most by reading the last element.
+  ///
+  /// Added in 0.15.0. **0.16.2** — degenerate input (inverted /
+  /// zero-area / non-finite rects) is normalised or short-circuited
+  /// to an empty result set instead of probing the spatial index
+  /// with garbage.
+  Set<NodeId> hitTestInRect(Rect worldRect) {
+    // Normalise inverted / NaN rects (consumer passes an in-progress
+    // marquee whose width/height flip while dragging up-left). A
+    // degenerate rect — zero area or non-finite — has nothing to hit
+    // and short-circuits cheaply instead of probing the spatial index.
+    if (!worldRect.isFinite) return const <NodeId>{};
+    final normalised = Rect.fromPoints(worldRect.topLeft, worldRect.bottomRight);
+    if (normalised.width <= 0 || normalised.height <= 0) {
+      return const <NodeId>{};
+    }
+    return Set.unmodifiable(_hitTestIdsInRect(normalised));
+  }
+
+  // ── Programmatic drawing helpers (0.15.0) ────────────────────────
+
+  /// Programmatically draw a straight line between two world points.
+  /// Equivalent to a manual draw-tool gesture — committed to the
+  /// active layer with the canvas's current `strokeColor` /
+  /// `strokeWidth` (overridable via the optional params). Returns
+  /// the committed [CanvasStroke].
+  ///
+  /// Useful for tutorial overlays, generative art, AI-assisted
+  /// drawing, and any code path that needs to deposit ink without
+  /// going through pointer events.
+  ///
+  /// Added in 0.15.0.
+  CanvasStroke drawLine(
+    Offset from,
+    Offset to, {
+    Color? color,
+    double? width,
+    Map<String, dynamic>? metadata,
+  }) {
+    final stroke = CanvasStroke(
+      points: [from, to],
+      pressures: const [1.0, 1.0],
+      color: color ?? widget.strokeColor,
+      baseWidth: width ?? widget.strokeWidth,
+      smooth: false,
+      metadata: metadata,
+    );
+    pushStroke(stroke);
+    return stroke;
+  }
+
+  /// Programmatically draw a circle approximation as an N-segment
+  /// polyline. [center] / [radius] are world units; [segments] (default
+  /// 32) controls smoothness. Same `color` / `width` / `metadata`
+  /// override semantics as [drawLine].
+  ///
+  /// Throws [ArgumentError] when [radius] is non-positive / non-finite
+  /// or [segments] is `< 3`.
+  ///
+  /// Added in 0.15.0. **0.16.2** — release-mode validation hardened.
+  CanvasStroke drawCircle(
+    Offset center,
+    double radius, {
+    Color? color,
+    double? width,
+    int segments = 32,
+    Map<String, dynamic>? metadata,
+  }) {
+    if (segments < 3) {
+      throw ArgumentError.value(
+        segments, 'segments', 'must be >= 3 for a closed shape');
+    }
+    if (radius <= 0 || !radius.isFinite) {
+      throw ArgumentError.value(
+        radius, 'radius', 'must be a finite, positive value');
+    }
+    final pts = <Offset>[
+      for (int i = 0; i <= segments; i++)
+        Offset(
+          center.dx + radius * math.cos(2 * math.pi * i / segments),
+          center.dy + radius * math.sin(2 * math.pi * i / segments),
+        ),
+    ];
+    final stroke = CanvasStroke(
+      points: pts,
+      pressures: List<double>.filled(pts.length, 1.0),
+      color: color ?? widget.strokeColor,
+      baseWidth: width ?? widget.strokeWidth,
+      smooth: true,
+      metadata: metadata,
+    );
+    pushStroke(stroke);
+    return stroke;
+  }
+
+  /// Programmatically draw an arbitrary polygon from a point list.
+  /// Pass [closed] = `true` to repeat the first point at the end so
+  /// the path visibly closes. Same `color` / `width` / `metadata`
+  /// override semantics as [drawLine].
+  ///
+  /// Throws [ArgumentError] when [points] has fewer than 2 entries.
+  ///
+  /// Added in 0.15.0. **0.16.2** — release-mode validation hardened.
+  CanvasStroke drawPolygon(
+    List<Offset> points, {
+    bool closed = false,
+    Color? color,
+    double? width,
+    Map<String, dynamic>? metadata,
+  }) {
+    if (points.length < 2) {
+      throw ArgumentError.value(
+        points.length, 'points.length', 'polygon needs at least 2 points');
+    }
+    final pts = closed && points.first != points.last
+        ? <Offset>[...points, points.first]
+        : List<Offset>.from(points);
+    final stroke = CanvasStroke(
+      points: pts,
+      pressures: List<double>.filled(pts.length, 1.0),
+      color: color ?? widget.strokeColor,
+      baseWidth: width ?? widget.strokeWidth,
+      smooth: false,
+      metadata: metadata,
+    );
+    pushStroke(stroke);
+    return stroke;
   }
 
   /// Clear the selection.
@@ -4111,6 +4484,7 @@ class FlueraCanvasState extends State<FlueraCanvas>
           brushType: orig.brushType,
           pencilConfig: orig.pencilConfig,
           fountainConfig: orig.fountainConfig,
+          customBrushId: orig.customBrushId,
         );
         final node = CanvasStrokeNode(id: NodeId(generateUid()), stroke: dup);
         clone.add(node);
@@ -4399,6 +4773,143 @@ class FlueraCanvasState extends State<FlueraCanvas>
     _rootLayer,
     extendedCodes: _extendedBlendModes,
   );
+
+  /// Encode the current scene as basic-tier SVG markup. Walks the
+  /// visible layer tree, emits one `<g>` per layer (carrying the
+  /// layer's opacity + CSS-mappable blend mode) and one `<path>` per
+  /// stroke. Image annotations and text nodes are NOT yet emitted by
+  /// the free-tier writer (covered by PNG export today; planned for
+  /// 0.13.1 and `fluera_canvas_gpu` respectively). See
+  /// [FlueraSvgWriter] for the full fidelity matrix.
+  ///
+  /// [bounds] sets the SVG `viewBox`; defaults to the union of every
+  /// stroke under the visible scene with a 16-px padding.
+  ///
+  /// Added in 0.13.0.
+  Uint8List toSvgBytes({Rect? bounds, double padding = 16.0}) =>
+      FlueraSvgWriter.encodeLayersBytes(
+        _rootLayer,
+        bounds: bounds,
+        padding: padding,
+      );
+
+  // ── Clipboard (0.13.0) ──────────────────────────────────────────
+
+  /// Magic prefix written to the system clipboard so [pasteFromClipboard]
+  /// can identify a payload produced by another `fluera_canvas` instance
+  /// vs arbitrary plain text. Followed by base64-encoded FCV0 v7 bytes.
+  static const String _clipboardMagic = 'FLUERA_CLIPBOARD_V1:';
+
+  /// Copy the current selection to the system clipboard. Encodes the
+  /// selected stroke nodes as FCV0 v7 bytes, base64-wraps them with a
+  /// magic prefix and writes the result as plain text — works
+  /// cross-platform without any extra dependency. No-op when the
+  /// selection is empty.
+  ///
+  /// Pasting back into another `fluera_canvas` instance restores the
+  /// strokes lossless; pasting elsewhere yields a recognisable text
+  /// blob (`FLUERA_CLIPBOARD_V1:base64...`) that other apps will
+  /// safely treat as opaque.
+  ///
+  /// Added in 0.13.0.
+  Future<void> copySelection() async {
+    final ids = _selectionController.value.ids;
+    if (ids.isEmpty) return;
+    final selectedStrokes = <CanvasStroke>[];
+    for (final s in _strokes) {
+      final node = _strokeToNode[s];
+      if (node != null && ids.contains(node.id)) {
+        selectedStrokes.add(s);
+      }
+    }
+    if (selectedStrokes.isEmpty) return;
+    final bytes = CanvasSerializer.encodeBytes(selectedStrokes);
+    final payload = '$_clipboardMagic${base64Encode(bytes)}';
+    await Clipboard.setData(ClipboardData(text: payload));
+  }
+
+  /// Paste from the system clipboard. Recognises the
+  /// [_clipboardMagic] prefix written by [copySelection] and decodes
+  /// the FCV0 payload back into stroke nodes; ignores any other
+  /// clipboard content (text from other apps, raster blobs — handled
+  /// by `fluera_canvas_gpu` high-fidelity clipboard in commercial).
+  ///
+  /// [worldPosition] (optional) translates the pasted strokes so
+  /// their bounds centre lands at that world point; defaults to the
+  /// current camera centre, so a paste under default arguments
+  /// always lands "where you are looking".
+  ///
+  /// Returns the IDs of the newly-added stroke nodes (empty list if
+  /// the clipboard contained no recognisable payload).
+  ///
+  /// Added in 0.13.0. **0.16.2** — paste now preserves the
+  /// `tilts` / `twists` / `metadata` channels (the 0.13 path was
+  /// authored before 0.14 channels existed and silently dropped
+  /// them).
+  Future<List<NodeId>> pasteFromClipboard({Offset? worldPosition}) async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text == null || !text.startsWith(_clipboardMagic)) return const [];
+    final b64 = text.substring(_clipboardMagic.length);
+    final Uint8List bytes;
+    try {
+      bytes = base64Decode(b64);
+    } on FormatException {
+      return const [];
+    }
+    final List<CanvasStroke> decoded;
+    try {
+      decoded = CanvasSerializer.decodeBytes(bytes);
+    } on FormatException {
+      return const [];
+    }
+    if (decoded.isEmpty) return const [];
+
+    // Translate so the centre of the pasted bounds sits at the
+    // requested world position (or the camera centre if null).
+    Rect? acc;
+    for (final s in decoded) {
+      acc = acc == null ? s.bounds : acc.expandToInclude(s.bounds);
+    }
+    final target = worldPosition ??
+        _controller.screenToCanvas(
+          Offset(_gestureViewportSize.width / 2,
+              _gestureViewportSize.height / 2),
+        );
+    final delta = acc == null ? Offset.zero : target - acc.center;
+
+    final newIds = <NodeId>[];
+    for (final s in decoded) {
+      // Tilts / twists are angles, not positions — copy as-is, do
+      // NOT translate. Metadata is opaque consumer payload, deep-copy
+      // the top-level map so future mutations on the pasted stroke
+      // don't reach back into the clipboard-decoded original.
+      final translated = CanvasStroke(
+        points: [for (final p in s.points) p + delta],
+        pressures: List.unmodifiable(s.pressures),
+        color: s.color,
+        baseWidth: s.baseWidth,
+        smooth: s.smooth,
+        brushType: s.brushType,
+        pencilConfig: s.pencilConfig,
+        fountainConfig: s.fountainConfig,
+        customBrushId: s.customBrushId,
+        tilts: s.tilts == null ? null : List<Offset>.unmodifiable(s.tilts!),
+        twists: s.twists == null ? null : List<double>.unmodifiable(s.twists!),
+        metadata: s.metadata == null
+            ? null
+            : Map<String, dynamic>.from(s.metadata!),
+      );
+      pushStroke(translated);
+      // The most recently added stroke node is at the end of the
+      // active layer's children — collect its id for the return.
+      final last = _activeLayer.children.isNotEmpty
+          ? _activeLayer.children.last
+          : null;
+      if (last != null) newIds.add(last.id);
+    }
+    return newIds;
+  }
 
   /// Replace the current scene with the layers decoded from [bytes].
   /// The undo history is cleared. Throws [FormatException] on bad input.
@@ -4903,11 +5414,14 @@ class FlueraCanvasState extends State<FlueraCanvas>
             // child). The Dart preview path needs the overlay to fill
             // the gesture area or its CustomPaint draws into a 0×0
             // canvas — invisible — even though `paint()` runs.
-            child: NativeStrokeOverlay(
-              canvasController: _controller,
-              controller: _nativeOverlay,
-              fallbackToDart: false,
-            ),
+            child: widget.liveStrokeOverlayBuilder != null
+                ? widget.liveStrokeOverlayBuilder!(
+                    context, _controller, _nativeOverlay)
+                : NativeStrokeOverlay(
+                    canvasController: _controller,
+                    controller: _nativeOverlay,
+                    fallbackToDart: false,
+                  ),
           ),
       ],
     );
@@ -4970,10 +5484,11 @@ class FlueraCanvasState extends State<FlueraCanvas>
     final bool attachShortcuts =
         widget.enableKeyboardShortcuts && _focusNode != null && isDesktopLike;
     if (!attachShortcuts) {
-      return detector;
+      return _maybeWrapSemantics(detector);
     }
-    return _KeyboardShortcuts(
+    return _maybeWrapSemantics(_KeyboardShortcuts(
       focusNode: _focusNode!,
+      shortcuts: widget.shortcuts ?? FlueraShortcuts.defaults,
       onUndo: undo,
       onRedo: redo,
       onDeleteOrClear: () {
@@ -5005,6 +5520,15 @@ class FlueraCanvasState extends State<FlueraCanvas>
         }
       },
       onDuplicate: () => duplicateSelection(),
+      onCopy: () {
+        // Fire-and-forget: clipboard write is async but the user
+        // doesn't care to await; subsequent paste reads see the
+        // committed payload thanks to platform clipboard ordering.
+        unawaited(copySelection());
+      },
+      onPaste: () {
+        unawaited(pasteFromClipboard());
+      },
       onNudge: (dx, dy) {
         if (_selectionController.value.isEmpty) return;
         final delta = TransformMath.translation(dx, dy);
@@ -5026,10 +5550,37 @@ class FlueraCanvasState extends State<FlueraCanvas>
         }
       },
       child: detector,
+    ));
+  }
+
+  /// Wrap [child] in a [Semantics] node when [FlueraCanvas.semanticsEnabled]
+  /// is true. The semantic label summarises the canvas state ("X strokes,
+  /// Y layers") so screen readers (TalkBack / VoiceOver / Narrator)
+  /// announce something meaningful when focused.
+  ///
+  /// Per-stroke `Semantics` children are intentionally NOT emitted —
+  /// even moderate scenes (~1k strokes) would explode the semantic
+  /// tree and tank screen-reader performance. Consumers building
+  /// stroke-aware screen-reader UX should wrap individual nodes
+  /// themselves outside the canvas.
+  ///
+  /// Added in 0.16.0.
+  Widget _maybeWrapSemantics(Widget child) {
+    if (!widget.semanticsEnabled) return child;
+    final strokeCount = _strokes.length;
+    final layerCount = _rootLayer.children.whereType<LayerNode>().length;
+    return Semantics(
+      label: 'Drawing canvas, $strokeCount strokes, $layerCount layers',
+      container: true,
+      child: child,
     );
   }
 
   MouseCursor get _mouseCursor {
+    // Consumer override wins (added in 0.15.0). Per-tool entry on
+    // `cursorPerTool` short-circuits the per-tool default.
+    final override = widget.cursorPerTool?[widget.tool];
+    if (override != null) return override;
     switch (widget.tool) {
       case CanvasTool.draw:
       case CanvasTool.line:
@@ -6170,6 +6721,14 @@ class _RedoIntent extends Intent {
   const _RedoIntent();
 }
 
+class _CopyIntent extends Intent {
+  const _CopyIntent();
+}
+
+class _PasteIntent extends Intent {
+  const _PasteIntent();
+}
+
 class _KeyboardShortcuts extends StatelessWidget {
   const _KeyboardShortcuts({
     required this.focusNode,
@@ -6180,6 +6739,9 @@ class _KeyboardShortcuts extends StatelessWidget {
     required this.onSelectAll,
     required this.onDuplicate,
     required this.onNudge,
+    required this.onCopy,
+    required this.onPaste,
+    required this.shortcuts,
     required this.child,
   });
 
@@ -6191,33 +6753,38 @@ class _KeyboardShortcuts extends StatelessWidget {
   final VoidCallback onSelectAll;
   final VoidCallback onDuplicate;
   final void Function(double dx, double dy) onNudge;
+  final VoidCallback onCopy;
+  final VoidCallback onPaste;
+  final FlueraShortcuts shortcuts;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
     final isMac = PlatformGuard.isMacOS || PlatformGuard.isIOS;
+    ShortcutActivator a(FlueraShortcutAction action) =>
+        shortcuts.resolve(action, isMac: isMac);
     return Shortcuts(
       shortcuts: <ShortcutActivator, Intent>{
-        SingleActivator(LogicalKeyboardKey.keyZ, control: !isMac, meta: isMac):
-            const _UndoIntent(),
-        SingleActivator(
-              LogicalKeyboardKey.keyZ,
-              control: !isMac,
-              meta: isMac,
-              shift: true,
-            ):
-            const _RedoIntent(),
-        SingleActivator(LogicalKeyboardKey.keyY, control: !isMac, meta: isMac):
-            const _RedoIntent(),
-        const SingleActivator(LogicalKeyboardKey.delete):
-            const _DeleteOrClearIntent(),
-        const SingleActivator(LogicalKeyboardKey.backspace):
-            const _DeleteOrClearIntent(),
-        const SingleActivator(LogicalKeyboardKey.escape): const _EscapeIntent(),
-        SingleActivator(LogicalKeyboardKey.keyA, control: !isMac, meta: isMac):
-            const _SelectAllIntent(),
-        SingleActivator(LogicalKeyboardKey.keyD, control: !isMac, meta: isMac):
-            const _DuplicateIntent(),
+        a(FlueraShortcutAction.undo): const _UndoIntent(),
+        a(FlueraShortcutAction.redo): const _RedoIntent(),
+        // Y is a redo alias retained on non-Mac; macOS doesn't use it
+        // historically. Only inject when not overridden + not on Mac.
+        if (!isMac &&
+            !shortcuts.overrides.containsKey(FlueraShortcutAction.redo))
+          SingleActivator(LogicalKeyboardKey.keyY, control: true):
+              const _RedoIntent(),
+        a(FlueraShortcutAction.deleteOrClear): const _DeleteOrClearIntent(),
+        // Backspace is a permanent alias for deleteOrClear (Notability /
+        // Figma convention). Skip injecting if the user re-bound the
+        // primary deleteOrClear binding to backspace explicitly.
+        if (!shortcuts.overrides.containsKey(FlueraShortcutAction.deleteOrClear))
+          const SingleActivator(LogicalKeyboardKey.backspace):
+              const _DeleteOrClearIntent(),
+        a(FlueraShortcutAction.escape): const _EscapeIntent(),
+        a(FlueraShortcutAction.selectAll): const _SelectAllIntent(),
+        a(FlueraShortcutAction.duplicate): const _DuplicateIntent(),
+        a(FlueraShortcutAction.copy): const _CopyIntent(),
+        a(FlueraShortcutAction.paste): const _PasteIntent(),
         const SingleActivator(LogicalKeyboardKey.arrowLeft): const _NudgeIntent(
           -1,
           0,
@@ -6300,6 +6867,20 @@ class _KeyboardShortcuts extends StatelessWidget {
             onInvoke: (intent) {
               if (FlueraTextEditor.isEditing) return null;
               onNudge(intent.dx, intent.dy);
+              return null;
+            },
+          ),
+          _CopyIntent: CallbackAction<_CopyIntent>(
+            onInvoke: (_) {
+              if (FlueraTextEditor.isEditing) return null;
+              onCopy();
+              return null;
+            },
+          ),
+          _PasteIntent: CallbackAction<_PasteIntent>(
+            onInvoke: (_) {
+              if (FlueraTextEditor.isEditing) return null;
+              onPaste();
               return null;
             },
           ),

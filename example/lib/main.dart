@@ -21,7 +21,7 @@ class ExampleApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'fluera_canvas examples',
+    title: 'Fluera Canvas',
     theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.indigo),
     home: const _Gallery(),
   );
@@ -109,6 +109,22 @@ class _Gallery extends StatelessWidget {
             '(FlueraSketch / Scaffold / App) and 3 presets.',
         Icons.flash_on_rounded,
         () => const _ZeroConfigDemo(),
+      ),
+      (
+        'Custom toolbar (headless)',
+        'FlueraCanvas without the drop-in toolbar — Photoshop-style '
+            'floating sidebar wired by hand. Shows the headless API: '
+            'tool / color / undo via your own widgets.',
+        Icons.dashboard_customize_rounded,
+        () => const _CustomToolbarDemo(),
+      ),
+      (
+        'Cupertino toolbar',
+        'Apple HIG-styled toolbar — same API as the Material drop-in. '
+            'Pick when targeting iOS / macOS with pixel-perfect '
+            'aesthetics.',
+        Icons.apple,
+        () => const _CupertinoToolbarDemo(),
       ),
     ];
     return Scaffold(
@@ -1580,6 +1596,7 @@ class _ZeroConfigDemo extends StatelessWidget {
           ),
         ),
         body: const TabBarView(
+          physics: NeverScrollableScrollPhysics(),
           children: [
             _SketchOnlyDemo(),
             _ScaffoldDemo(),
@@ -1673,6 +1690,269 @@ class _AppDemo extends StatelessWidget {
           SnackBar(content: Text('Signature → ${file.path}')),
         );
       },
+    );
+  }
+}
+
+// ─── Demo 13 · Custom toolbar (headless) ──────────────────────────────────
+//
+// Shows how to wire FlueraCanvas WITHOUT the drop-in FlueraCanvasToolbar.
+// You own the toolbar — Photoshop-style floating sidebar on the left for
+// tool selection + undo, floating palette on the top-right for colours.
+// This is the pattern to copy if you want a Cupertino toolbar, a vertical
+// sidebar, or anything that doesn't fit the bottom Material 3 layout.
+
+class _CustomToolbarDemo extends StatefulWidget {
+  const _CustomToolbarDemo();
+  @override
+  State<_CustomToolbarDemo> createState() => _CustomToolbarDemoState();
+}
+
+class _CustomToolbarDemoState extends State<_CustomToolbarDemo> {
+  final GlobalKey<FlueraCanvasState> _canvasKey =
+      GlobalKey<FlueraCanvasState>();
+  CanvasTool _tool = CanvasTool.draw;
+  Color _color = const Color(0xFF1A1A1A);
+  static const _palette = <Color>[
+    Color(0xFF1A1A1A),
+    Color(0xFFE53935),
+    Color(0xFF1E88E5),
+    Color(0xFF43A047),
+    Color(0xFFFB8C00),
+    Color(0xFF8E24AA),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Custom toolbar (headless)')),
+      body: Stack(
+        children: [
+          // The headless canvas — tool / color / undo are driven by our
+          // own widgets via setState below.
+          FlueraCanvas(
+            key: _canvasKey,
+            tool: _tool,
+            strokeColor: _color,
+            strokeWidth: 3.0,
+          ),
+          Positioned(
+            left: 16,
+            top: 16,
+            bottom: 16,
+            child: _FloatingSidebar(
+              tool: _tool,
+              onTool: (t) => setState(() => _tool = t),
+              canvasKey: _canvasKey,
+            ),
+          ),
+          Positioned(
+            top: 16,
+            right: 16,
+            child: _FloatingPalette(
+              palette: _palette,
+              selected: _color,
+              onPick: (c) => setState(() => _color = c),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FloatingSidebar extends StatelessWidget {
+  const _FloatingSidebar({
+    required this.tool,
+    required this.onTool,
+    required this.canvasKey,
+  });
+
+  final CanvasTool tool;
+  final ValueChanged<CanvasTool> onTool;
+  final GlobalKey<FlueraCanvasState> canvasKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    Widget pill(IconData icon, CanvasTool t, String tooltip) {
+      final selected = tool == t;
+      return Tooltip(
+        message: tooltip,
+        child: IconButton.filledTonal(
+          onPressed: () => onTool(t),
+          icon: Icon(icon),
+          style: IconButton.styleFrom(
+            backgroundColor:
+                selected ? scheme.primary : scheme.surfaceContainerHigh,
+            foregroundColor:
+                selected ? scheme.onPrimary : scheme.onSurfaceVariant,
+          ),
+        ),
+      );
+    }
+
+    return Card(
+      elevation: 6,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            pill(Icons.edit_rounded, CanvasTool.draw, 'Pen'),
+            const SizedBox(height: 6),
+            pill(Icons.cleaning_services_rounded, CanvasTool.erase, 'Erase'),
+            const SizedBox(height: 6),
+            pill(Icons.crop_free_rounded, CanvasTool.select, 'Select'),
+            const Divider(height: 16),
+            // History buttons subscribe to canvas state so they enable /
+            // disable in real time without setState plumbing.
+            ListenableBuilder(
+              listenable: canvasKey.currentState?.historyListenable
+                  ?? const _NeverListenable(),
+              builder: (ctx, _) {
+                final state = canvasKey.currentState;
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Tooltip(
+                      message: 'Undo',
+                      child: IconButton(
+                        onPressed: state?.canUndo == true ? state!.undo : null,
+                        icon: const Icon(Icons.undo_rounded),
+                      ),
+                    ),
+                    Tooltip(
+                      message: 'Redo',
+                      child: IconButton(
+                        onPressed: state?.canRedo == true ? state!.redo : null,
+                        icon: const Icon(Icons.redo_rounded),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FloatingPalette extends StatelessWidget {
+  const _FloatingPalette({
+    required this.palette,
+    required this.selected,
+    required this.onPick,
+  });
+
+  final List<Color> palette;
+  final Color selected;
+  final ValueChanged<Color> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 6,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final c in palette)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: GestureDetector(
+                  onTap: () => onPick(c),
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: c,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: c.toARGB32() == selected.toARGB32()
+                            ? scheme.primary
+                            : Colors.black.withValues(alpha: 0.15),
+                        width: c.toARGB32() == selected.toARGB32() ? 2.5 : 1,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Sentinel listenable that never fires — used as a `ListenableBuilder`
+/// fallback before `canvasKey.currentState` is available on first build.
+class _NeverListenable extends Listenable {
+  const _NeverListenable();
+  @override
+  void addListener(VoidCallback listener) {}
+  @override
+  void removeListener(VoidCallback listener) {}
+}
+
+// ─── Demo 14 · Cupertino toolbar ──────────────────────────────────────────
+//
+// Same API as FlueraCanvasToolbar but built with Cupertino widgets —
+// CupertinoButton, CupertinoSlider, CupertinoIcons, CupertinoColors.
+// Pick this when targeting iOS / macOS with pixel-perfect Apple HIG.
+
+class _CupertinoToolbarDemo extends StatefulWidget {
+  const _CupertinoToolbarDemo();
+  @override
+  State<_CupertinoToolbarDemo> createState() => _CupertinoToolbarDemoState();
+}
+
+class _CupertinoToolbarDemoState extends State<_CupertinoToolbarDemo> {
+  final _canvasKey = GlobalKey<FlueraCanvasState>();
+  CanvasTool _tool = CanvasTool.draw;
+  Color _color = const Color(0xFF1A1A1A);
+  double _width = 2.5;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Cupertino toolbar')),
+      body: Column(
+        children: [
+          Expanded(
+            child: FlueraCanvas(
+              key: _canvasKey,
+              tool: _tool,
+              strokeColor: _color,
+              strokeWidth: _width,
+            ),
+          ),
+          FlueraCanvasCupertinoToolbar(
+            canvasKey: _canvasKey,
+            tool: _tool,
+            onToolChanged: (t) => setState(() => _tool = t),
+            color: _color,
+            onColorChanged: (c) => setState(() => _color = c),
+            strokeWidth: _width,
+            onStrokeWidthChanged: (w) => setState(() => _width = w),
+            showShapeTools: true,
+            showSelectionTool: true,
+            showLayers: true,
+            showColorPickerButton: true,
+            showOpacitySlider: true,
+          ),
+        ],
+      ),
     );
   }
 }

@@ -52,7 +52,7 @@ void main() {
     testWidgets('default (false) hides the Select segment', (tester) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(canvasKey: key));
-      expect(find.text('Select'), findsNothing);
+      expect(find.byTooltip('Select'), findsNothing);
     });
 
     testWidgets('true renders the Select segment in the segmented control', (
@@ -60,7 +60,7 @@ void main() {
     ) async {
       final key = GlobalKey<FlueraCanvasState>();
       await tester.pumpWidget(pump(canvasKey: key, showSelectionTool: true));
-      expect(find.text('Select'), findsOneWidget);
+      expect(find.byTooltip('Select'), findsOneWidget);
     });
   });
 

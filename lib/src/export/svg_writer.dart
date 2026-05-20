@@ -1,0 +1,343 @@
+// ════════════════════════════════════════════════════════════════════════════
+// 🖋️ FlueraSvgWriter — basic-tier SVG export (free).
+//
+// Encodes a stroke list (or full layer tree) to an SVG 1.1 document.
+// "Basic" means geometry + colour + per-layer opacity + the eight
+// CSS-mappable blend modes — everything an open-source `signature`-class
+// drawing widget would expect, no more, no less.
+//
+// Out of scope (see `fluera_canvas_gpu` for high-fidelity SVG / PDF):
+//   - Image annotations  (skipped — PNG export covers raster scenes;
+//     full SVG with embedded images lives in canvas_gpu)
+//   - Text on canvas     (skipped in 0.13.0; 0.13.1 ships `<text>` writer)
+//   - The 16 Photoshop blend modes (mask, hue, saturation, etc.)
+//   - Adjustment layers, vector text on path, custom brush shaders
+// ════════════════════════════════════════════════════════════════════════════
+
+import 'dart:convert';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:flutter/widgets.dart';
+
+import '../canvas/fluera_canvas_widget.dart' show CanvasStroke;
+import '../core/nodes/canvas_stroke_node.dart';
+import '../core/nodes/group_node.dart';
+import '../core/nodes/layer_node.dart';
+import '../core/nodes/stroke_node.dart';
+import '../core/scene_graph/canvas_node.dart';
+
+/// Encode `fluera_canvas` scenes to SVG 1.1 markup.
+///
+/// **Tier note**: this writer ships with the free `fluera_canvas`
+/// package and produces a "basic" SVG — geometry, colours, layer
+/// opacity, and the eight CSS-mappable blend modes. For
+/// production-grade vector export with image annotations, vector text
+/// on path, all 16 Photoshop blend modes preserved, mask layers, and
+/// adjustment layers, install the commercial
+/// [`fluera_canvas_gpu`](https://pub.dev/packages/fluera_canvas_gpu)
+/// add-on which extends this writer transparently — no API change on
+/// the consumer side.
+///
+/// Added in 0.13.0.
+class FlueraSvgWriter {
+  FlueraSvgWriter._();
+
+  /// Encode a flat stroke list as SVG markup. Used when the consumer
+  /// has strokes in hand without a layer tree — for example, after a
+  /// `state.strokes` snapshot or when sharing a single signature pad's
+  /// output. The resulting document has a single implicit "Strokes"
+  /// group with no per-layer opacity.
+  ///
+  /// [bounds] is the SVG `viewBox`. If `null`, the union of every
+  /// stroke's `bounds` (with a 16-px padding) is used. An empty stroke
+  /// list returns a 1×1 transparent document.
+  static String encodeStrokes(
+    List<CanvasStroke> strokes, {
+    Rect? bounds,
+    double padding = 16.0,
+  }) {
+    final viewBox = bounds ?? _unionStrokeBounds(strokes, padding: padding);
+    final buf = StringBuffer();
+    _writeHeader(buf, viewBox);
+    for (final s in strokes) {
+      _writeStrokePath(buf, s);
+    }
+    _writeFooter(buf);
+    return buf.toString();
+  }
+
+  /// Encode a layer tree as SVG markup. Walks every visible layer,
+  /// emits one `<g>` element per layer carrying the layer's opacity
+  /// and (where mappable) blend mode. Strokes inside each layer are
+  /// rendered as `<path>` polylines. Hidden layers (`isVisible:
+  /// false`) are skipped entirely.
+  ///
+  /// [bounds] sets the SVG `viewBox`. If `null`, the union of every
+  /// stroke under [root] (with 16-px padding) is used.
+  static String encodeLayers(
+    GroupNode root, {
+    Rect? bounds,
+    double padding = 16.0,
+  }) {
+    final allStrokes = <CanvasStroke>[];
+    _collectStrokes(root, allStrokes);
+    final viewBox = bounds ?? _unionStrokeBounds(allStrokes, padding: padding);
+
+    final buf = StringBuffer();
+    _writeHeader(buf, viewBox);
+    _writeNode(buf, root, isRoot: true);
+    _writeFooter(buf);
+    return buf.toString();
+  }
+
+  /// UTF-8 bytes of [encodeStrokes] — handy for `File.writeAsBytes`
+  /// or `Share.shareXFiles`.
+  static Uint8List encodeStrokesBytes(
+    List<CanvasStroke> strokes, {
+    Rect? bounds,
+    double padding = 16.0,
+  }) {
+    return Uint8List.fromList(
+      utf8.encode(encodeStrokes(strokes, bounds: bounds, padding: padding)),
+    );
+  }
+
+  /// UTF-8 bytes of [encodeLayers].
+  static Uint8List encodeLayersBytes(
+    GroupNode root, {
+    Rect? bounds,
+    double padding = 16.0,
+  }) {
+    return Uint8List.fromList(
+      utf8.encode(encodeLayers(root, bounds: bounds, padding: padding)),
+    );
+  }
+
+  // ── Internal helpers ─────────────────────────────────────────────
+
+  static void _writeHeader(StringBuffer buf, Rect vb) {
+    buf.writeln('<?xml version="1.0" encoding="UTF-8" standalone="no"?>');
+    buf.writeln(
+      '<svg xmlns="http://www.w3.org/2000/svg" '
+      'viewBox="${_n(vb.left)} ${_n(vb.top)} ${_n(vb.width)} ${_n(vb.height)}" '
+      'width="${_n(vb.width)}" '
+      'height="${_n(vb.height)}">',
+    );
+    // Generator hint — useful for round-trip importers and debugging.
+    buf.writeln(
+      '  <!-- Generated by fluera_canvas (free tier). '
+      'See https://pub.dev/packages/fluera_canvas -->',
+    );
+  }
+
+  static void _writeFooter(StringBuffer buf) {
+    buf.writeln('</svg>');
+  }
+
+  static void _writeNode(
+    StringBuffer buf,
+    CanvasNode node, {
+    bool isRoot = false,
+  }) {
+    if (node is LayerNode) {
+      if (!node.isVisible) return;
+      _writeGroupOpen(buf, node);
+      for (final c in node.children) {
+        _writeNode(buf, c);
+      }
+      _writeGroupClose(buf);
+      return;
+    }
+    if (node is GroupNode) {
+      // Generic group (non-layer) — still wrap, still emit children.
+      if (!isRoot) _writeGroupOpen(buf, node);
+      for (final c in node.children) {
+        _writeNode(buf, c);
+      }
+      if (!isRoot) _writeGroupClose(buf);
+      return;
+    }
+    if (node is StrokeNode) {
+      final s = _toCanvasStroke(node);
+      if (s != null) _writeStrokePath(buf, s);
+      return;
+    }
+    if (node is CanvasStrokeNode) {
+      _writeStrokePath(buf, node.stroke);
+      return;
+    }
+    // ImageNode + TextNode + ShapeNode + PathNode are not yet emitted
+    // by the free-tier writer (0.13.0). They round-trip through FCV0
+    // and PNG export today; SVG support for them is planned for 0.13.1
+    // (text + shapes) and canvas_gpu (image annotations + vector text
+    // on path). We emit a comment so consumers debugging the SVG can
+    // see what was skipped.
+    buf.writeln(
+      '  <!-- skipped: ${node.runtimeType} '
+      '(0.13.0 free SVG writer covers strokes + layers only) -->',
+    );
+  }
+
+  static void _writeGroupOpen(StringBuffer buf, GroupNode node) {
+    final attrs = StringBuffer('<g');
+    if (node is LayerNode && node.name.isNotEmpty) {
+      attrs.write(' inkscape:label="${_xml(node.name)}"');
+    }
+    if (node.opacity < 0.999) {
+      attrs.write(' opacity="${_n(node.opacity)}"');
+    }
+    final cssBlend = _svgBlendMode(node.blendMode);
+    if (cssBlend != null) {
+      attrs.write(' style="mix-blend-mode:$cssBlend"');
+    }
+    attrs.write('>');
+    buf.writeln('  ${attrs.toString()}');
+  }
+
+  static void _writeGroupClose(StringBuffer buf) {
+    buf.writeln('  </g>');
+  }
+
+  static void _writeStrokePath(StringBuffer buf, CanvasStroke s) {
+    if (s.points.length < 2) {
+      // Single-dot strokes — SVG <circle> renders the visible nub.
+      if (s.points.isNotEmpty) {
+        final p = s.points.first;
+        buf.writeln(
+          '  <circle cx="${_n(p.dx)}" cy="${_n(p.dy)}" '
+          'r="${_n(s.baseWidth / 2)}" fill="${_hex(s.color)}" '
+          'opacity="${_n(s.color.a)}"/>',
+        );
+      }
+      return;
+    }
+    final d = StringBuffer('M ${_n(s.points[0].dx)} ${_n(s.points[0].dy)}');
+    for (int i = 1; i < s.points.length; i++) {
+      d.write(' L ${_n(s.points[i].dx)} ${_n(s.points[i].dy)}');
+    }
+    buf.writeln(
+      '  <path d="${d.toString()}" '
+      'fill="none" '
+      'stroke="${_hex(s.color)}" '
+      'stroke-width="${_n(s.baseWidth)}" '
+      'stroke-linecap="round" stroke-linejoin="round"'
+      '${s.color.a < 0.999 ? ' opacity="${_n(s.color.a)}"' : ''}/>',
+    );
+  }
+
+  static void _collectStrokes(CanvasNode node, List<CanvasStroke> out) {
+    if (node is GroupNode) {
+      if (node is LayerNode && !node.isVisible) return;
+      for (final c in node.children) {
+        _collectStrokes(c, out);
+      }
+    } else if (node is CanvasStrokeNode) {
+      out.add(node.stroke);
+    } else if (node is StrokeNode) {
+      final s = _toCanvasStroke(node);
+      if (s != null) out.add(s);
+    }
+  }
+
+  /// Best-effort conversion from [StrokeNode] (which carries a
+  /// [ProStroke]) into the public [CanvasStroke] shape used by the
+  /// path writer. Returns `null` if the node has no usable points.
+  static CanvasStroke? _toCanvasStroke(StrokeNode node) {
+    final stroke = node.stroke;
+    if (stroke.points.isEmpty) return null;
+    return CanvasStroke(
+      points: [for (final p in stroke.points) p.position],
+      pressures: [for (final p in stroke.points) p.pressure],
+      color: stroke.color,
+      baseWidth: stroke.baseWidth,
+    );
+  }
+
+  static Rect _unionStrokeBounds(
+    List<CanvasStroke> strokes, {
+    required double padding,
+  }) {
+    if (strokes.isEmpty) return const Rect.fromLTWH(0, 0, 1, 1);
+    Rect? acc;
+    for (final s in strokes) {
+      acc = acc == null ? s.bounds : acc.expandToInclude(s.bounds);
+    }
+    return acc!.inflate(padding);
+  }
+
+  /// Map Flutter [BlendMode] values to their SVG `mix-blend-mode`
+  /// equivalents. Returns `null` for `srcOver` (the default — no need
+  /// to set the attribute) and for Dart-specific modes that have no
+  /// SVG equivalent. Modes preserved by the free tier:
+  /// multiply, screen, overlay, darken, lighten, colorDodge, colorBurn,
+  /// difference, exclusion. Anything else falls back to normal silently.
+  static String? _svgBlendMode(ui.BlendMode m) {
+    switch (m) {
+      case ui.BlendMode.srcOver:
+        return null;
+      case ui.BlendMode.multiply:
+        return 'multiply';
+      case ui.BlendMode.screen:
+        return 'screen';
+      case ui.BlendMode.overlay:
+        return 'overlay';
+      case ui.BlendMode.darken:
+        return 'darken';
+      case ui.BlendMode.lighten:
+        return 'lighten';
+      case ui.BlendMode.colorDodge:
+        return 'color-dodge';
+      case ui.BlendMode.colorBurn:
+        return 'color-burn';
+      case ui.BlendMode.difference:
+        return 'difference';
+      case ui.BlendMode.exclusion:
+        return 'exclusion';
+      case ui.BlendMode.hardLight:
+        return 'hard-light';
+      case ui.BlendMode.softLight:
+        return 'soft-light';
+      default:
+        // Photoshop modes (hue/saturation/color/luminosity), masking
+        // (dst-in/src-in/etc.), and Dart-only modes don't round-trip
+        // safely in basic SVG. canvas_gpu's high-fidelity writer
+        // handles the full 16-mode set.
+        return null;
+    }
+  }
+
+  /// Format a double for SVG output — strips trailing zeros so the
+  /// output stays compact. `12.000` → `12`, `1.2300` → `1.23`.
+  static String _n(double v) {
+    if (v == v.roundToDouble() && v.abs() < 1e9) {
+      return v.toInt().toString();
+    }
+    var s = v.toStringAsFixed(4);
+    // Strip trailing zeros and a possible trailing dot.
+    while (s.contains('.') && (s.endsWith('0') || s.endsWith('.'))) {
+      s = s.substring(0, s.length - 1);
+    }
+    return s;
+  }
+
+  /// `Color` → `#RRGGBB`. Alpha is emitted separately via the
+  /// `opacity` attribute, so the hex is always 6-digit.
+  static String _hex(Color c) {
+    final r = (c.r * 255).round().clamp(0, 255);
+    final g = (c.g * 255).round().clamp(0, 255);
+    final b = (c.b * 255).round().clamp(0, 255);
+    final h = ((r << 16) | (g << 8) | b).toRadixString(16).padLeft(6, '0');
+    return '#$h';
+  }
+
+  /// XML-escape a string for safe attribute content.
+  static String _xml(String s) {
+    return s
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&apos;');
+  }
+}

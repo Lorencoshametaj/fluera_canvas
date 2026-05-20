@@ -108,7 +108,21 @@ class CanvasSerializer {
   static const int _versionV4 = 4;
   static const int _versionV5 = 5;
   static const int _versionV6 = 6;
-  static const int _versionLatest = _versionV6;
+  static const int _versionV7 = 7;
+  static const int _versionV8 = 8;
+  static const int _versionLatest = _versionV8;
+
+  // ── v8 stroke extension tags (chained after customBrushId TLV) ────────
+  // Each tag introduces an optional block; chain terminates on 0xE0
+  // (the "no more extensions" sentinel).
+  static const int _strokeExtEnd = 0xE0;
+  static const int _strokeExtTilts = 0xE1; // u16 nPoints + (tx,ty):f32×2×n
+  static const int _strokeExtMetadata = 0xE2; // u16 jsonByteLen + utf8 json
+  // Reserved for 0.14.x: 0xE3 = twists block (u16 nPoints + twist:f32×n).
+  // Currently never written because the gesture pipeline doesn't capture
+  // raw orientation as a separate channel — readers tolerate the tag if
+  // a future writer emits it.
+  static const int _strokeExtTwists = 0xE3;
 
   // ── Binary (flat strokes API — kept for 0.5.0 compatibility) ──────────
 
@@ -184,7 +198,7 @@ class CanvasSerializer {
 
     buf.setUint32(off, _magic, Endian.little);
     off += 4;
-    buf.setUint16(off, _versionV6, Endian.little);
+    buf.setUint16(off, _versionV8, Endian.little);
     off += 2;
     buf.setUint32(off, layers.length, Endian.little);
     off += 4;
@@ -283,7 +297,7 @@ class CanvasSerializer {
       final strokeCount = buf.getUint32(off, Endian.little);
       off += 4;
       for (int s = 0; s < strokeCount; s++) {
-        final result = _readStrokePayload(buf, off);
+        final result = _readStrokePayload(buf, off, version: version);
         layer.add(
           CanvasStrokeNode(id: NodeId(generateUid()), stroke: result.stroke),
         );
@@ -327,7 +341,7 @@ class CanvasSerializer {
         off += 1;
         switch (nodeType) {
           case 0:
-            final result = _readStrokePayload(buf, off);
+            final result = _readStrokePayload(buf, off, version: version);
             layer.add(
               CanvasStrokeNode(
                 id: NodeId(generateUid()),
@@ -792,7 +806,7 @@ class CanvasSerializer {
       final annCount = buf.getUint32(off, Endian.little);
       off += 4;
       for (int ai = 0; ai < annCount; ai++) {
-        final annResult = _readStrokePayload(buf, off);
+        final annResult = _readStrokePayload(buf, off, version: version);
         node.annotations.add(
           CanvasStrokeNode(id: NodeId(generateUid()), stroke: annResult.stroke),
         );
@@ -823,10 +837,53 @@ class CanvasSerializer {
         s[15] == 1;
   }
 
-  // ── Stroke payload (v1-compatible) ────────────────────────────────────
+  // ── Stroke payload (v1-compatible base; v7 adds trailing TLV) ─────────
+  //
+  // v1..v6 layout: [pointCount:u32][color:u32][width:f32][(x,y,p):f32×3]×n
+  //
+  // v7+ layout:    <v6-payload> [tag:u8] [if tag==0x01: len:u16 utf8Bytes]
+  //   tag 0x00 → no customBrushId.
+  //   tag 0x01 → utf8 string follows (len bytes).
+  // The TLV is *always* present in v7 — even when the stroke has no
+  // custom brush (one extra byte 0x00) — so the reader can position
+  // itself deterministically.
+
+  // Trailing-TLV byte size for v7+. tag(1) + optional [len(2) + bytes].
+  static int _strokeCustomBrushTlvSizeV7(CanvasStroke s) {
+    final id = s.customBrushId;
+    if (id == null) return 1; // tag 0x00 only
+    return 1 + 2 + utf8.encode(id).length;
+  }
+
+  // v8+ chained extension blocks. Always emits the terminator byte
+  // (1 byte) so the reader can recognise the end deterministically;
+  // `tilts` adds [tag(1) + nPoints(2) + 8*n bytes]; `metadata` adds
+  // [tag(1) + jsonLen(2) + jsonBytes].
+  static int _strokeExtensionsByteSizeV8(CanvasStroke s) {
+    int size = 1; // mandatory _strokeExtEnd terminator
+    final tilts = s.tilts;
+    if (tilts != null) {
+      size += 1 + 2 + tilts.length * 2 * 4;
+    }
+    final twists = s.twists;
+    if (twists != null) {
+      size += 1 + 2 + twists.length * 4;
+    }
+    final meta = s.metadata;
+    if (meta != null) {
+      // Pre-encode json so writer can match this size exactly.
+      size += 1 + 2 + utf8.encode(jsonEncode(meta)).length;
+    }
+    return size;
+  }
 
   static int _strokePayloadByteSize(CanvasStroke s) {
-    return 4 + 4 + 4 + s.points.length * 4 * 3;
+    return 4 +
+        4 +
+        4 +
+        s.points.length * 4 * 3 +
+        _strokeCustomBrushTlvSizeV7(s) +
+        _strokeExtensionsByteSizeV8(s);
   }
 
   static int _writeStrokePayload(ByteData buf, int off, CanvasStroke s) {
@@ -845,10 +902,69 @@ class CanvasSerializer {
       buf.setFloat32(off, s.pressures[i], Endian.little);
       off += 4;
     }
+    final id = s.customBrushId;
+    if (id == null) {
+      buf.setUint8(off, 0x00);
+      off += 1;
+    } else {
+      final bytes = utf8.encode(id);
+      buf.setUint8(off, 0x01);
+      off += 1;
+      buf.setUint16(off, bytes.length, Endian.little);
+      off += 2;
+      for (int i = 0; i < bytes.length; i++) {
+        buf.setUint8(off + i, bytes[i]);
+      }
+      off += bytes.length;
+    }
+    // v8+ chained extension blocks (tilts / twists / metadata).
+    final tilts = s.tilts;
+    if (tilts != null) {
+      buf.setUint8(off, _strokeExtTilts);
+      off += 1;
+      buf.setUint16(off, tilts.length, Endian.little);
+      off += 2;
+      for (final t in tilts) {
+        buf.setFloat32(off, t.dx, Endian.little);
+        off += 4;
+        buf.setFloat32(off, t.dy, Endian.little);
+        off += 4;
+      }
+    }
+    final twists = s.twists;
+    if (twists != null) {
+      buf.setUint8(off, _strokeExtTwists);
+      off += 1;
+      buf.setUint16(off, twists.length, Endian.little);
+      off += 2;
+      for (final w in twists) {
+        buf.setFloat32(off, w, Endian.little);
+        off += 4;
+      }
+    }
+    final meta = s.metadata;
+    if (meta != null) {
+      final json = utf8.encode(jsonEncode(meta));
+      buf.setUint8(off, _strokeExtMetadata);
+      off += 1;
+      buf.setUint16(off, json.length, Endian.little);
+      off += 2;
+      for (int i = 0; i < json.length; i++) {
+        buf.setUint8(off + i, json[i]);
+      }
+      off += json.length;
+    }
+    // Terminator — always written so v8+ readers know where to stop.
+    buf.setUint8(off, _strokeExtEnd);
+    off += 1;
     return off;
   }
 
-  static _StrokePayloadResult _readStrokePayload(ByteData buf, int off) {
+  static _StrokePayloadResult _readStrokePayload(
+    ByteData buf,
+    int off, {
+    int version = _versionLatest,
+  }) {
     final n = buf.getUint32(off, Endian.little);
     off += 4;
     // Each point is 12 bytes (x + y + pressure float32). Reject any
@@ -878,12 +994,88 @@ class CanvasSerializer {
       points[i] = Offset(x, y);
       pressures[i] = p;
     }
+    String? customBrushId;
+    if (version >= _versionV7) {
+      final tag = buf.getUint8(off);
+      off += 1;
+      if (tag == 0x01) {
+        final len = buf.getUint16(off, Endian.little);
+        off += 2;
+        final bytes = List<int>.generate(
+          len,
+          (i) => buf.getUint8(off + i),
+          growable: false,
+        );
+        customBrushId = utf8.decode(bytes);
+        off += len;
+      } else if (tag != 0x00) {
+        throw FormatException(
+          'fluera_canvas: unknown stroke trailing-tag 0x${tag.toRadixString(16)} '
+          '(file version $version).',
+        );
+      }
+    }
+    // v8+ chained extension blocks. Loop until terminator.
+    List<Offset>? tilts;
+    List<double>? twists;
+    Map<String, dynamic>? metadata;
+    if (version >= _versionV8) {
+      while (true) {
+        final extTag = buf.getUint8(off);
+        off += 1;
+        if (extTag == _strokeExtEnd) break;
+        if (extTag == _strokeExtTilts) {
+          final n = buf.getUint16(off, Endian.little);
+          off += 2;
+          final list = List<Offset>.filled(n, Offset.zero);
+          for (int i = 0; i < n; i++) {
+            final tx = buf.getFloat32(off, Endian.little);
+            off += 4;
+            final ty = buf.getFloat32(off, Endian.little);
+            off += 4;
+            list[i] = Offset(tx, ty);
+          }
+          tilts = List<Offset>.unmodifiable(list);
+        } else if (extTag == _strokeExtTwists) {
+          final n = buf.getUint16(off, Endian.little);
+          off += 2;
+          final list = List<double>.filled(n, 0);
+          for (int i = 0; i < n; i++) {
+            list[i] = buf.getFloat32(off, Endian.little);
+            off += 4;
+          }
+          twists = List<double>.unmodifiable(list);
+        } else if (extTag == _strokeExtMetadata) {
+          final len = buf.getUint16(off, Endian.little);
+          off += 2;
+          final bytes = List<int>.generate(
+            len,
+            (i) => buf.getUint8(off + i),
+            growable: false,
+          );
+          off += len;
+          final decoded = jsonDecode(utf8.decode(bytes));
+          metadata = decoded is Map<String, dynamic>
+              ? decoded
+              : Map<String, dynamic>.from(decoded as Map);
+        } else {
+          throw FormatException(
+            'fluera_canvas: unknown v8+ stroke extension tag '
+            '0x${extTag.toRadixString(16)} (file version $version).',
+          );
+        }
+      }
+    }
     return _StrokePayloadResult(
       CanvasStroke(
         points: List<Offset>.unmodifiable(points),
         pressures: List<double>.unmodifiable(pressures),
         color: color,
         baseWidth: width,
+        customBrushId: customBrushId,
+        tilts: tilts,
+        twists: twists,
+        metadata: metadata,
       ),
       off,
     );
@@ -898,13 +1090,15 @@ class CanvasSerializer {
       xs[i] = s.points[i].dx;
       ys[i] = s.points[i].dy;
     }
-    return {
+    final out = <String, dynamic>{
       'x': xs,
       'y': ys,
       'p': s.pressures,
       'c': s.color.toARGB32(),
       'w': s.baseWidth,
     };
+    if (s.customBrushId != null) out['cbi'] = s.customBrushId;
+    return out;
   }
 
   static CanvasStroke _strokeFromJson(Map map) {
@@ -923,6 +1117,7 @@ class CanvasSerializer {
       pressures: List<double>.unmodifiable(ps.map((e) => e.toDouble())),
       color: Color((map['c'] as num).toInt()),
       baseWidth: (map['w'] as num).toDouble(),
+      customBrushId: map['cbi'] as String?,
     );
   }
 }

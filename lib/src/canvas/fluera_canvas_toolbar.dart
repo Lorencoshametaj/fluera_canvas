@@ -17,6 +17,8 @@ import 'package:flutter/material.dart';
 import 'fluera_canvas_widget.dart';
 import 'fluera_color_picker_dialog.dart';
 import 'fluera_layer_panel.dart';
+import 'fluera_strings.dart';
+import 'fluera_toolbar_theme.dart';
 import 'tools/image_tool.dart';
 import 'widgets/fluera_sticker_panel.dart';
 
@@ -101,8 +103,12 @@ class FlueraCanvasToolbar extends StatelessWidget {
     this.minEraserRadius = 8.0,
     this.maxEraserRadius = 80.0,
     this.eraserRadiusDivisions = 18,
+    this.showOpacitySlider = true,
     this.padding = const EdgeInsets.all(12),
     this.background,
+    this.theme,
+    this.compactBreakpoint = 600.0,
+    this.strings,
   });
 
   /// Key of the [FlueraCanvas] this toolbar controls. Used to call
@@ -248,6 +254,13 @@ class FlueraCanvasToolbar extends StatelessWidget {
   /// Field `eraserRadiusDivisions`.
   final int eraserRadiusDivisions;
 
+  /// When `true`, an opacity slider appears next to the stroke-width
+  /// slider. Drives the alpha channel of [color] via [onColorChanged]
+  /// — no separate callback required. Hidden automatically while the
+  /// eraser tool is active (opacity has no meaning for erase). Default
+  /// `true` (added in 0.11.0).
+  final bool showOpacitySlider;
+
   /// Inner padding around the toolbar content.
   final EdgeInsetsGeometry padding;
 
@@ -255,160 +268,275 @@ class FlueraCanvasToolbar extends StatelessWidget {
   /// `Theme.of(context).colorScheme.surfaceContainerHighest`.
   final Color? background;
 
+  /// Optional theme override for radii / spacing / motion / colours.
+  /// `null` (default) → uses [FlueraToolbarTheme] from
+  /// `Theme.of(context).extension<FlueraToolbarTheme>()` if present,
+  /// otherwise [FlueraToolbarTheme.defaults]. A non-null value here
+  /// wins over a global extension. Added in 0.11.1.
+  final FlueraToolbarTheme? theme;
+
+  /// Viewport-width threshold (px) below which the toolbar switches
+  /// to a vertical 3-row "compact" layout. Above the threshold the
+  /// classic 2-row layout is used. Pass `0` to disable compact mode
+  /// entirely. Default `600.0`. Added in 0.11.1.
+  final double compactBreakpoint;
+
+  /// Optional localised string set (tooltips, sheet titles, slider
+  /// labels). `null` (default) → uses [FlueraStrings] from
+  /// `Theme.of(context).extension<FlueraStrings>()` if present,
+  /// otherwise [FlueraStrings.defaults] (English). Non-null wins
+  /// over a global extension. Added in 0.16.0.
+  final FlueraStrings? strings;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final segments = <ButtonSegment<CanvasTool>>[
-      const ButtonSegment(
-        value: CanvasTool.draw,
-        label: Text('Pen'),
-        icon: Icon(Icons.edit_rounded),
-      ),
-      const ButtonSegment(
-        value: CanvasTool.erase,
-        label: Text('Erase'),
-        icon: Icon(Icons.cleaning_services_rounded),
-        tooltip: 'Erase whole strokes',
+    final t = theme
+        ?? Theme.of(context).extension<FlueraToolbarTheme>()
+        ?? FlueraToolbarTheme.defaults;
+    final s = strings
+        ?? Theme.of(context).extension<FlueraStrings>()
+        ?? FlueraStrings.defaults;
+
+    final tools = <_ToolSpec>[
+      _ToolSpec(CanvasTool.draw, Icons.edit_rounded, s.toolPen),
+      _ToolSpec(
+        CanvasTool.erase,
+        Icons.cleaning_services_rounded,
+        s.toolErase,
       ),
       if (showPixelEraser)
-        const ButtonSegment(
-          value: CanvasTool.erasePixel,
-          label: Text('Cut'),
-          icon: Icon(Icons.content_cut_rounded),
-          tooltip: 'Cut the touched portion of strokes',
+        _ToolSpec(
+          CanvasTool.erasePixel,
+          Icons.content_cut_rounded,
+          s.toolPixel,
         ),
       if (showShapeTools) ...[
-        const ButtonSegment(
-          value: CanvasTool.line,
-          label: Text('Line'),
-          icon: Icon(Icons.horizontal_rule_rounded),
+        _ToolSpec(CanvasTool.line, Icons.horizontal_rule_rounded, s.toolLine),
+        _ToolSpec(
+          CanvasTool.rectangle,
+          Icons.crop_square_rounded,
+          s.toolRect,
         ),
-        const ButtonSegment(
-          value: CanvasTool.rectangle,
-          label: Text('Rect'),
-          icon: Icon(Icons.crop_square_rounded),
-        ),
-        const ButtonSegment(
-          value: CanvasTool.ellipse,
-          label: Text('Oval'),
-          icon: Icon(Icons.circle_outlined),
-        ),
+        _ToolSpec(CanvasTool.ellipse, Icons.circle_outlined, s.toolOval),
       ],
       if (showSelectionTool)
-        const ButtonSegment(
-          value: CanvasTool.select,
-          label: Text('Select'),
-          icon: Icon(Icons.crop_free_rounded),
-          tooltip: 'Tap to select, drag empty space to marquee-select',
-        ),
+        _ToolSpec(CanvasTool.select, Icons.crop_free_rounded, s.toolSelect),
       if (showLassoTool)
-        const ButtonSegment(
-          value: CanvasTool.lasso,
-          label: Text('Lasso'),
-          icon: Icon(Icons.gesture_rounded),
-          tooltip: 'Drag a free-form path to select what falls inside',
-        ),
+        _ToolSpec(CanvasTool.lasso, Icons.gesture_rounded, s.toolLasso),
       if (showTextTool)
-        const ButtonSegment(
-          value: CanvasTool.text,
-          label: Text('Text'),
-          icon: Icon(Icons.text_fields_rounded),
-          tooltip: 'Tap empty canvas to add text, tap text to edit',
-        ),
+        _ToolSpec(CanvasTool.text, Icons.text_fields_rounded, s.toolText),
     ];
 
-    return Container(
-      padding: padding,
-      color: background ?? scheme.surfaceContainerHighest,
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final compact = compactBreakpoint > 0 &&
+            constraints.maxWidth.isFinite &&
+            constraints.maxWidth < compactBreakpoint;
+        return _buildLayout(
+          context,
+          scheme: scheme,
+          t: t,
+          s: s,
+          tools: tools,
+          compact: compact,
+        );
+      },
+    );
+  }
 
+  Widget _buildLayout(
+    BuildContext context, {
+    required ColorScheme scheme,
+    required FlueraToolbarTheme t,
+    required FlueraStrings s,
+    required List<_ToolSpec> tools,
+    required bool compact,
+  }) {
+    final outline = t.outlineColor ?? scheme.outlineVariant;
+    final gradStart = t.surfaceGradientStart ?? scheme.surfaceContainerHigh;
+    final gradEnd = t.surfaceGradientEnd ?? scheme.surfaceContainerHighest;
+    final sliderW = compact ? t.compactSliderWidth : t.sliderWidth;
+
+    final toolsRow = Wrap(
+      spacing: t.spacingTight,
+      runSpacing: t.spacingTight,
+      children: [
+        for (final spec in tools)
+          _ToolPill(
+            spec: spec,
+            selected: spec.tool == tool,
+            onTap: () => onToolChanged(spec.tool),
+            theme: t,
+          ),
+      ],
+    );
+
+    final trailingChildren = <Widget>[
+      if (showImageTool)
+        _TrailingIconButton(
+          icon: Icons.image_rounded,
+          tooltip: s.insertImageTooltip,
+          onPressed: () {
+            final state = canvasKey.currentState;
+            if (state == null) return;
+            FlueraImageTool.pickAndCommit(context, state);
+          },
+          theme: t,
+        ),
+      if (showStickerPanel)
+        _TrailingIconButton(
+          icon: Icons.emoji_emotions_rounded,
+          tooltip: s.stickersTooltip,
+          onPressed: () => _openStickerSheet(context),
+          theme: t,
+        ),
+      if (showLayers)
+        _TrailingIconButton(
+          icon: Icons.layers_rounded,
+          tooltip: s.layersTooltip,
+          onPressed: () => _openLayersSheet(context),
+          theme: t,
+        ),
+      _HistoryButtons(
+        canvasKey: canvasKey,
+        showUndo: showUndo,
+        showRedo: showRedo,
+        showClear: showClear,
+        theme: t,
+        strings: s,
+      ),
+    ];
+
+    final paletteRow = Wrap(
+      spacing: t.spacingTight,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final c in palette)
+          _ColorSwatch(
+            color: c,
+            selected: _sameRgb(c, color),
+            onTap: () => onColorChanged(c.withValues(alpha: color.a)),
+            theme: t,
+          ),
+        if (showColorPickerButton)
+          _MoreColorsButton(
+            currentColor: color,
+            onPicked: onColorChanged,
+            theme: t,
+          ),
+      ],
+    );
+
+    final sizeSlider = SizedBox(
+      width: sliderW,
+      child: _SizeSlider(
+        tool: tool,
+        color: color,
+        strokeWidth: strokeWidth,
+        onStrokeWidthChanged: onStrokeWidthChanged,
+        minStrokeWidth: minStrokeWidth,
+        maxStrokeWidth: maxStrokeWidth,
+        strokeWidthDivisions: strokeWidthDivisions,
+        eraserRadius: eraserRadius,
+        onEraserRadiusChanged: onEraserRadiusChanged,
+        minEraserRadius: minEraserRadius,
+        maxEraserRadius: maxEraserRadius,
+        eraserRadiusDivisions: eraserRadiusDivisions,
+        theme: t,
+      ),
+    );
+
+    final showOpacity = showOpacitySlider &&
+        tool != CanvasTool.erase &&
+        tool != CanvasTool.erasePixel;
+    final opacitySlider = showOpacity
+        ? SizedBox(
+            width: sliderW,
+            child: _OpacitySlider(
+              color: color,
+              onColorChanged: onColorChanged,
+              theme: t,
+            ),
+          )
+        : null;
+
+    final List<Widget> bodyChildren;
+    if (compact) {
+      // 3-row stack: tools / palette+size / opacity+trailing
+      bodyChildren = [
+        Align(alignment: Alignment.centerLeft, child: toolsRow),
+        SizedBox(height: t.spacing),
+        Wrap(
+          spacing: t.spacing,
+          runSpacing: t.spacing,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [paletteRow, sizeSlider],
+        ),
+        SizedBox(height: t.spacing),
+        Wrap(
+          spacing: t.spacing,
+          runSpacing: t.spacing,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            if (opacitySlider != null) opacitySlider,
+            ...trailingChildren,
+          ],
+        ),
+        if (showTransformActions)
+          _SelectionActionsRow(canvasKey: canvasKey),
+      ];
+    } else {
+      // Wide 2-row layout (the classic 0.11.0 shape).
+      bodyChildren = [
+        Row(
+          children: [
+            Expanded(child: toolsRow),
+            SizedBox(width: t.spacingTight),
+            ...trailingChildren,
+          ],
+        ),
+        SizedBox(height: t.spacing),
+        Wrap(
+          spacing: t.spacing,
+          runSpacing: t.spacing,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            paletteRow,
+            sizeSlider,
+            if (opacitySlider != null) opacitySlider,
+          ],
+        ),
+        if (showTransformActions)
+          _SelectionActionsRow(canvasKey: canvasKey),
+      ];
+    }
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: background == null
+            ? LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [gradStart, gradEnd],
+              )
+            : null,
+        color: background,
+        border: Border(
+          top: BorderSide(
+            color: outline.withValues(alpha: 0.5),
+            width: 0.5,
+          ),
+        ),
+      ),
       child: SafeArea(
         top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: SegmentedButton<CanvasTool>(
-                      segments: segments,
-                      selected: {tool},
-                      onSelectionChanged: (s) => onToolChanged(s.first),
-                    ),
-                  ),
-                ),
-                if (showImageTool)
-                  IconButton(
-                    icon: const Icon(Icons.image_rounded),
-                    tooltip: 'Insert image',
-                    onPressed: () {
-                      final state = canvasKey.currentState;
-                      if (state == null) return;
-                      FlueraImageTool.pickAndCommit(context, state);
-                    },
-                  ),
-                if (showStickerPanel)
-                  IconButton(
-                    icon: const Icon(Icons.emoji_emotions_outlined),
-                    tooltip: 'Stickers',
-                    onPressed: () => _openStickerSheet(context),
-                  ),
-                if (showLayers)
-                  IconButton(
-                    icon: const Icon(Icons.layers_rounded),
-                    tooltip: 'Layers',
-                    onPressed: () => _openLayersSheet(context),
-                  ),
-                _HistoryButtons(
-                  canvasKey: canvasKey,
-                  showUndo: showUndo,
-                  showRedo: showRedo,
-                  showClear: showClear,
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                for (final c in palette)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: _ColorSwatch(
-                      color: c,
-                      selected: c.toARGB32() == color.toARGB32(),
-                      onTap: () => onColorChanged(c),
-                    ),
-                  ),
-                if (showColorPickerButton)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: _MoreColorsButton(
-                      currentColor: color,
-                      onPicked: onColorChanged,
-                    ),
-                  ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _SizeSlider(
-                    tool: tool,
-                    strokeWidth: strokeWidth,
-                    onStrokeWidthChanged: onStrokeWidthChanged,
-                    minStrokeWidth: minStrokeWidth,
-                    maxStrokeWidth: maxStrokeWidth,
-                    strokeWidthDivisions: strokeWidthDivisions,
-                    eraserRadius: eraserRadius,
-                    onEraserRadiusChanged: onEraserRadiusChanged,
-                    minEraserRadius: minEraserRadius,
-                    maxEraserRadius: maxEraserRadius,
-                    eraserRadiusDivisions: eraserRadiusDivisions,
-                  ),
-                ),
-              ],
-            ),
-            if (showTransformActions)
-              _SelectionActionsRow(canvasKey: canvasKey),
-          ],
+        child: Padding(
+          padding: padding,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: bodyChildren,
+          ),
         ),
       ),
     );
@@ -508,6 +636,7 @@ class FlueraCanvasToolbar extends StatelessWidget {
 class _SizeSlider extends StatelessWidget {
   const _SizeSlider({
     required this.tool,
+    required this.color,
     required this.strokeWidth,
     required this.onStrokeWidthChanged,
     required this.minStrokeWidth,
@@ -518,9 +647,11 @@ class _SizeSlider extends StatelessWidget {
     required this.minEraserRadius,
     required this.maxEraserRadius,
     required this.eraserRadiusDivisions,
+    required this.theme,
   });
 
   final CanvasTool tool;
+  final Color color;
   final double strokeWidth;
   final ValueChanged<double> onStrokeWidthChanged;
   final double minStrokeWidth;
@@ -531,72 +662,144 @@ class _SizeSlider extends StatelessWidget {
   final double minEraserRadius;
   final double maxEraserRadius;
   final int eraserRadiusDivisions;
+  final FlueraToolbarTheme theme;
 
   bool get _isEraserTool =>
       tool == CanvasTool.erase || tool == CanvasTool.erasePixel;
 
   @override
   Widget build(BuildContext context) {
-    if (_isEraserTool &&
+    final scheme = Theme.of(context).colorScheme;
+    final useEraser = _isEraserTool &&
         eraserRadius != null &&
-        onEraserRadiusChanged != null) {
-      return Slider(
-        value: eraserRadius!.clamp(minEraserRadius, maxEraserRadius),
-        min: minEraserRadius,
-        max: maxEraserRadius,
-        divisions: eraserRadiusDivisions,
-        label: 'Eraser ${eraserRadius!.toStringAsFixed(0)} px',
-        onChanged: onEraserRadiusChanged,
-      );
+        onEraserRadiusChanged != null;
+
+    final double value;
+    final double minV;
+    final double maxV;
+    final int divisions;
+    final ValueChanged<double> onChanged;
+    if (useEraser) {
+      value = eraserRadius!.clamp(minEraserRadius, maxEraserRadius);
+      minV = minEraserRadius;
+      maxV = maxEraserRadius;
+      divisions = eraserRadiusDivisions;
+      onChanged = onEraserRadiusChanged!;
+    } else {
+      value = strokeWidth.clamp(minStrokeWidth, maxStrokeWidth);
+      minV = minStrokeWidth;
+      maxV = maxStrokeWidth;
+      divisions = strokeWidthDivisions;
+      onChanged = onStrokeWidthChanged;
     }
-    return Slider(
-      value: strokeWidth.clamp(minStrokeWidth, maxStrokeWidth),
-      min: minStrokeWidth,
-      max: maxStrokeWidth,
-      divisions: strokeWidthDivisions,
-      label: '${strokeWidth.toStringAsFixed(1)} px',
-      onChanged: onStrokeWidthChanged,
+
+    // Preview indicator — scales the live value into the previewSize
+    // box so the consumer SEES the stroke / eraser radius without
+    // drawing. Floor at 30% of the box so thin strokes remain visible.
+    final previewDiameter = (value / maxV).clamp(0.30, 1.0) * (theme.previewSize - 4);
+    final outline = theme.outlineColor ?? scheme.onSurfaceVariant;
+    final previewWidget = SizedBox(
+      width: theme.previewSize,
+      height: theme.previewSize,
+      child: Center(
+        child: Container(
+          width: previewDiameter,
+          height: previewDiameter,
+          decoration: BoxDecoration(
+            color: useEraser ? Colors.transparent : color,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: useEraser
+                  ? outline
+                  : Colors.black.withValues(alpha: 0.15),
+              width: useEraser ? 1.5 : 1,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final activeTrack = theme.selectedFill ?? scheme.primary;
+    return Row(
+      children: [
+        previewWidget,
+        const SizedBox(width: 8),
+        Expanded(
+          child: SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              activeTrackColor: activeTrack,
+              inactiveTrackColor:
+                  theme.surfaceGradientStart ?? scheme.surfaceContainerHigh,
+              thumbColor: activeTrack,
+              overlayColor: activeTrack.withValues(alpha: 0.12),
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
+            ),
+            child: Slider(
+              value: value,
+              min: minV,
+              max: maxV,
+              divisions: divisions,
+              label: useEraser
+                  ? 'Eraser ${value.toStringAsFixed(0)} px'
+                  : '${value.toStringAsFixed(1)} px',
+              onChanged: onChanged,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
 
 class _MoreColorsButton extends StatelessWidget {
-  const _MoreColorsButton({required this.currentColor, required this.onPicked});
+  const _MoreColorsButton({
+    required this.currentColor,
+    required this.onPicked,
+    required this.theme,
+  });
   final Color currentColor;
   final ValueChanged<Color> onPicked;
+  final FlueraToolbarTheme theme;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () async {
-        final picked = await showFlueraColorPicker(
-          context: context,
-          initial: currentColor,
-        );
-        if (picked != null) onPicked(picked);
-      },
-      child: Container(
-        width: 30,
-        height: 30,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: const SweepGradient(
-            colors: [
-              Color(0xFFFF0000),
-              Color(0xFFFFFF00),
-              Color(0xFF00FF00),
-              Color(0xFF00FFFF),
-              Color(0xFF0000FF),
-              Color(0xFFFF00FF),
-              Color(0xFFFF0000),
-            ],
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: Colors.transparent,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: () async {
+          final picked = await showFlueraColorPicker(
+            context: context,
+            initial: currentColor,
+          );
+          if (picked != null) onPicked(picked);
+        },
+        child: Container(
+          width: theme.swatchSize,
+          height: theme.swatchSize,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const SweepGradient(
+              colors: [
+                Color(0xFFFF0000),
+                Color(0xFFFFFF00),
+                Color(0xFF00FF00),
+                Color(0xFF00FFFF),
+                Color(0xFF0000FF),
+                Color(0xFFFF00FF),
+                Color(0xFFFF0000),
+              ],
+            ),
+            border: Border.all(
+              color: theme.outlineColor ?? scheme.outlineVariant,
+              width: 1,
+            ),
           ),
-          border: Border.all(
-            color: Colors.black.withValues(alpha: 0.2),
-            width: 1,
-          ),
+          child: const Icon(Icons.add_rounded, size: 16, color: Colors.white),
         ),
-        child: const Icon(Icons.add_rounded, size: 18, color: Colors.white),
       ),
     );
   }
@@ -608,12 +811,16 @@ class _HistoryButtons extends StatelessWidget {
     required this.showUndo,
     required this.showRedo,
     required this.showClear,
+    required this.theme,
+    required this.strings,
   });
 
   final GlobalKey<FlueraCanvasState> canvasKey;
   final bool showUndo;
   final bool showRedo;
   final bool showClear;
+  final FlueraToolbarTheme theme;
+  final FlueraStrings strings;
 
   @override
   Widget build(BuildContext context) {
@@ -650,22 +857,26 @@ class _HistoryButtons extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (showUndo)
-          IconButton(
-            tooltip: 'Undo',
-            icon: const Icon(Icons.undo_rounded),
+          _TrailingIconButton(
+            icon: Icons.undo_rounded,
+            tooltip: strings.undoTooltip,
             onPressed: canUndo ? () => state?.undo() : null,
+            theme: theme,
           ),
         if (showRedo)
-          IconButton(
-            tooltip: 'Redo',
-            icon: const Icon(Icons.redo_rounded),
+          _TrailingIconButton(
+            icon: Icons.redo_rounded,
+            tooltip: strings.redoTooltip,
             onPressed: canRedo ? () => state?.redo() : null,
+            theme: theme,
           ),
         if (showClear)
-          IconButton(
-            tooltip: 'Clear',
-            icon: const Icon(Icons.delete_outline_rounded),
+          _TrailingIconButton(
+            icon: Icons.delete_outline_rounded,
+            tooltip: strings.clearTooltip,
+            destructive: true,
             onPressed: state == null ? null : () => state.clear(),
+            theme: theme,
           ),
       ],
     );
@@ -677,29 +888,72 @@ class _ColorSwatch extends StatelessWidget {
     required this.color,
     required this.selected,
     required this.onTap,
+    required this.theme,
   });
 
   final Color color;
   final bool selected;
   final VoidCallback onTap;
+  final FlueraToolbarTheme theme;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        width: selected ? 30 : 24,
-        height: selected ? 30 : 24,
-        decoration: BoxDecoration(
-          color: color,
-          shape: BoxShape.circle,
-          border: Border.all(
-            color:
-                selected
-                    ? Theme.of(context).colorScheme.primary
-                    : Colors.black.withValues(alpha: 0.2),
-            width: selected ? 3 : 1,
+    final scheme = Theme.of(context).colorScheme;
+    final ring = theme.swatchRingColor ?? scheme.primary;
+    final outline = theme.outlineColor ?? scheme.outlineVariant;
+    final isWhite = color.r > 0.95 && color.g > 0.95 && color.b > 0.95;
+    return Tooltip(
+      message: '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}',
+      verticalOffset: 18,
+      child: SizedBox(
+        width: theme.swatchSize,
+        height: theme.swatchSize,
+        child: Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onTap,
+            child: AnimatedContainer(
+              duration: theme.motion,
+              curve: theme.motionCurve,
+              padding: EdgeInsets.all(selected ? 3 : 0),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: selected
+                    ? Border.all(color: ring, width: 2.5)
+                    : null,
+                boxShadow: selected
+                    ? [
+                        BoxShadow(
+                          color: ring.withValues(
+                            alpha: theme.elevatedShadowOpacity,
+                          ),
+                          blurRadius: 4,
+                          offset: const Offset(0, 1),
+                        ),
+                      ]
+                    : null,
+              ),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                  border: isWhite
+                      ? Border.all(color: outline, width: 1)
+                      : null,
+                  boxShadow: selected
+                      ? null
+                      : [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.08),
+                            blurRadius: 1.5,
+                            offset: const Offset(0, 1),
+                          ),
+                        ],
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -764,4 +1018,223 @@ class _SelectionActionsRow extends StatelessWidget {
       },
     );
   }
+}
+
+// ─── New widgets (0.11.0 toolbar restyle) ──────────────────────────────────
+
+/// Compares two colors ignoring their alpha channel. Used by the
+/// palette-row swatches so picking a colour preserves the alpha the
+/// user already dialled in via the opacity slider.
+bool _sameRgb(Color a, Color b) =>
+    a.r == b.r && a.g == b.g && a.b == b.b;
+
+/// Immutable triple binding a [CanvasTool] to its rendered icon + tooltip
+/// label. Internal — built once per `build()` and consumed by [_ToolPill].
+@immutable
+class _ToolSpec {
+  const _ToolSpec(this.tool, this.icon, this.label);
+  final CanvasTool tool;
+  final IconData icon;
+  final String label;
+}
+
+/// Pill-shaped Material 3 tool button. Selected → filled-tonal with the
+/// scheme's primary container; idle → transparent + onSurfaceVariant icon.
+/// Animates the background swap so tool switches feel deliberate without
+/// being noisy.
+class _ToolPill extends StatelessWidget {
+  const _ToolPill({
+    required this.spec,
+    required this.selected,
+    required this.onTap,
+    required this.theme,
+  });
+
+  final _ToolSpec spec;
+  final bool selected;
+  final VoidCallback onTap;
+  final FlueraToolbarTheme theme;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final fill = theme.selectedFill ?? scheme.primary;
+    final selectedIcon = theme.selectedIconColor ?? scheme.onPrimary;
+    final idleIcon = theme.idleIconColor ?? scheme.onSurfaceVariant;
+    return Tooltip(
+      message: spec.label,
+      verticalOffset: 18,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(theme.radius),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(theme.radius),
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: theme.motion,
+            curve: theme.motionCurve,
+            width: theme.tap,
+            height: theme.tap,
+            decoration: BoxDecoration(
+              color: selected ? fill : Colors.transparent,
+              borderRadius: BorderRadius.circular(theme.radius),
+              boxShadow: selected && theme.elevatedShadowBlur > 0
+                  ? [
+                      BoxShadow(
+                        color: fill.withValues(
+                          alpha: theme.elevatedShadowOpacity,
+                        ),
+                        blurRadius: theme.elevatedShadowBlur,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Icon(
+              spec.icon,
+              size: 22,
+              color: selected ? selectedIcon : idleIcon,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Filled-tonal trailing icon button used for image / sticker / layers /
+/// undo / redo / clear actions. Disabled state is rendered automatically
+/// by `IconButton.filledTonal` when `onPressed` is null. Pass
+/// `destructive: true` to tint the icon with `colorScheme.error` (used by
+/// the clear button).
+class _TrailingIconButton extends StatelessWidget {
+  const _TrailingIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+    required this.theme,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+  final bool destructive;
+  final FlueraToolbarTheme theme;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final destructiveCol = theme.destructiveColor ?? scheme.error;
+    final idleCol = theme.idleIconColor ?? scheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: IconButton.filledTonal(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        iconSize: 22,
+        style: IconButton.styleFrom(
+          foregroundColor: destructive ? destructiveCol : idleCol,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(theme.radiusSmall),
+          ),
+        ),
+        icon: Icon(icon),
+      ),
+    );
+  }
+}
+
+/// Opacity slider — drives the alpha channel of [color] via
+/// [onColorChanged]. Preview indicator on the left shows a checkerboard
+/// background behind the live colour at the current alpha so the
+/// effective transparency reads at a glance.
+class _OpacitySlider extends StatelessWidget {
+  const _OpacitySlider({
+    required this.color,
+    required this.onColorChanged,
+    required this.theme,
+  });
+
+  final Color color;
+  final ValueChanged<Color> onColorChanged;
+  final FlueraToolbarTheme theme;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final alpha = color.a.clamp(0.0, 1.0);
+    final activeTrack = theme.selectedFill ?? scheme.primary;
+    return Tooltip(
+      message: 'Opacity ${(alpha * 100).round()}%',
+      verticalOffset: 18,
+      child: Row(
+        children: [
+          // Preview: checkerboard behind the colour swatch so partial
+          // alpha is visually obvious (a flat tint over the toolbar
+          // background looks misleading at, say, 40 %).
+          SizedBox(
+            width: theme.previewSize,
+            height: theme.previewSize,
+            child: ClipOval(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  CustomPaint(painter: _CheckerPainter()),
+                  ColoredBox(color: color),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 3,
+                activeTrackColor: activeTrack,
+                inactiveTrackColor:
+                    theme.surfaceGradientStart ?? scheme.surfaceContainerHigh,
+                thumbColor: activeTrack,
+                overlayColor: activeTrack.withValues(alpha: 0.12),
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
+              ),
+              child: Slider(
+                value: alpha,
+                divisions: 20,
+                label: '${(alpha * 100).round()}%',
+                onChanged: (v) => onColorChanged(color.withValues(alpha: v)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Lightweight checkerboard painter for the opacity preview.
+/// 2 × 2 grid of 8-px squares — large enough to read but small enough
+/// to fit inside the 30-px preview circle.
+class _CheckerPainter extends CustomPainter {
+  static final Paint _light = Paint()..color = const Color(0xFFE0E0E0);
+  static final Paint _dark = Paint()..color = const Color(0xFFBDBDBD);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const cell = 7.0;
+    canvas.drawRect(Offset.zero & size, _light);
+    for (var y = 0; y < (size.height / cell).ceil(); y++) {
+      for (var x = 0; x < (size.width / cell).ceil(); x++) {
+        if ((x + y).isOdd) {
+          canvas.drawRect(
+            Rect.fromLTWH(x * cell, y * cell, cell, cell),
+            _dark,
+          );
+        }
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

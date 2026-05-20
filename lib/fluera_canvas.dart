@@ -5,7 +5,7 @@
 // contract. Anything inside `src/` without a corresponding export line is
 // internal and may change at any time.
 //
-// Version: 0.10.4. Until 1.0.0 the API is considered unstable; minor
+// Version: 0.16.2. Until 1.0.0 the API is considered unstable; minor
 // versions are additive only (no removals, no signature breaks).
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -36,7 +36,23 @@ export 'src/canvas/stylus_hover_tracker.dart';
 // primitives above are the power-user surface.
 export 'src/canvas/fluera_canvas_widget.dart';
 export 'src/canvas/fluera_canvas_toolbar.dart';
+export 'src/canvas/fluera_canvas_cupertino_toolbar.dart'
+    show FlueraCanvasCupertinoToolbar;
+export 'src/canvas/fluera_toolbar_theme.dart';
+export 'src/canvas/fluera_strings.dart' show FlueraStrings;
+export 'src/canvas/fluera_shortcuts.dart'
+    show FlueraShortcuts, FlueraShortcutAction;
 export 'src/canvas/fluera_color_picker_dialog.dart';
+export 'src/export/svg_writer.dart' show FlueraSvgWriter;
+export 'src/canvas/widgets/fluera_minimap.dart' show FlueraMinimap;
+export 'src/canvas/snap/snap_engine.dart'
+    show SnapEngine, SnapResult, SnapGuide, SnapAxes;
+export 'src/document/fluera_document.dart'
+    show
+        FlueraDocument,
+        FlueraDocumentMeta,
+        FlueraDocumentSaveCallback,
+        FlueraDocumentLoadCallback;
 export 'src/canvas/fluera_layer_panel.dart';
 export 'src/canvas/fluera_blend_mode.dart';
 export 'src/canvas/canvas_background.dart';

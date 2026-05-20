@@ -6,17 +6,17 @@
 > stickers / image annotations. **5 k+ strokes at 60 FPS** on a
 > mid-tier Android.
 >
-> Status: **`0.10.3`** — pre-1.0 but additive only (zero breaking
+> Status: **`0.16.2`** — pre-1.0 but additive only (zero breaking
 > changes from 0.8.0). API stabilises at `1.0.0`.
 > Marketing site: **[engine.fluera.dev](https://engine.fluera.dev/)**
 
-**Jump to:** [Hello canvas](#hello-canvas) · [Zero-config](#zero-config-drop-in) · [Recipes](#common-recipes) · [Keyboard](#keyboard-shortcuts) · [Export](#export) · [Performance](#performance) · [FAQ](#faq--troubleshooting) · [Migration](doc/migration-0.5-to-0.10.0.md) · [Changelog](CHANGELOG.md)
+**Jump to:** [Hello canvas](#hello-canvas) · [Zero-config](#zero-config-drop-in) · [Recipes](#common-recipes) · [Cookbook](doc/cookbook.md) · [Integrations](doc/integrations.md) · [Keyboard](#keyboard-shortcuts) · [Export](doc/export.md) · [Performance](#performance) · [FAQ](#faq--troubleshooting) · [Customization](doc/customization.md) · [Migration](doc/migration-0.5-to-0.10.0.md) · [Changelog](CHANGELOG.md)
 
 ## Install
 
 ```yaml
 dependencies:
-  fluera_canvas: ^0.10.3
+  fluera_canvas: ^0.16.2
 ```
 
 ```dart
@@ -47,9 +47,13 @@ rigid block. That's what this SDK is for.
 - **`FlueraSketch` / `FlueraSketchScaffold` / `FlueraSketchApp`** — three
   zero-config widgets at increasing levels of "magic". `runApp(const FlueraSketchApp())`
   literally gives you a complete drawing app.
-- **`FlueraCanvasToolbar`** — drop-in Material toolbar. Tool segmented
-  control, color swatches, stroke-width slider, undo / redo / clear,
-  optional layer panel / sticker panel / text tool / image tool.
+- **`FlueraCanvasToolbar`** — drop-in Material 3 toolbar. Pill tool
+  buttons, circular color swatches, stroke-width slider with live
+  preview, opacity slider, filled-tonal trailing actions
+  (undo / redo / clear), optional layer panel / sticker panel / text
+  tool / image tool. Brandable via `FlueraToolbarTheme`
+  (`ThemeExtension`); auto-collapses to a 3-row layout below
+  `compactBreakpoint` (default 600 px).
 - **`FlueraCanvasColorPickerDialog`** + `showFlueraColorPicker(...)` —
   zero-dependency HSV / hex picker.
 - **`InfiniteCanvasController`** — camera with pan, zoom, rotation,
@@ -88,6 +92,68 @@ rigid block. That's what this SDK is for.
 - **PNG export** has 4 bounds modes via `FlueraExportBounds`:
   `viewport` (legacy), `allContent`, `selection`, `custom`. Plus
   `pixelRatio`, `padding`, `transparent`.
+- **SVG export (basic, 0.13.0)** via `state.toSvgBytes()` — geometry +
+  layer compositing for vector workflows. High-fidelity SVG with all
+  16 PS blend modes + image annotations is available in the
+  commercial `fluera_canvas_gpu` (same call site, transparently
+  upgraded). Full matrix in [doc/export.md](doc/export.md).
+- **Clipboard (0.13.0)** — `Ctrl/Cmd + C` / `V` copy and paste the
+  current selection across canvas instances via the system clipboard.
+  Programmatic API: `state.copySelection()` /
+  `state.pasteFromClipboard()`.
+- **Minimap (0.13.0)** — drop-in `FlueraMinimap` widget shows a live
+  overview of the entire canvas + viewport rectangle. Tap to recenter.
+- **Camera bounds (0.13.0)** — `InfiniteCanvasController(minScale,
+  maxScale, panBoundary)` to clamp the camera for single-page apps.
+- **Stylus tilt + metadata (0.14.0)** — `CanvasStroke.tilts` (per-point
+  pen tilt in radians) + `CanvasStroke.metadata` (consumer-defined
+  JSON-encodable bag) round-trip through FCV0 v8 and the JSON serializer.
+  Built-in vector renderer ignores tilt; `fluera_canvas_gpu` exploits it
+  for nib-angle calligraphy.
+- **Document model (0.14.0)** — `FlueraDocument` wraps a `FlueraCanvas`
+  with id / title / dirty flag / autosave debounce hook. Skips the
+  plumbing every notes app reinvents.
+- **Published benchmarks (0.14.0)** — concrete numbers in
+  [doc/performance.md](doc/performance.md). 5k+ strokes @ 60fps,
+  43 ms for 10k hit-tests on a 5k-stroke scene.
+- **Smart guides on-by-default (0.15.0)** — drag-to-move on a
+  selection snaps the dragged frame's anchors to nearby nodes
+  (Figma / TLDraw style). Magenta dashed guide lines render during
+  the drag; hold Shift to bypass. Reusable as a public `SnapEngine`
+  primitive for custom widgets.
+- **Hit-test API public (0.15.0)** — `state.hitTest(Offset)` and
+  `state.hitTestInRect(Rect)` on top of the internal RTree spatial
+  index. Hover tooltips, custom select, click-through detection.
+- **Programmatic drawing helpers (0.15.0)** — `state.drawLine` /
+  `drawCircle` / `drawPolygon` deposit ink without going through
+  pointer events. Tutorial overlays, generative art, AI-driven canvases.
+- **Custom per-tool cursors (0.15.0)** — `cursorPerTool` map on
+  `FlueraCanvas` overrides the desktop mouse cursor on a per-tool
+  basis. Branded cursors, tutorial states, custom affordances.
+- **Cookbook + integrations docs (0.16.0)** — 10 copy-paste recipes
+  in [doc/cookbook.md](doc/cookbook.md) for the most common asks
+  ("autosave", "export PNG transparent", "limit zoom to a single
+  page"). 8 integration snippets in
+  [doc/integrations.md](doc/integrations.md) for riverpod, bloc,
+  drift, hive, share_plus, printing, etc.
+- **Accessibility (0.16.0)** — `semanticsEnabled: true` on
+  `FlueraCanvas` (default `true`) wraps the canvas in a `Semantics`
+  node carrying a summary label so screen readers announce
+  something meaningful when focused.
+- **i18n via `FlueraStrings` (0.16.0)** — opt-in
+  `ThemeExtension<FlueraStrings>` localises every visible string
+  in the toolbar (24 fields). English defaults; partial overrides
+  translate only what your brand needs.
+- **Customizable shortcuts (0.16.0)** — `FlueraShortcuts` map on
+  `FlueraCanvas` re-binds any subset of the 8 default keyboard
+  actions (undo/redo/copy/paste/...). Per-platform defaults
+  preserved via `FlueraShortcuts.defaults`.
+- **Cupertino toolbar (0.16.1)** — `FlueraCanvasCupertinoToolbar`
+  is an Apple HIG mirror of the Material drop-in: same API, same
+  callbacks, same theming — built with `CupertinoButton` /
+  `CupertinoSlider` / `CupertinoColors` / `CupertinoIcons`. Pick
+  this when targeting iOS / macOS with pixel-perfect aesthetics.
+  Zero new dependencies (Cupertino is built-in Flutter).
 - **TextNode is now selectable + transformable** (drag / scale / rotate
   via the same handles as image / stroke nodes).
 - Edge-case hardening: serializer bounds-checks (DoS protection),
@@ -333,6 +399,45 @@ await FlueraImageTool.pickAndCommit(context: context, state: canvasKey.currentSt
 //    boundary are split: inside parts attach, outside parts stay free.
 ```
 
+### Theming the drop-in toolbar
+
+```dart
+MaterialApp(
+  theme: ThemeData(
+    useMaterial3: true,
+    colorSchemeSeed: const Color(0xFF6750A4),
+    extensions: const [
+      FlueraToolbarTheme(
+        radius: 18,
+        swatchSize: 36,
+        selectedFill: Color(0xFF00CC88),
+      ),
+    ],
+  ),
+  // ...
+);
+```
+
+Or pass `theme:` directly on a single toolbar — wins over the global
+extension. See [doc/customization.md](doc/customization.md) for the full
+field reference (21 fields covering geometry, motion, and 8 colour
+overrides).
+
+### Compact mode
+
+`FlueraCanvasToolbar` switches to a vertical 3-row stack below
+`compactBreakpoint` (default `600` px) — palette + size slider on
+row 2, opacity slider + trailing icons on row 3. Tap targets stay
+44×44 in both modes. Override:
+
+```dart
+FlueraCanvasToolbar(
+  // ...
+  compactBreakpoint: 720,  // switch earlier (tablet portrait)
+  // compactBreakpoint: 0, // disable, always use wide layout
+)
+```
+
 ### Custom toolbar layout
 
 When the built-in `FlueraCanvasToolbar` doesn't fit your design
@@ -362,7 +467,9 @@ class _DemoState extends State<Demo> {
 
 `FlueraCanvas` is intentionally headless. The state is observable via
 `historyListenable` / `selectionListenable` so a custom toolbar can
-gate undo / redo / contextual buttons without polling.
+gate undo / redo / contextual buttons without polling. See the
+**Custom toolbar (headless)** demo in `example/lib/main.dart` for a
+runnable Photoshop-style floating-sidebar implementation.
 
 ### Save / load (mobile + desktop)
 

@@ -5,7 +5,51 @@ Android (Adreno 660 / Impeller-Vulkan, profile mode) at 60 FPS up to
 ~5 k–10 k strokes in the viewport. This guide explains the knobs and
 when to reach for them.
 
-## Profiling baseline
+## Published benchmarks (0.14.0)
+
+The following numbers come from `test/benchmarks/perf_baseline_test.dart`
+and are reproducible with `flutter test test/benchmarks/ --reporter=expanded`.
+Median of 3 runs on Linux x86_64 (Vulkan-Impeller, debug mode VM,
+Ryzen 7 5800X, profile-mode-equivalent metrics):
+
+| Operation | Median time | Per-unit |
+|---|---|---|
+| Insert 5,000 strokes into the spatial index | 243 ms | ~49 µs / stroke |
+| 10,000 hit-tests on a 5,000-stroke scene | 43 ms | ~4.3 µs / hit-test |
+| Commit a 5,000-point stroke (push + cache + index) | 297 µs | ~60 ns / point |
+
+Headline interpretation:
+- A typical app rarely commits more than ~5–10 strokes per second
+  (human input rate cap). At ~50 µs per insert, that's well under the
+  16 ms frame budget — even with 100 strokes per second you'd burn
+  5 ms total.
+- Hit-test cost is sub-microsecond per stroke checked under the
+  pointer (the spatial index prunes most of the 5k scene before
+  geometric tests). A single tap on a 5k-stroke scene returns the
+  hit node in under 5 µs.
+- A continuous 5k-point stroke (extreme — the user dragging without
+  pen-up for ~80 seconds at typical sample rate) commits in ~300 µs,
+  imperceptible to the user.
+
+These numbers are why `fluera_canvas` ships with the spatial index
+on by default: without it, hit-test scales O(n) and a 5k-stroke
+scene would cost ~25 ms per tap, missing the frame budget.
+
+Re-run on your hardware:
+
+```bash
+cd fluera_canvas
+flutter test test/benchmarks/ --reporter=expanded
+# Output:
+#   [bench] insert_5k=242860us
+#   [bench] hit_test_10k_on_5k=43469us
+#   [bench] push_5k_point_stroke=297us
+```
+
+Numbers are emitted as `[bench] name=duration_in_microseconds` so
+they can be parsed into CI / PR comments.
+
+## Profiling baseline (mid-tier Android, frame-time)
 
 Reference device: Xiaomi 2107113SG, Adreno 660, Flutter 3.27 stable,
 Impeller-Vulkan, profile build.

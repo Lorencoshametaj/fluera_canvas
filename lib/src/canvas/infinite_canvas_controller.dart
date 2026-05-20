@@ -69,6 +69,29 @@ class CameraKeyframe {
 /// - Physics state machine: IDLE → MOMENTUM / SPRING → IDLE
 /// - Ticker callback drives all active simulations each frame
 class InfiniteCanvasController extends ChangeNotifier {
+  /// Build a controller with optional zoom + pan limits.
+  ///
+  /// [minScale] / [maxScale] cap pinch-zoom (defaults `0.1` / `5.0`,
+  /// the historical hard-coded values pre-0.13.0). Elastic overshoot
+  /// can momentarily exceed these by a small spring factor.
+  ///
+  /// [panBoundary] (optional) restricts the camera offset to a
+  /// world-space rectangle — useful for single-page notes apps that
+  /// don't want infinite pan. `null` (default) leaves the canvas
+  /// genuinely infinite.
+  ///
+  /// Added (as constructor params) in 0.13.0. Pre-existing zero-arg
+  /// callers continue to work — defaults reproduce 0.12.0 behaviour
+  /// exactly.
+  InfiniteCanvasController({
+    this.minScale = 0.1,
+    this.maxScale = 5.0,
+    this.panBoundary,
+  })  : assert(minScale > 0, 'minScale must be positive'),
+        assert(maxScale > minScale, 'maxScale must exceed minScale'),
+        _minScale = minScale,
+        _maxScale = maxScale;
+
   // ============================================================================
   // 🎯 CORE STATE
   // ============================================================================
@@ -77,9 +100,24 @@ class InfiniteCanvasController extends ChangeNotifier {
   double _scale = 1.0;
   double _rotation = 0.0; // radians, clockwise
 
-  // Zoom limits (logical bounds — elastic overshoot can exceed these)
-  static const double _minScale = 0.1;
-  static const double _maxScale = 5.0;
+  /// Lower zoom bound (logical). Elastic overshoot can momentarily
+  /// exceed this. Configurable via the constructor since 0.13.0.
+  final double minScale;
+
+  /// Upper zoom bound (logical). Elastic overshoot can momentarily
+  /// exceed this. Configurable via the constructor since 0.13.0.
+  final double maxScale;
+
+  /// World-space rectangle that clamps `setOffset` / `translateBy`.
+  /// `null` (default) leaves the canvas infinite. Added in 0.13.0.
+  final Rect? panBoundary;
+
+  // Zoom limits (logical bounds — elastic overshoot can exceed these).
+  // Stored as `final` instance fields so they're constructor-driven;
+  // the `_minScale` / `_maxScale` names are kept identical to the
+  // pre-0.13 const so the ~30 internal call sites need no churn.
+  final double _minScale;
+  final double _maxScale;
 
   /// Tracks whether we're past zoom limits (for one-shot haptic).
   bool _wasAtZoomLimit = false;
@@ -317,10 +355,20 @@ class InfiniteCanvasController extends ChangeNotifier {
   // 🎛️ CORE API
   // ============================================================================
 
-  /// Apply offset (pan)
+  /// Apply offset (pan). When [panBoundary] is set on the controller,
+  /// the resulting offset is clamped so the camera origin stays
+  /// inside the boundary rectangle.
   void setOffset(Offset newOffset) {
-    _offset = newOffset;
+    _offset = _clampOffset(newOffset);
     notifyListeners();
+  }
+
+  /// Clamp [raw] against the active [panBoundary]. Returns [raw]
+  /// unchanged if no boundary is set. Added in 0.13.0.
+  Offset _clampOffset(Offset raw) {
+    final b = panBoundary;
+    if (b == null) return raw;
+    return Offset(raw.dx.clamp(b.left, b.right), raw.dy.clamp(b.top, b.bottom));
   }
 
   /// Apply zoom with hard clamp (no elastic overshoot)

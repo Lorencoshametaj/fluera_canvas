@@ -84,14 +84,18 @@ void main() {
       },
     );
 
-    test('encodeBytes produces a v6 file with version byte 6', () {
+    test('encodeBytes produces a v8 file with version byte 8', () {
       final bytes = CanvasSerializer.encodeBytes([makeStroke(1)]);
       // bytes[0..3] = magic, bytes[4..5] = version (uint16 LE).
       // 0.8.0 promoted the writer to FCV v6 (text-node persistence);
-      // v5 / v4 / v3 / v2 / v1 readers continue to be supported by
-      // `decodeBytesFull` but new files always go out as v6.
+      // 0.10.3 promoted to v7 to carry the new per-stroke note tag
+      // alongside the FontWeight.value migration; 0.14.0 promoted to
+      // v8 to carry per-stroke tilt + metadata extension blocks
+      // (chained tag-length-value after the customBrushId TLV). v7 /
+      // v6 / v5 / v4 / v3 / v2 / v1 readers continue to be supported
+      // by `decodeBytesFull` but new files always go out as v8.
       final version = bytes[4] | (bytes[5] << 8);
-      expect(version, 6, reason: 'encodeBytes must emit the v6 layered format');
+      expect(version, 8, reason: 'encodeBytes must emit the v8 layered format');
     });
 
     test(

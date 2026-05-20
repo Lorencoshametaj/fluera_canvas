@@ -2,7 +2,7 @@ name: fluera_canvas
 description: >
   Document-grade infinite-canvas SDK for Flutter — layered scene graph,
   selection + transform, lasso, image annotations, text, keyboard shortcuts.
-version: 0.10.4
+version: 0.16.2
 homepage: https://engine.fluera.dev
 repository: https://github.com/Lorencoshametaj/fluera_canvas
 issue_tracker: https://github.com/Lorencoshametaj/fluera_canvas/issues
@@ -13,6 +13,14 @@ topics:
   - infinite-canvas
   - notes
   - graphics
+
+screenshots:
+  - description: 'Selection with snap-to-grid and magenta smart guides on an infinite canvas.'
+    path: screenshots/01-selection.png
+  - description: 'Multi-layer scene with Material 3 toolbar, palette and opacity slider.'
+    path: screenshots/02-layers.png
+  - description: 'Zero-config FlueraSketchApp — restyled Material 3 toolbar full-frame.'
+    path: screenshots/03-toolbar.png
 
 environment:
   sdk: ^3.7.0
